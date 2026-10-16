@@ -66,6 +66,7 @@ export class PresentationHost {
   /** Do not wait for the presentation window; begin caching on file arrival. */
   queue(file: PdfManifest): void {
     if (file.status === 'approved') this.cache?.prefetch(file);
+    else this.cache?.pause(file.fileId);
   }
   dispose(): void { this.closeAll(); this.cache?.dispose(); this.cache = null; this.lastProgressPaint.clear(); }
 

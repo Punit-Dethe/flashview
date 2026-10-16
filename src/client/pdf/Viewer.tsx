@@ -141,7 +141,20 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   }, []);
 
   useEffect(() => {
-    const sync = () => setFullscreen(Boolean(document.fullscreenElement));
+    const sync = () => {
+      setFullscreen(document.fullscreenElement === wrapper.current);
+      // Native fullscreen transitions can change dimensions before the
+      // ResizeObserver reports its next frame on Chromium/Firefox.
+      requestAnimationFrame(() => {
+        const element = stage.current;
+        if (!element) return;
+        const width = element.clientWidth;
+        const height = element.clientHeight;
+        if (width > 0 && height > 0)
+          setStageSize(previous => previous.width === width && previous.height === height
+            ? previous : { width, height });
+      });
+    };
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
@@ -241,7 +254,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     const generation = ++renderSequence.current;
     const pageStartedAt = performance.now();
     setRendering(true);
-    setRenderedPage(null);
+    // Keep the previously painted slide on-screen during fullscreen/zoom.
+    // Clearing this state also flashed the sender's JPEG over a ready PDF.
     setError('');
     const timer = setTimeout(() => {
       if (!cancelled && renderSequence.current === generation) {
@@ -270,20 +284,31 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
           await previous.promise.catch(() => {});
         }
         if (cancelled || generation !== renderSequence.current || !canvas.current) return;
-        const element = canvas.current;
-        const context = element.getContext('2d');
-        if (!context) throw new Error('Canvas unavailable');
-        element.height = Math.max(1, Math.floor(viewport.height * pixelRatio));
-        element.width = Math.max(1, Math.floor(viewport.width * pixelRatio));
-        element.style.height = viewport.height + 'px';
-        element.style.width = viewport.width + 'px';
+        // Render offscreen. Resizing an on-screen canvas immediately clears
+        // its pixels; if fullscreen causes a slow/cancelled render the teacher
+        // would otherwise see an entirely black slide.
+        const next = document.createElement('canvas');
+        next.height = Math.max(1, Math.floor(viewport.height * pixelRatio));
+        next.width = Math.max(1, Math.floor(viewport.width * pixelRatio));
+        const nextContext = next.getContext('2d', { alpha: false });
+        if (!nextContext) throw new Error('Canvas unavailable');
         const task = pdfPage.render({
-          canvas: element, canvasContext: context, viewport,
+          canvas: next, canvasContext: nextContext, viewport,
           transform: pixelRatio !== 1 ? [pixelRatio, 0, 0, pixelRatio, 0, 0] : undefined,
         });
         activeRender.current = task;
         await task.promise;
-        if (cancelled || generation !== renderSequence.current) return;
+        if (cancelled || generation !== renderSequence.current || !canvas.current) return;
+        // Commit in one paint operation. Preserve the old slide until this
+        // moment, including after rapid zoom/fullscreen transitions.
+        const visible = canvas.current;
+        const context = visible.getContext('2d', { alpha: false });
+        if (!context) throw new Error('Canvas unavailable');
+        visible.width = next.width;
+        visible.height = next.height;
+        visible.style.width = viewport.width + 'px';
+        visible.style.height = viewport.height + 'px';
+        context.drawImage(next, 0, 0);
         onTiming?.('page_render_ms', performance.now() - pageStartedAt, page);
         setRendering(false);
         setRenderedPage(page);
@@ -299,6 +324,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
           setRendering(false);
         }
       } finally {
+        if (generation === renderSequence.current) activeRender.current = null;
         clearTimeout(timer);
       }
     };
@@ -335,7 +361,11 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       else await wrapper.current?.requestFullscreen();
       // State also synchronizes when browser chrome exits via Escape.
       setFullscreen(Boolean(window.document.fullscreenElement));
-    } catch { /* School devices may not permit fullscreen. */ }
+    } catch {
+      // Fullscreen may be unavailable on embedded/mobile browsers; preserve
+      // the currently visible page rather than resetting the presentation.
+      setFullscreen(document.fullscreenElement === wrapper.current);
+    }
   };
 
   const retry = () => {
@@ -355,9 +385,22 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       <header className="viewer-toolbar">
         <div className="viewer-filename">
           <button type="button" className="icon-button close-viewer" onClick={close}
-            aria-label="Back to documents" title="Back to classroom">←</button>
-          <div><strong title={file.name}>{file.name}</strong>
-            <small>{cachedLabel}</small>
+            aria-label="Back to documents" title="Back to classroom">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden="true"><path d="m14 5-7 7 7 7"/></svg>
+          </button>
+          <span className="viewer-file-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
+              strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 3.5h7.5L19 9v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1Z"/>
+              <path d="M13 3.5V9h6M8 13h8M8 16.5h6"/>
+            </svg>
+          </span>
+          <div className="viewer-file-info">
+            <strong title={file.name}>{file.name}</strong>
+            <small title={cachedLabel}><span className={'viewer-file-status ' +
+              (cached?.complete ? 'is-complete' : 'is-loading')} aria-hidden="true"/>{cachedLabel}</small>
           </div>
         </div>
         <nav className="viewer-controls" aria-label="Presentation controls">
@@ -399,7 +442,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
               style={{ transform: `scale(${zoom})` }}/>
             <span>First slide ready · full PDF caching in background</span>
           </div>}
-          {rendering && !error && !showQuickPreview && <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
+          {rendering && !error && !showQuickPreview && renderedPage !== page &&
+            <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
         </div>}
         {!loading && !pdfDocument && !showQuickPreview && <div className="page-loading">PDF is not available yet. Cached bytes are preserved.<button className="outline-button" onClick={retry}>Retry PDF ↻</button></div>}
       </div>

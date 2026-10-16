@@ -318,35 +318,29 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
 });
 
 
-test('PDF renders first page before the remaining middle chunks download', { timeout: 85000 }, async () => {
+test('PDF renders first page while a multi-megabyte PDF is still transferring', { timeout: 85000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await chromium.launch({ headless: true });
   const host = await browser.newPage();
   const student = await browser.newPage();
-  // Block all the middle chunks. Leave the first/last chunks accessible
-  // because PDF structures and cross-reference tables can live at either end.
+  // Simulate an overloaded phone/campus relay. PDF.js may need bytes from
+  // anywhere in a non-linearized PDF; delay those reads, never block them.
+  // Full caching then takes many seconds, leaving time for early page render.
   await student.addInitScript(() => {
     const realSlice = File.prototype.slice;
     const realArrayBuffer = Blob.prototype.arrayBuffer;
-    const withheld = new WeakSet<Blob>();
-    const waiters: Array<() => void> = [];
-    let released = false;
+    const slowed = new WeakSet<Blob>();
     File.prototype.slice = function (start?: number, end?: number, contentType?: string) {
       const blob = realSlice.call(this, start, end, contentType);
-      if (this.name === 'progressive.pdf' &&
-          typeof start === 'number' && typeof end === 'number' &&
-          start >= 65536 && end < this.size - 65536) withheld.add(blob);
+      if (this.name === 'progressive.pdf' && typeof start === 'number' &&
+          start >= 65536) slowed.add(blob);
       return blob;
     };
     Blob.prototype.arrayBuffer = async function () {
-      if (withheld.has(this) && !released) {
-        await new Promise<void>(resolve => waiters.push(resolve));
+      if (slowed.has(this)) {
+        await new Promise<void>(resolve => setTimeout(resolve, 450));
       }
       return realArrayBuffer.call(this);
-    };
-    (window as typeof window & { __releasePdfMiddleChunks?: () => void }).__releasePdfMiddleChunks = () => {
-      released = true;
-      for (const resolve of waiters.splice(0)) resolve();
     };
   });
   const root = 'http://127.0.0.1:' + port;
@@ -379,7 +373,7 @@ test('PDF renders first page before the remaining middle chunks download', { tim
       return Boolean(canvas && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 22000 });
     assert.doesNotMatch(await row.innerText(), /Fully cached on this computer/,
-      'First page MUST be visible before withheld middle chunks finish');
+      'First page MUST be visible before the background download finishes');
     assert.match(await presentation.locator('.viewer-filename').innerText(), /streaming preview/);
 
     const ink = await presentation.locator('canvas').evaluate(canvas => {
@@ -394,13 +388,9 @@ test('PDF renders first page before the remaining middle chunks download', { tim
     });
     assert.equal(ink, true, 'Early first page must contain actual text pixels');
 
-    // Finish downloading. Completing the cache should NOT destroy a working
-    // streaming presentation or blank an already visible first slide.
-    await student.evaluate(() => {
-      (window as typeof window & { __releasePdfMiddleChunks?: () => void })
-        .__releasePdfMiddleChunks?.();
-    });
-    await row.getByText('Fully cached on this computer').waitFor({ timeout: 30000 });
+    // Full download continues while the presentation is visible. Completing
+    // it must NOT destroy or blank the already-rendered slide.
+    await row.getByText('Fully cached on this computer').waitFor({ timeout: 45000 });
     assert.equal(await presentation.locator('canvas[data-rendered-page="1"]').count(), 1);
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
   } catch (error) {

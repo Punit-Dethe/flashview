@@ -225,6 +225,20 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     return;
   }
   if (!peer.approved) return void sendError(ws, 'Waiting for teacher approval');
+  if (msg.type === 'preview.chunk') {
+    const file = typeof msg.fileId === 'string' ? room.files.get(msg.fileId) : undefined;
+    if (!file || file.ownerId !== peer.id || file.status !== 'approved' ||
+        !Number.isSafeInteger(msg.part) || !Number.isSafeInteger(msg.total) ||
+        Number(msg.part) < 0 || Number(msg.total) < 1 || Number(msg.total) > 80 ||
+        Number(msg.part) >= Number(msg.total) ||
+        typeof msg.data !== 'string' || msg.data.length < 1 || msg.data.length > 5000 ||
+        !/^[a-zA-Z0-9+/=]+$/.test(msg.data)) return;
+    notifyHost(room, {
+      type: 'preview.chunk', fileId: file.fileId,
+      part: msg.part, total: msg.total, data: msg.data,
+    });
+    return;
+  }
   if (msg.type === 'file.offer') {
     const fileId = msg.fileId;
     const size = msg.size;

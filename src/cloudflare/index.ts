@@ -314,6 +314,20 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
 
     if (!peer.approved) return void send(ws, { type: 'error', message: 'Waiting for teacher approval' });
+    if (msg.type === 'preview.chunk') {
+      const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
+      if (!file || file.ownerId !== peer.id || file.status !== 'approved' ||
+          !Number.isSafeInteger(msg.part) || !Number.isSafeInteger(msg.total) ||
+          Number(msg.part) < 0 || Number(msg.total) < 1 || Number(msg.total) > 80 ||
+          Number(msg.part) >= Number(msg.total) ||
+          typeof msg.data !== 'string' || msg.data.length < 1 || msg.data.length > 5000 ||
+          !/^[a-zA-Z0-9+/=]+$/.test(msg.data)) return;
+      this.sendHost({
+        type: 'preview.chunk', fileId: file.fileId,
+        part: msg.part, total: msg.total, data: msg.data,
+      });
+      return;
+    }
     if (msg.type === 'file.offer') {
       if (!validId(msg.fileId) || !Number.isSafeInteger(msg.size) ||
           Number(msg.size) < 1 || Number(msg.size) > MAX_PDF_BYTES ||

@@ -103,7 +103,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
   host.on('console', message => { if (message.type() === 'error') browserLogs.push('host CONSOLE: ' + message.text()); });
   student.on('console', message => { if (message.type() === 'error') browserLogs.push('student CONSOLE: ' + message.text()); });
   try {
-    await host.goto(root);
+    await host.goto(root + '?manual=1');
     if (!process.env.FLASHVIEW_BACKEND) {
       await mkdir('test-artifacts/ui', { recursive: true });
       await host.screenshot({ path: 'test-artifacts/ui/welcome.png', fullPage: true });
@@ -112,7 +112,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     const roomCode = await host.locator('.room-code').textContent();
     assert.match(roomCode ?? '', /^\d{6}$/);
     await host.locator('.connection.connected').waitFor();
-    await student.goto(root);
+    await student.goto(root + '?manual=1');
     await student.locator('#code').fill(roomCode!);
     await student.locator('#student-name').fill('Chromium Tester');
     await student.getByRole('button', { name: /Join room/ }).click();
@@ -489,11 +489,11 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
   const root = 'http://127.0.0.1:' + port;
   let presentation: Page | null = null;
   try {
-    await host.goto(root);
+    await host.goto(root + '?manual=1');
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();
     await host.locator('.connection.connected').waitFor();
-    await student.goto(root);
+    await student.goto(root + '?manual=1');
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').waitFor();
@@ -578,7 +578,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     // student has an intentionally blocked range request. This used to be
     // impossible when the scheduler awaited a whole per-file batch.
     const fastStudent = await browser.newPage();
-    await fastStudent.goto(root);
+    await fastStudent.goto(root + '?manual=1');
     await fastStudent.locator('#code').fill(code);
     await fastStudent.getByRole('button', { name: /Join room/ }).click();
     const fastApproval = host.locator('.approval').filter({ hasText: 'Student' });
@@ -623,11 +623,11 @@ test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async
   const student = await browser.newPage();
   try {
     const root = 'http://127.0.0.1:' + port;
-    await host.goto(root);
+    await host.goto(root + '?manual=1');
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();
     await host.locator('.connection.connected').waitFor();
-    await student.goto(root);
+    await student.goto(root + '?manual=1');
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();

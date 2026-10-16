@@ -19,7 +19,12 @@ class LivePdfRanges extends PDFDataRangeTransport {
     private readonly file: PdfManifest,
     private readonly source: PdfRangeSource,
     private readonly onError: (message: string) => void,
-  ) { super(file.size, null); }
+  ) {
+    // FlashView delivers random-access ranges only. No separate progressive
+    // byte stream exists, so close PDF.js's full-reader immediately; otherwise
+    // it can wait forever for a progressiveDone event that never arrives.
+    super(file.size, null, true);
+  }
 
   override requestDataRange(begin: number, end: number): void {
     if (this.cancelled) return;

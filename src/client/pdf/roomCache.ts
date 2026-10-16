@@ -129,6 +129,7 @@ export class RoomPdfCache {
   private stopped = false;
   private inFlight = new Map<string, Promise<Uint8Array>>();
   private memory = new Map<string, Uint8Array>();
+  private pendingWrites = new Set<Promise<void>>();
   private memoryBytes = 0;
   private indices = new Map<string, Promise<Set<number>>>();
   private jobs = new Map<string, PdfManifest>();
@@ -208,15 +209,19 @@ export class RoomPdfCache {
     }).then(async data => {
       if (this.stopped) throw Error('Classroom cache closed');
       this.putMemory(key, data);
+      const saving = saveChunk({
+        key, room: this.roomId, document: this.roomId + '/' + file.fileId,
+        index, data: data.slice().buffer,
+      });
+      this.pendingWrites.add(saving);
       try {
-        await saveChunk({
-          key, room: this.roomId, document: this.roomId + '/' + file.fileId,
-          index, data: data.slice().buffer,
-        });
+        await saving;
+        if (this.stopped) return data;
         const set = await this.indexSet(file.fileId);
         set.add(index);
         this.onProgress(completion(file, set));
       } catch { this.warning(); }
+      finally { this.pendingWrites.delete(saving); }
       return data;
     }).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, promise);
@@ -300,6 +305,8 @@ export class RoomPdfCache {
   }
   async clear(): Promise<void> {
     this.dispose();
+    // Ensure an in-progress IndexedDB write cannot reappear after deletion.
+    await Promise.allSettled([...this.pendingWrites]);
     await deleteRoomCache(this.roomId);
   }
 }

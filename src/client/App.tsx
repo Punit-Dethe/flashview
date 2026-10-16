@@ -325,7 +325,9 @@ export function App() {
       presentation.setRoom(initialSession.code);
       socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
     }
-    else if (initialJoin) socket.connect({ role: 'student', name: 'Student', joinToken: initialJoin });
+    else if (initialJoin) socket.connect({ role: 'student', name: 'Student',
+      ...(/^\\d{6}$/.test(initialJoin) ? { code: initialJoin } : { joinToken: initialJoin }),
+    });
     return () => {
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('pageshow', online);
@@ -463,6 +465,9 @@ export function App() {
       modeRef.current = 'welcome';
       setMode('welcome');
       socket.close();
+      // For the QR-first homepage, ending one session prepares another clean room.
+      // The explicit manual fallback retains its existing "Create a room" action.
+      if (!new URLSearchParams(window.location.search).has('manual')) void createRoom();
     } catch {
       setError('Could not clear this room’s local PDF cache. Please retry before ending the room.');
     } finally { setEnding(false); }
@@ -520,7 +525,7 @@ export function App() {
   }
 
   function startFresh(): void {
-    if (modeRef.current === 'host') { setEndConfirm(true); return; }
+    if (modeRef.current === 'host' && hostSession) { setEndConfirm(true); return; }
     socket.close();
     sessionStorage.removeItem('flashview-host');
     setHostSession(null);
@@ -530,10 +535,13 @@ export function App() {
     modeRef.current = 'welcome';
     setMode('welcome');
     window.history.replaceState({}, '', '/');
+    if (!new URLSearchParams(window.location.search).has('manual')) void createRoom();
   }
 
   const joinLink = hostSession ? window.location.origin + '/?join=' + encodeURIComponent(hostSession.joinToken) : '';
   const approvedStudents = students.filter(s => s.approved).length;
+  const autoHomepage = !initialSession && !initialJoin &&
+    !new URLSearchParams(window.location.search).has('manual');
 
   return (
     <div className="app premium-app">
@@ -550,7 +558,15 @@ export function App() {
       </header>
 
       <main className="app-content">
-        {mode === 'welcome' && (
+        {mode === 'welcome' && autoHomepage && (
+          <div className="premium-onboarding" role="status">
+            <div className="spinner"/>
+            <h1>Preparing your room.</h1>
+            <p>Creating a secure invitation and getting everything ready.</p>
+            <button className="outline-button" disabled={busy} onClick={() => void createRoom()}>Retry room creation</button>
+          </div>
+        )}
+        {mode === 'welcome' && !autoHomepage && (
           <div className="welcome">
             <div className="eyebrow"><span className="eyebrow-stroke"/> THE INSTANT CLASSROOM</div>
             <h1>From your phone.<br/><em>Onto the big screen.</em></h1>

@@ -116,6 +116,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   const [attempt, setAttempt] = useState(0);
   const [pageAttempt, setPageAttempt] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [immersiveFallback, setImmersiveFallback] = useState(false);
+  const [fullscreenNotice, setFullscreenNotice] = useState('');
   // A functioning partial viewer must remain visible when caching finishes.
   // Only fall back to the complete local file if the first page has NOT
   // rendered yet or a later page needs repair.
@@ -360,15 +362,28 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   }, [pdfDocument, page]);
 
   const changeFullscreen = async () => {
+    const target = wrapper.current;
+    if (!target) return;
+    setFullscreenNotice('');
+    if (immersiveFallback) {
+      setImmersiveFallback(false);
+      return;
+    }
     try {
-      if (window.document.fullscreenElement) await window.document.exitFullscreen();
-      else await wrapper.current?.requestFullscreen();
-      // State also synchronizes when browser chrome exits via Escape.
-      setFullscreen(Boolean(window.document.fullscreenElement));
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (document.fullscreenEnabled && typeof target.requestFullscreen === 'function') {
+        // Called directly by a real button interaction (user activation).
+        await target.requestFullscreen();
+      } else {
+        // Safari/iOS and restricted embeds may not support element fullscreen.
+        setImmersiveFallback(true);
+        setFullscreenNotice('Browser fullscreen is unavailable here. Using the full-window view; F11 may hide desktop browser chrome.');
+      }
     } catch {
-      // Fullscreen may be unavailable on embedded/mobile browsers; preserve
-      // the currently visible page rather than resetting the presentation.
-      setFullscreen(document.fullscreenElement === wrapper.current);
+      setFullscreen(document.fullscreenElement === target);
+      setImmersiveFallback(true);
+      setFullscreenNotice('The browser blocked native fullscreen. Using the full-window view; try F11 on desktop.');
     }
   };
 
@@ -380,12 +395,14 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     else setAttempt(value => value + 1);
   };
   const showQuickPreview = Boolean(previewImage && page === 1 && renderedPage !== 1);
+  const inFullscreen = fullscreen || immersiveFallback;
   const cachedLabel = cached
     ? (cached.complete ? 'Saved for this room · direct local rendering' :
       formatBytes(cached.bytes) + ' / ' + formatBytes(cached.size) + ' cached · streaming preview')
     : 'Checking local cache…';
   return (
-    <section ref={wrapper} className="viewer" style={fileAccentStyle(file.fileId)} aria-label="PDF presenter">
+    <section ref={wrapper} className={'viewer' + (inFullscreen ? ' viewer-immersive' : '')}
+      style={fileAccentStyle(file.fileId)} aria-label="PDF presenter">
       <header className="viewer-toolbar">
         <div className="viewer-filename">
           <button type="button" className="icon-button close-viewer" onClick={close}
@@ -407,7 +424,25 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
               (cached?.complete ? 'is-complete' : 'is-loading')} aria-hidden="true"/>{cachedLabel}</small>
           </div>
         </div>
-        <nav className="viewer-controls" aria-label="Presentation controls">
+
+      </header>
+      {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
+      <div className="page-stage" ref={stage}>
+        {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
+        {(pdfDocument || showQuickPreview) && <div className="page-shell">
+          {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>}
+          {showQuickPreview && <div className="quick-preview">
+            <img src={previewImage!} alt="First slide preview" data-first-page-preview="true"
+              style={{ transform: `scale(${zoom})` }}/>
+            <span>First slide ready · full PDF caching in background</span>
+          </div>}
+          {rendering && !error && !showQuickPreview && renderedPage !== page &&
+            <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
+        </div>}
+        {!loading && !pdfDocument && !showQuickPreview && <div className="page-loading">PDF is not available yet. Cached bytes are preserved.<button className="outline-button" onClick={retry}>Retry PDF ↻</button></div>}
+      </div>
+      {fullscreenNotice && <div className="viewer-fullscreen-notice" role="status">{fullscreenNotice}</div>}
+        <nav className="viewer-controls viewer-control-pill" aria-label="Presentation controls">
           <button type="button" disabled={!pdfDocument || page <= 1}
             onClick={() => go(page - 1)} aria-label="Previous page" title="Previous page (←)">‹</button>
           <form onSubmit={event => { event.preventDefault(); go(Number(pageInput)); }}>
@@ -430,27 +465,13 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
             aria-label="Zoom in" title="Zoom in">+</button>
           <span className="toolbar-divider" aria-hidden="true"/>
           <button type="button" onClick={changeFullscreen}
-            aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-            title={fullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}>
-            {fullscreen ? '⤢' : '⛶'}
+            aria-label={inFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            title={inFullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}>
+            {inFullscreen
+              ? <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg>
+              : <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg>}
           </button>
         </nav>
-      </header>
-      {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
-      <div className="page-stage" ref={stage}>
-        {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
-        {(pdfDocument || showQuickPreview) && <div className="page-shell">
-          {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>}
-          {showQuickPreview && <div className="quick-preview">
-            <img src={previewImage!} alt="First slide preview" data-first-page-preview="true"
-              style={{ transform: `scale(${zoom})` }}/>
-            <span>First slide ready · full PDF caching in background</span>
-          </div>}
-          {rendering && !error && !showQuickPreview && renderedPage !== page &&
-            <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
-        </div>}
-        {!loading && !pdfDocument && !showQuickPreview && <div className="page-loading">PDF is not available yet. Cached bytes are preserved.<button className="outline-button" onClick={retry}>Retry PDF ↻</button></div>}
-      </div>
       <footer className="viewer-footer">
         <span className="status-dot"/> {cached?.complete ? 'PDF available offline in this room' : 'Caching PDF in background'}
         <span>Previously received bytes are reused · Presentation tabs can be closed freely</span>

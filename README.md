@@ -159,7 +159,7 @@ starts a local Node or Cloudflare relay, runs real Chromium student and host
 sessions, caches and presents the PDF, and exports
 test-artifacts/stage0-*.json.
 
-GitHub Actions saves one-run Node and Cloudflare baseline JSON artifacts.
+GitHub Actions saves three-run Node and Cloudflare baseline JSON artifacts.
 These measure a synthetic file on local headless Chromium, not real campus
 Wi-Fi, cellular latency or phone CPU. Compare the same hardware and scenario,
 preferably with three or more runs, before implementing Stage 1.

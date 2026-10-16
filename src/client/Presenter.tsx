@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { CacheProgress } from './pdf/roomCache';
 import type { PdfManifest } from '../shared/protocol';
 import { PresentationGuest } from './presentation';
 import { Viewer } from './pdf/Viewer';
@@ -8,6 +9,7 @@ export function Presenter() {
   const [key] = useState(() => location.hash.slice(1));
   const [source, setSource] = useState<PresentationGuest | null>(null);
   const [file, setFile] = useState<PdfManifest | null>(null);
+  const [cached, setCached] = useState<CacheProgress | null>(null);
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
@@ -23,6 +25,7 @@ export function Presenter() {
         setFile(pdf);
       }
     };
+    guest.onProgress = progress => setCached(progress);
     guest.onClosed = () => {
       setUnavailable(true);
       setFile(null);
@@ -41,6 +44,8 @@ export function Presenter() {
     };
   }, [key]);
 
+  const pageReady = useCallback(() => source?.firstPageRendered(), [source]);
+
   const close = () => {
     source?.close();
     window.close();
@@ -55,7 +60,7 @@ export function Presenter() {
         <span>The classroom dashboard stays open in the original tab.</span>
       </div>
       {file && source && !unavailable
-        ? <Viewer file={file} socket={source} close={close}/>
+        ? <Viewer file={file} socket={source} close={close} cached={cached} onFirstPageRendered={pageReady}/>
         : <div className="presentation-state" role="status">
           {!unavailable && <span className="spinner"/>}
           <h1>{unavailable ? 'Presentation unavailable.' : 'Opening your presentation.'}</h1>

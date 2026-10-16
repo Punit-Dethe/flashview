@@ -105,7 +105,7 @@ export function Viewer({ file, socket, close, cached, onFirstPageRendered }: {
       if (disposed || !loadingPhase) return;
       aborted = true;
       setLoading(false);
-      setError('PDF opening timed out. Check the student's connection and retry.');
+      setError("PDF opening timed out. Check the student's connection and retry.");
       transport.abort();
       void task.destroy();
     }, 30_000);

@@ -276,3 +276,136 @@
 @media (prefers-reduced-motion: reduce) {
   .presentation-layout .viewer-controls > button { transition: none; }
 }
+
+
+/* Linear-like compact document identity, balanced with the bottom-right dock. */
+.presentation-layout .viewer-filename {
+  top: max(20px, env(safe-area-inset-top));
+  left: max(20px, env(safe-area-inset-left));
+  gap: 10px;
+  padding: 6px 15px 6px 7px;
+  max-width: min(480px, calc(100vw - 40px));
+  border: 1px solid rgba(232,235,246,.12);
+  border-radius: 15px;
+  background: rgba(22,23,30,.89);
+  box-shadow: 0 12px 40px rgba(0,0,0,.3), inset 0 1px rgba(255,255,255,.045);
+}
+.presentation-layout .close-viewer {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  width: 32px; height: 35px;
+  color: #a7aab8;
+}
+.presentation-layout .close-viewer:hover {
+  background: rgba(255,255,255,.09);
+  color: #f5f5fa;
+}
+.presentation-layout .viewer-file-mark {
+  width: 35px;
+  height: 38px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--file-soft, #f0eeff);
+  color: var(--file-accent, #6557c8);
+  border: 1px solid var(--file-line, #dad4ff);
+}
+.presentation-layout .viewer-file-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+.presentation-layout .viewer-file-info strong {
+  max-width: min(315px, 48vw);
+  color: #f1f1f5;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -.014em;
+}
+.presentation-layout .viewer-file-info small {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: min(315px, 48vw);
+  color: #a2a5b4;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+.presentation-layout .viewer-file-status {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #9ba1af;
+}
+.presentation-layout .viewer-file-status.is-complete { background: #75c6a2; }
+.presentation-layout .viewer-file-status.is-loading { background: #c5ae84; }
+
+/* Native Fullscreen moves the viewer to the browser's top layer. Explicitly
+   size that top-layer element instead of relying on its non-fullscreen flex
+   parent, which isn't part of the fullscreen layout context anymore. */
+.presentation-layout > .viewer:fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  background: #000 !important;
+}
+.presentation-layout > .viewer:fullscreen .page-stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+  background: #000;
+}
+/* Keep the painted slide visible while PDF.js renders its next page or
+   resizes to fullscreen; never place an opaque black rectangle over it. */
+.presentation-layout .page-overlay {
+  position: absolute;
+  inset: auto auto 16px 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  min-width: 0;
+  padding: 9px 13px;
+  border: 1px solid #3a3d4a;
+  border-radius: 999px;
+  background: rgba(23,24,32,.91);
+  color: #f1f1f6;
+  font-size: 11px;
+  flex-direction: row;
+  gap: 10px;
+  box-shadow: 0 10px 28px #0008;
+  pointer-events: none;
+}
+.presentation-layout .page-overlay .spinner {
+  width: 14px; height: 14px; border-width: 2px;
+}
+@media(max-width:580px) {
+  .presentation-layout .viewer-filename {
+    left: max(10px, env(safe-area-inset-left));
+    top: max(10px, env(safe-area-inset-top));
+    max-width: calc(100vw - 20px);
+    gap: 7px;
+    padding: 5px 12px 5px 5px;
+  }
+  .presentation-layout .viewer-file-mark { width: 31px; height: 33px; }
+  .presentation-layout .viewer-file-info strong,
+  .presentation-layout .viewer-file-info small { max-width: min(240px, 43vw); }
+}

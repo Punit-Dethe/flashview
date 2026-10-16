@@ -66,6 +66,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [rendering, setRendering] = useState(false);
+  const [renderedPage, setRenderedPage] = useState<number | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [pageAttempt, setPageAttempt] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
@@ -155,6 +156,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
     let cancelled = false;
     const generation = ++renderSequence.current;
     setRendering(true);
+    setRenderedPage(null);
     setError('');
     const timer = setTimeout(() => {
       if (!cancelled && renderSequence.current === generation) {
@@ -193,6 +195,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
         await task.promise;
         if (cancelled || generation !== renderSequence.current) return;
         setRendering(false);
+        setRenderedPage(page);
         setError('');
         if (!reportedFirst.current) {
           reportedFirst.current = true;
@@ -276,7 +279,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
       <div className="page-stage">
         {loading && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
         {pdfDocument && <div className="page-shell">
-          <canvas ref={canvas} aria-label={'Page ' + page}/>
+          <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>
           {rendering && !error && <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
         </div>}
         {!loading && !pdfDocument && <div className="page-loading">PDF is not available yet. Cached bytes are preserved.<button className="outline-button" onClick={retry}>Retry PDF ↻</button></div>}

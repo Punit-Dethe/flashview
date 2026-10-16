@@ -137,8 +137,25 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     await presentation.waitForFunction(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
       return Boolean(canvas && canvas.width >= 500 && canvas.height >= 700 &&
-        !document.querySelector('.page-overlay'));
+        canvas.dataset.renderedPage === '1' && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 20000 });
+    const renderedDarkPixels = await presentation.locator('.page-shell canvas').evaluate(canvas => {
+      const context = canvas.getContext('2d');
+      if (!context) return 0;
+      const { width, height } = canvas;
+      const image = context.getImageData(0, 0, width, height);
+      let ink = 0;
+      // A valid PDF page has visible black text, not merely an empty canvas.
+      for (let y = 0; y < height; y += 4) {
+        for (let x = 0; x < width; x += 4) {
+          const at = (y * width + x) * 4;
+          if (image.data[at] < 120 && image.data[at+1] < 120 && image.data[at+2] < 120) ink++;
+        }
+      }
+      return ink;
+    });
+    assert.ok(renderedDarkPixels > 3, 'Page 1 should contain actually rendered pixels');
+    assert.match(await presentation.locator('.viewer-filename').innerText(), /direct local rendering/);
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
     // Regression: moving around the PDF and waiting past the old 30s watchdog
     // must not destroy the successfully opened PDF document.
@@ -146,7 +163,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     await presentation.getByRole('spinbutton', { name: 'Page number' }).press('Enter');
     await presentation.waitForFunction(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
-      return Boolean(canvas?.getAttribute('aria-label') === 'Page 10' &&
+      return Boolean(canvas?.dataset.renderedPage === '10' &&
         !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 20000 });
     await host.getByText('Fully cached on this computer').waitFor({ timeout: 15000 });
@@ -217,7 +234,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     ]);
     await secondPresentation.waitForFunction(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
-      return Boolean(canvas && canvas.width >= 500 && !document.querySelector('.page-overlay'));
+      return Boolean(canvas && canvas.dataset.renderedPage === '1' && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 20000 });
     await secondPresentation.close();
     // Closing the presentation must not close the classroom or remove the queue.
@@ -239,14 +256,12 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
         .getByRole('button', { name: /Present/ }).click(),
     ]);
     await offlinePresentation.waitForFunction(() =>
-      Boolean(document.querySelector('canvas[aria-label="Page 1"]')) &&
-      !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'),
+      Boolean(document.querySelector('canvas[data-rendered-page="1"]')) && !document.querySelector('.viewer-alert'),
       null, { timeout: 20000 });
     await offlinePresentation.getByRole('spinbutton', { name: 'Page number' }).fill('10');
     await offlinePresentation.getByRole('spinbutton', { name: 'Page number' }).press('Enter');
     await offlinePresentation.waitForFunction(() =>
-      Boolean(document.querySelector('canvas[aria-label="Page 10"]')) &&
-      !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'),
+      Boolean(document.querySelector('canvas[data-rendered-page="10"]')) && !document.querySelector('.viewer-alert'),
       null, { timeout: 20000 });
     await offlinePresentation.close();
 

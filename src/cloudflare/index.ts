@@ -11,6 +11,7 @@ interface Env {
 type Role = 'host' | 'student' | null;
 interface Peer { id: string; role: Role; name: string; approved: boolean }
 interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number }
+interface ResumeSession { id: string; name: string; approved: boolean; token: string }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
 const MAX_STUDENTS = 30;
 const OPEN = 1;
@@ -42,6 +43,7 @@ export class ClassroomRoom extends DurableObject<Env> {
   private peers = new Map<WebSocket, Peer>();
   private config: RoomConfig | null = null;
   private files = new Map<string, PdfManifest>();
+  private sessions = new Map<string, ResumeSession>();
   // Deliberately volatile: a hibernation race is retried by the client's range timeout.
   private ranges = new Map<string, RangeRequest>();
 
@@ -55,6 +57,8 @@ export class ClassroomRoom extends DurableObject<Env> {
       this.config = await ctx.storage.get<RoomConfig>('config') ?? null;
       const stored = await ctx.storage.get<PdfManifest[]>('files') ?? [];
       this.files = new Map(stored.map(file => [file.fileId, file]));
+      const sessions = await ctx.storage.get<ResumeSession[]>('sessions') ?? [];
+      this.sessions = new Map(sessions.map(session => [session.token, session]));
     });
   }
 
@@ -81,6 +85,9 @@ export class ClassroomRoom extends DurableObject<Env> {
   private async persist(): Promise<void> {
     await this.ctx.storage.put('files', [...this.files.values()]);
   }
+  private async persistSessions(): Promise<void> {
+    await this.ctx.storage.put('sessions', [...this.sessions.values()]);
+  }
   private async terminate(): Promise<void> {
     for (const ws of this.peers.keys()) {
       send(ws, { type: 'room.closed' });
@@ -88,6 +95,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
     this.peers.clear();
     this.files.clear();
+    this.sessions.clear();
     this.ranges.clear();
     this.config = null;
     await this.ctx.storage.deleteAll();
@@ -127,7 +135,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client } as ResponseInit);
   }
 
-  private authenticate(ws: WebSocket, peer: Peer, msg: Record<string, unknown>): void {
+  private async authenticate(ws: WebSocket, peer: Peer, msg: Record<string, unknown>): Promise<void> {
     const cfg = this.config;
     if (!cfg || this.expired()) return void send(ws, { type: 'error', message: 'Room expired' });
     if (msg.role === 'host') {
@@ -149,11 +157,46 @@ export class ClassroomRoom extends DurableObject<Env> {
         return void send(ws, { type: 'error', message: 'Room not found' });
       }
       if (!this.host) return void send(ws, { type: 'error', message: 'The host is offline' });
+      const previous = typeof msg.resumeToken === 'string' ? this.sessions.get(msg.resumeToken) : undefined;
+      if (previous) {
+        // The resume token only exists in this page's memory. Never send it to the teacher.
+        const current = this.student(previous.id);
+        if (current && current.ws !== ws) {
+          this.peers.delete(current.ws);
+          current.ws.close(4000, 'Session resumed on another socket');
+        }
+        this.putPeer(ws, {
+          ...peer, id: previous.id, role: 'student', name: previous.name, approved: previous.approved,
+        });
+        let changed = false;
+        for (const file of this.files.values()) {
+          if (file.ownerId === previous.id && file.status === 'offline') {
+            file.status = previous.approved ? 'approved' : 'pending';
+            this.sendHost({ type: 'file.updated', file });
+            changed = true;
+          }
+        }
+        if (changed) await this.persist();
+        const ownFiles = [...this.files.values()].filter(file => file.ownerId === previous.id);
+        send(ws, {
+          type: previous.approved ? 'join.resumed' : 'join.pending',
+          roomCode: cfg.code, resumeToken: previous.token, files: ownFiles,
+        });
+        this.sendHost({
+          type: 'student.updated',
+          student: { id: previous.id, name: previous.name, approved: previous.approved },
+        });
+        return;
+      }
       if (this.students().length >= MAX_STUDENTS) return void send(ws, { type: 'error', message: 'Room is full' });
-      const student: Peer = { ...peer, role: 'student', name: cleanText(msg.name, 32) || 'Student', approved: false };
-      this.putPeer(ws, student);
-      send(ws, { type: 'join.pending', roomCode: cfg.code });
-      this.sendHost({ type: 'student.pending', student: { id: student.id, name: student.name, approved: false } });
+      const newSession: ResumeSession = {
+        id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved: false, token: token(32),
+      };
+      this.sessions.set(newSession.token, newSession);
+      await this.persistSessions();
+      this.putPeer(ws, { ...peer, role: 'student', name: newSession.name, approved: false });
+      send(ws, { type: 'join.pending', roomCode: cfg.code, resumeToken: newSession.token });
+      this.sendHost({ type: 'student.pending', student: { id: peer.id, name: newSession.name, approved: false } });
       return;
     }
     send(ws, { type: 'error', message: 'Invalid role' });
@@ -184,10 +227,11 @@ export class ClassroomRoom extends DurableObject<Env> {
     } catch { return void send(ws, { type: 'error', message: 'Invalid message' }); }
     if (msg.type === 'hello') {
       if (peer.role !== null) return void send(ws, { type: 'error', message: 'Already authenticated' });
-      this.authenticate(ws, peer, msg);
+      await this.authenticate(ws, peer, msg);
       return;
     }
     if (!peer.role) return void send(ws, { type: 'error', message: 'Authentication required' });
+    if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
 
     if (peer.role === 'host') {
       if ((msg.type === 'student.accept' || msg.type === 'student.reject') && typeof msg.studentId === 'string') {
@@ -196,9 +240,21 @@ export class ClassroomRoom extends DurableObject<Env> {
           if (msg.type === 'student.accept') {
             student.peer.approved = true;
             this.putPeer(student.ws, student.peer);
-            send(student.ws, { type: 'join.accepted', roomCode: this.config?.code });
+            const session = [...this.sessions.values()].find(record => record.id === student.peer.id);
+            if (session) {
+              session.approved = true;
+              await this.persistSessions();
+            }
+            send(student.ws, {
+              type: 'join.accepted', roomCode: this.config?.code, resumeToken: session?.token,
+            });
             this.sendHost({ type: 'student.updated', student: { id: student.peer.id, name: student.peer.name, approved: true } });
           } else {
+            const session = [...this.sessions.values()].find(record => record.id === student.peer.id);
+            if (session) {
+              this.sessions.delete(session.token);
+              await this.persistSessions();
+            }
             send(student.ws, { type: 'join.rejected' });
             student.ws.close(1008, 'Rejected');
           }
@@ -280,11 +336,15 @@ export class ClassroomRoom extends DurableObject<Env> {
     const peer = this.peers.get(ws);
     if (!peer) return;
     this.peers.delete(ws);
+    if (peer.role === 'student' && this.student(peer.id)) {
+      // Old socket's close event arrived after a successful session resume.
+      return;
+    }
     if (peer.role === 'host') {
       for (const [other, student] of this.peers) if (student.role === 'student') send(other, { type: 'host.offline' });
     } else if (peer.role === 'student') {
       for (const file of this.files.values()) {
-        if (file.ownerId === peer.id) {
+        if (file.ownerId === peer.id && file.status === 'approved') {
           file.status = 'offline';
           this.sendHost({ type: 'file.updated', file });
         }

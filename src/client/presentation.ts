@@ -13,6 +13,7 @@ export type PdfRangeSource = Pick<RoomSocket, 'requestRange'>;
 export class PresentationHost {
   private tabs = new Map<string, { file: PdfManifest; channel: BroadcastChannel; requests: Map<string, Pending>; timer: ReturnType<typeof setTimeout> }>();
   private cache: RoomPdfCache | null = null;
+  private lastProgressPaint = new Map<string, number>();
   onProgress: (status: CacheProgress) => void = () => {};
   onWarning: (message: string) => void = () => {};
   constructor(private readonly socket: RoomSocket) {}
@@ -21,8 +22,16 @@ export class PresentationHost {
     if (this.cache?.roomId === roomId) return;
     this.closeAll();
     this.cache?.dispose();
+    this.lastProgressPaint.clear();
     const cache = new RoomPdfCache(roomId, this.socket);
     cache.onProgress = progress => {
+      // Persist every chunk immediately but paint/publish only a few times per
+      // second. Never postpone the completion event: PDF.js may switch to its
+      // complete-local-file path when progress.complete becomes true.
+      const now = performance.now();
+      const previous = this.lastProgressPaint.get(progress.fileId) ?? -Infinity;
+      if (!progress.complete && now - previous < 350) return;
+      this.lastProgressPaint.set(progress.fileId, now);
       this.onProgress(progress);
       for (const entry of this.tabs.values()) {
         if (entry.file.fileId === progress.fileId)
@@ -58,7 +67,7 @@ export class PresentationHost {
   queue(file: PdfManifest): void {
     if (file.status === 'approved') this.cache?.prefetch(file);
   }
-  dispose(): void { this.closeAll(); this.cache?.dispose(); this.cache = null; }
+  dispose(): void { this.closeAll(); this.cache?.dispose(); this.cache = null; this.lastProgressPaint.clear(); }
 
   open(file: PdfManifest): void {
     if (!this.cache) throw Error('Classroom cache is unavailable. Refresh the dashboard.');

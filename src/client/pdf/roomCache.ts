@@ -258,14 +258,22 @@ export class RoomPdfCache {
     // Attach to an already-requested chunk before querying IndexedDB.
     const running = this.inFlight.get(key);
     if (running) return running;
-    try {
-      const stored = await readChunk(key);
-      if (stored) {
-        const bytes = new Uint8Array(stored);
-        this.putMemory(key, bytes);
-        return bytes;
-      }
-    } catch { this.warning(); }
+    // Our room/file index was loaded once from IndexedDB and is kept current
+    // after every successful write. Avoid a database transaction for every
+    // chunk already known to be missing.
+    const indexed = await this.indexSet(file.fileId);
+    if (indexed.has(index)) {
+      try {
+        const stored = await readChunk(key);
+        if (stored && stored.byteLength === Math.min(CHUNK_BYTES, file.size - index * CHUNK_BYTES)) {
+          const bytes = new Uint8Array(stored);
+          this.putMemory(key, bytes);
+          return bytes;
+        }
+        // Treat deleted/corrupt chunks as cache misses, not as completed data.
+        indexed.delete(index);
+      } catch { this.warning(); indexed.delete(index); }
+    }
     // Another caller may have started fetching the same chunk during the
     // awaited IndexedDB lookup; do not duplicate a phone round trip.
     const afterRead = this.inFlight.get(key);

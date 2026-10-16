@@ -9,6 +9,20 @@ import { cleanExpiredRoomCaches, type CacheProgress } from './pdf/roomCache';
 import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
+/** A late initial IndexedDB snapshot must never rewind live saved-byte progress. */
+function retainNewestProgress(previous: CacheProgress | undefined, incoming: CacheProgress): CacheProgress {
+  if (!previous || previous.size !== incoming.size) return incoming;
+  return incoming.bytes >= previous.bytes ? incoming : previous;
+}
+
+function visibleCachePercent(progress: CacheProgress | undefined, fileSize: number): string {
+  if (!progress || progress.bytes <= 0) return '0%';
+  if (progress.complete) return '100%';
+  // A 64 KiB write is already 0.125% of a max-size 50 MiB file.
+  // One decimal place prevents large PDFs appearing stuck at zero.
+  return Math.min(99.9, progress.bytes / Math.max(1, fileSize) * 100).toFixed(1) + '%';
+}
+
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string };
@@ -75,7 +89,9 @@ export function App() {
     if (!hostSession) return;
     for (const file of documents) {
       void presentation.progress(file).then(progress => {
-        setCacheProgress(existing => ({ ...existing, [file.fileId]: progress }));
+        setCacheProgress(existing => ({
+          ...existing, [file.fileId]: retainNewestProgress(existing[file.fileId], progress),
+        }));
       }).catch(() => {});
     }
   }, [hostSession?.code, documents, presentation]);
@@ -154,7 +170,9 @@ export function App() {
       }
     };
     presentation.onProgress = progress => {
-      setCacheProgress(existing => ({ ...existing, [progress.fileId]: progress }));
+      setCacheProgress(existing => ({
+        ...existing, [progress.fileId]: retainNewestProgress(existing[progress.fileId], progress),
+      }));
       const now = performance.now();
       const sample = transferSamples.current.get(progress.fileId);
       if (!sample) {
@@ -543,6 +561,13 @@ export function App() {
                                     ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
                                 : 'Ready for progressive transfer'}
                           </span>
+                          <div className="cache-percent-line">
+                            <span>{cacheProgress[file.fileId]?.complete ? 'Ready offline' :
+                              cacheProgress[file.fileId]?.bytes ? 'Downloading PDF' : 'Waiting for download'}</span>
+                            <strong className="cache-percent" data-testid={'percent-' + file.fileId}>
+                              {visibleCachePercent(cacheProgress[file.fileId], file.size)}
+                            </strong>
+                          </div>
                           <div className={'file-progress-track' + (cacheProgress[file.fileId]?.complete ? ' is-complete' : '')} role="progressbar" aria-label={'Cached progress for ' + file.name}
                             aria-valuemin={0} aria-valuemax={100}
                             aria-valuenow={Math.min(100, Math.round((cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100))}>

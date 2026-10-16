@@ -1,6 +1,6 @@
 # FlashView — Engineering Plan
 
-**Status:** Cloudflare Workers Free selected; implementing a per-room Durable Object relay. Browser and campus performance tests are pending.  
+**Status:** Cloudflare Workers Free / Durable Objects relay implemented. Build, Wrangler dry-run, Node relay tests and Cloudflare-emulated Chromium end-to-end PDF test passed (16 October 2026). Public deployment, campus firewall tests, HTTP fallback, and broader PDF fixtures are pending.  
 **Last researched:** 16 October 2026  
 **Product:** Instant, browser-based PDF presentation across different networks, particularly student phones to a classroom smartboard.
 
@@ -267,3 +267,16 @@ Keep changes small; implement M0/M1 first, validate with tests, then iterate M2/
 **Manual deployment:** owner creates Cloudflare Workers Free account and authorizes Wrangler login/deploy. No paid plan, billing setup or custom domain needed. College Wi-Fi may still block WebSocket upgrades: HTTPS fallback remains on roadmap.
 
 Official references: https://developers.cloudflare.com/durable-objects/platform/pricing/ | https://developers.cloudflare.com/durable-objects/best-practices/websockets/ | https://developers.cloudflare.com/workers/static-assets/ | https://vercel.com/changelog/websocket-support-is-now-in-public-beta | https://deno.com/deploy/pricing
+
+### Implemented checkpoint — 16 October 2026
+
+- [x] TypeScript/Node relay reference, ephemeral room creation, file metadata, host/student approval and binary range request protocol.
+- [x] React classroom and phone UI, QR code, PDF.js range transport, basic navigation and loading UI.
+- [x] Cloudflare Workers Free hosting config and hibernatable SQLite-backed `ClassroomRoom` Durable Object relay.
+- [x] PDF.js worker `.mjs` served with correct JavaScript MIME on Node.
+- [x] GitHub Actions automated TypeScript build, `wrangler deploy --dry-run`, protocol/Node integration tests, Chromium real PDF.js render against Node backend **and** local Cloudflare Durable Objects runtime.
+- [ ] Publish to your free `workers.dev` URL (requires owner's Cloudflare login/deployment).
+- [ ] Real phone on cellular data to smartboard on restricted college Wi-Fi, plus WSS-blocked HTTPS fallback.
+- [ ] Benchmark first-page latency, random page jump, unusual and larger PDFs, mobile tab suspension, abusive clients and room persistence after hibernation.
+
+**Tests passing is not the same as production readiness.** The browser smoke test uses one synthetic ~190KB single-page PDF in Chromium. PDF.js behavior on real scanned/large PDFs and multi-page jumps still needs measurement. Zero-cost is conditional on staying within Cloudflare Free limits.

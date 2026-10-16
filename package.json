@@ -16,7 +16,8 @@
     "test:browser": "node --import tsx --test tests/browser.smoke.ts",
     "dev:cloudflare": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "check:cloudflare": "wrangler deploy --dry-run --outdir .wrangler/dry-run"
+    "check:cloudflare": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "test:browser:cloudflare": "node --import tsx tests/cloudflare-runner.ts"
   },
   "dependencies": {
     "pdfjs-dist": "^6.4.299",

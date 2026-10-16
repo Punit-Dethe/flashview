@@ -21,6 +21,10 @@ jobs:
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+      - name: Browser test — Cloudflare Durable Objects
+        run: npm run test:browser
+        env:
+          FLASHVIEW_BACKEND: cloudflare
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

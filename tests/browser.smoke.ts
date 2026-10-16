@@ -17,13 +17,16 @@ async function unusedPort(): Promise<number> {
 }
 async function runningServer() {
   const port = await unusedPort();
-  const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
+  const useCloudflare = process.env.FLASHVIEW_BACKEND === 'cloudflare';
+  const child = spawn(process.execPath, useCloudflare
+    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--port', String(port), '--ip', '127.0.0.1']
+    : ['--import', 'tsx', 'src/server/index.ts'], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT: String(port), NODE_ENV: 'test' },
+    env: { ...process.env, PORT: String(port), NODE_ENV: 'test', BROWSER: 'none' },
   });
   let output = '';
   child.stderr.on('data', data => { output += String(data); });
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 150; i++) {
     if (child.exitCode !== null) throw new Error('Server exited: ' + output);
     try {
       if ((await fetch('http://127.0.0.1:' + port + '/health')).ok) return { port, child };

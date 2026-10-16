@@ -137,6 +137,10 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     assert.match(swatch?.accent ?? '', /^#[0-9A-Fa-f]{6}$/);
     assert.notEqual(swatch?.background, 'rgba(0, 0, 0, 0)');
     if (!process.env.FLASHVIEW_BACKEND) {
+      // Locator waits can scroll the test viewport. Reset before full-page
+      // captures so sticky navigation isn't composited halfway down the page.
+      await host.evaluate(() => window.scrollTo(0, 0));
+      await student.evaluate(() => window.scrollTo(0, 0));
       await host.screenshot({ path: 'test-artifacts/ui/classroom.png', fullPage: true });
       await student.screenshot({ path: 'test-artifacts/ui/student.png', fullPage: true });
     }

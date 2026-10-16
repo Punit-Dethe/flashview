@@ -474,3 +474,45 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     child.kill('SIGTERM');
   }
 });
+
+
+test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await chromium.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage();
+  try {
+    const root = 'http://127.0.0.1:' + port;
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    const code = await host.locator('.room-code').innerText();
+    await host.locator('.connection.connected').waitFor();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
+    await student.getByText('Choose a PDF to share.').waitFor();
+    const large = makePdf(110000);
+    assert.ok(large.length > 12 * 1024 * 1024);
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'large-preview.pdf', mimeType: 'application/pdf', buffer: large,
+    });
+    await host.waitForFunction(async () => {
+      const request = indexedDB.open('flashview-room-cache');
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const result = await new Promise<number>((resolve, reject) => {
+        const count = db.transaction('previews', 'readonly').objectStore('previews').count();
+        count.onsuccess = () => resolve(count.result);
+        count.onerror = () => reject(count.error);
+      });
+      db.close();
+      return result > 0;
+    }, null, { timeout: 25000 });
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

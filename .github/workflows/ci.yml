@@ -29,12 +29,12 @@ jobs:
         run: npm run bench:baseline
         env:
           BENCH_MIB: 2
-          BENCH_RUNS: 1
+          BENCH_RUNS: 3
       - name: Stage 0 baseline — Cloudflare (synthetic 2 MiB)
         run: npm run bench:baseline
         env:
           BENCH_MIB: 2
-          BENCH_RUNS: 1
+          BENCH_RUNS: 3
           FLASHVIEW_BACKEND: cloudflare
       - name: Upload Stage 0 baselines
         uses: actions/upload-artifact@v4

@@ -163,8 +163,20 @@ try {
         const w = window as typeof window & {__flashviewPerf?:{snapshot:()=>{summary:BenchMetric[]}}};
         return w.__flashviewPerf?.snapshot().summary ?? [];
       })));
+      // Instrumentation regressions must fail the benchmark instead of
+      // silently producing zero-valued timing reports.
+      const hostNames = new Set(hostMetrics.map(m => m.metric));
+      for (const metric of ['socket_connect_ms', 'cache_write_ms',
+        'cache_complete_ms', 'page_render_ms']) {
+        if (!hostNames.has(metric)) throw new Error('Missing Stage 0 host metric: ' + metric);
+      }
+      if (studentMetrics.some(metrics => !metrics.some(m => m.metric === 'file_receipt_ms'))) {
+        throw new Error('Missing student file acknowledgement timing');
+      }
       results.push({repetition:iteration,timeToFirstSlideMs:firstSlide,
         timeToCacheAllMs:cacheDuration,pageJumpMs:pageDuration,hostMetrics,studentMetrics});
+      console.log('Stage 0 host metrics: ' +
+        hostMetrics.map(m => m.metric + '=' + m.count).join(', '));
       console.log('Baseline ' + iteration + '/' + repeats + ': first=' +
         (firstSlide ?? 'unavailable') + ' ms, cache=' + cacheDuration +
         ' ms, jump=' + pageDuration + ' ms');

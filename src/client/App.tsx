@@ -6,6 +6,8 @@ import { formatBytes } from './pdf/Viewer';
 import { makeFirstPagePreview } from './pdf/firstPagePreview';
 import { PresentationHost } from './presentation';
 import { cleanExpiredRoomCaches, type CacheProgress } from './pdf/roomCache';
+import { PerfPanel } from './PerfPanel';
+import { perf } from './perf';
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string };
@@ -124,11 +126,18 @@ export function App() {
     if (saved) { sendPreview(fileId, saved); return; }
     if (previewRendering.current.has(fileId)) return;
     previewRendering.current.add(fileId);
+    perf.mark('preview:' + fileId);
     void makeFirstPagePreview(shared.file).then(url => {
+      perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
       if (!filesOnPhone.current.has(fileId)) return;
       firstPageImages.current.set(fileId, url);
       sendPreview(fileId, url);
     }).catch(() => {
+      // If preview generation fails, emit an explicit error sample.
+      // A failed preview must not block the original PDF transfer.
+      if (perf.enabled) {
+        perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
+      }
       // Never repeatedly run an expensive failed decoder on every 20s sync.
       previewFailed.current.add(fileId);
     }).finally(() => previewRendering.current.delete(fileId));
@@ -229,6 +238,7 @@ export function App() {
             Number(part) >= Number(total) || data.length > 5000) return;
         let current = incomingPreviews.current.get(id);
         if (!current || current.parts.length !== total || Date.now() - current.created > 90_000) {
+          perf.mark('preview-receive:' + id);
           current = { parts: new Array<string>(Number(total)), received: 0, created: Date.now() };
           incomingPreviews.current.set(id, current);
         }
@@ -238,6 +248,7 @@ export function App() {
         }
         if (current.received === total) {
           incomingPreviews.current.delete(id);
+          perf.elapsed('preview_receive_ms', 'preview-receive:' + id);
           const url = 'data:image/jpeg;base64,' + current.parts.join('');
           if (url.length <= 390000) void presentation.savePreview(id, url);
         }
@@ -248,7 +259,10 @@ export function App() {
           const local = filesOnPhone.current.get(file.fileId);
           if (local) {
             local.status = file.status;
-            if (file.status === 'approved') preparePreview(file.fileId);
+            if (file.status === 'approved') {
+              perf.elapsed('file_receipt_ms', 'offer:' + file.fileId, file.size);
+              preparePreview(file.fileId);
+            }
           }
           setSentFiles(existing => existing.map(item =>
             item.fileId === file.fileId ? { ...item, status: file.status } : item));
@@ -262,7 +276,10 @@ export function App() {
         const current = filesOnPhone.current.get(id);
         if (current) {
           current.status = status;
-          if (status === 'approved') preparePreview(id);
+          if (status === 'approved') {
+            perf.elapsed('file_receipt_ms', 'offer:' + id, current?.file.size);
+            preparePreview(id);
+          }
         }
         setSentFiles(existing => existing.map(f => f.fileId === id ? { ...f, status } : f));
       }
@@ -307,7 +324,9 @@ export function App() {
       return;
     }
     try {
+      const readStart = perf.enabled ? performance.now() : 0;
       const bytes = await shared.file.slice(begin, end).arrayBuffer();
+      if (perf.enabled) perf.record('sender_read_ms', performance.now() - readStart, { bytes: bytes.byteLength });
       if (!socket.sendBytes(requestId, fileId, begin, bytes)) {
         socket.send({ type: 'range.error', requestId, message: 'Network sender is busy' });
       }
@@ -373,6 +392,7 @@ export function App() {
       const fileId = crypto.randomUUID().replaceAll('-', '');
       const entry: SharedFile = { file, status: 'announcing' };
       filesOnPhone.current.set(fileId, entry);
+      perf.mark('offer:' + fileId);
       setSentFiles(current => [...current, { fileId, name: file.name, size: file.size, status: 'announcing' }]);
       if (!socket.connected) {
         setError('You are offline. The PDF is saved in this tab and will be announced when the connection returns.');
@@ -616,6 +636,7 @@ export function App() {
         )}
         {error && <div className="global-error" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
       </main>
+      <PerfPanel/>
       <footer className="site-footer"><span>FLASHVIEW / AN OPEN CLASSROOM PROJECT</span><span>Designed for the time between sharing and seeing.</span></footer>
     </div>
   );

@@ -223,7 +223,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     await student.evaluate(() => window.dispatchEvent(new Event('online')));
     await host.locator('.document-row').filter({ hasText: 'lost-announcement.pdf' }).waitFor({ timeout: 15000 });
     await student.locator('.sent-row').filter({ hasText: 'lost-announcement.pdf' })
-      .getByText('Received by server').waitFor();
+      .getByText('Shared — caching on classroom computer').waitFor();
     // The host refreshes all server-persisted submissions after missed broadcasts.
     await host.getByRole('button', { name: /Refresh submissions/ }).click();
     assert.equal(await host.locator('.document-row').count(), 2);

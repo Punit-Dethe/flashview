@@ -330,17 +330,32 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     const realSlice = File.prototype.slice;
     const realArrayBuffer = Blob.prototype.arrayBuffer;
     const slowed = new WeakSet<Blob>();
+    const withheld = new WeakSet<Blob>();
+    const waiters: Array<() => void> = [];
+    let released = false;
     File.prototype.slice = function (start?: number, end?: number, contentType?: string) {
       const blob = realSlice.call(this, start, end, contentType);
-      if (this.name === 'progressive.pdf' && typeof start === 'number' &&
-          start >= 65536) slowed.add(blob);
+      if (this.name === 'progressive.pdf' && typeof start === 'number') {
+        if (start >= 65536) slowed.add(blob);
+        // Hold only the final PDF chunk. We explicitly request it as a
+        // foreground range; background must keep caching the other chunks.
+        const tail = Math.floor((this.size - 1) / 65536) * 65536;
+        if (start === tail) withheld.add(blob);
+      }
       return blob;
     };
     Blob.prototype.arrayBuffer = async function () {
+      if (withheld.has(this) && !released) {
+        await new Promise<void>(resolve => waiters.push(resolve));
+      }
       if (slowed.has(this)) {
         await new Promise<void>(resolve => setTimeout(resolve, 450));
       }
       return realArrayBuffer.call(this);
+    };
+    (window as typeof window & { __releaseHeldTail?: () => void }).__releaseHeldTail = () => {
+      released = true;
+      for (const resolve of waiters.splice(0)) resolve();
     };
   });
   const root = 'http://127.0.0.1:' + port;
@@ -357,10 +372,11 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
     await student.getByText('Choose a PDF to share.').waitFor();
 
+    const pdfBytes = makePdf(35000);
     await student.locator('input[type=file]').setInputFiles({
       name: 'progressive.pdf',
       mimeType: 'application/pdf',
-      buffer: makePdf(35000),
+      buffer: pdfBytes,
     });
     const row = host.locator('.document-row').filter({ hasText: 'progressive.pdf' });
     await row.waitFor();
@@ -368,6 +384,35 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
       host.waitForEvent('popup'),
       row.getByRole('button', { name: /Present/ }).click(),
     ]);
+    // Exercise a long foreground PDF range request without moving pages.
+    // On the original scheduler, an active foreground request HALTED the
+    // classroom's background queue until it completed.
+    const lastBegin = Math.floor((pdfBytes.length - 1) / 65536) * 65536;
+    await presentation.evaluate(({ begin, end }) => {
+      const channel = new BroadcastChannel('flashview-present-' + location.hash.slice(1));
+      channel.postMessage({ type: 'range', id: 'held-foreground-123', begin, end });
+      // Remains open until the presentation tab is closed.
+      (window as typeof window & { __testRangeChannel?: BroadcastChannel }).__testRangeChannel = channel;
+    }, { begin: lastBegin, end: pdfBytes.length });
+    const cachedChunks = async () => host.evaluate(room => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('flashview-room-cache');
+      request.onsuccess = () => {
+        const count = request.result.transaction('chunks', 'readonly')
+          .objectStore('chunks').index('room').count(IDBKeyRange.only(room));
+        count.onsuccess = () => resolve(count.result);
+        count.onerror = () => reject(count.error);
+      };
+      request.onerror = () => reject(request.error);
+    }), code);
+    // Allow the initial batch already in-flight before the foreground request
+    // to drain. The background pump must still fetch MORE chunks after that.
+    await delay(1300);
+    const before = await cachedChunks();
+    await delay(2400);
+    const after = await cachedChunks();
+    assert.ok(after > before, 
+      'Background cache must keep advancing while a foreground range remains pending: ' + before + ' -> ' + after);
+
     // Either real ranged PDF.js rendering or the phone-produced first-slide
     // preview can win the race. Both must visibly show the correct first page
     // while a large background transfer is still incomplete.
@@ -390,8 +435,11 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
       assert.equal(await image.evaluate(el => (el as HTMLImageElement).naturalWidth > 200), true);
     }
 
-    // Full download continues while the presentation is visible. Completing
-    // it must NOT destroy or blank the already-rendered slide.
+    // Release the delayed foreground request and the document's cross-ref
+    // tail. The original bytes should finish caching without closing the viewer.
+    await student.evaluate(() => {
+      (window as typeof window & { __releaseHeldTail?: () => void }).__releaseHeldTail?.();
+    });
     await row.getByText('Fully cached on this computer').waitFor({ timeout: 45000 });
     await presentation.locator('canvas[data-rendered-page="1"]').waitFor({ timeout: 20000 });
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);

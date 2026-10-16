@@ -196,6 +196,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
         !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 20000 });
     await host.getByText('Fully cached on this computer').waitFor({ timeout: 15000 });
+    assert.equal(await host.locator('.document-row .file-progress-track').first().getAttribute('aria-valuenow'), '100');
     await delay(process.env.FLASHVIEW_BACKEND === 'cloudflare' ? 350 : 31_200);
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
     await presentation.getByRole('spinbutton', { name: 'Page number' }).fill('1');

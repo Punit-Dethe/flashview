@@ -242,6 +242,7 @@ button { -webkit-tap-highlight-color: transparent; }
   display: block; width: 0; height: 100%; background: var(--file-accent);
   border-radius: inherit; transition: width .25s ease;
 }
+.file-progress-track.is-complete > span { transition: none; }
 .open-button, .row-actions > button:first-child {
   background: #272c43; color: #fff; border-radius: 7px;
   padding: 11px 15px; font-size: 11.5px; font-weight: 700;

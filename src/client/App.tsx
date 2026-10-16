@@ -543,7 +543,7 @@ export function App() {
                                     ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
                                 : 'Ready for progressive transfer'}
                           </span>
-                          <div className="file-progress-track" role="progressbar" aria-label={'Cached progress for ' + file.name}
+                          <div className={'file-progress-track' + (cacheProgress[file.fileId]?.complete ? ' is-complete' : '')} role="progressbar" aria-label={'Cached progress for ' + file.name}
                             aria-valuemin={0} aria-valuemax={100}
                             aria-valuenow={Math.min(100, Math.round((cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100))}>
                             <span style={{ width: Math.min(100, (cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100) + '%' }}/>

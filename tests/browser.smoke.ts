@@ -230,7 +230,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
 
     const [secondPresentation] = await Promise.all([
       host.waitForEvent('popup'),
-      host.locator('.document-row').getByRole('button', { name: /Present/ }).click(),
+      host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).getByRole('button', { name: /Present/ }).click(),
     ]);
     await secondPresentation.waitForFunction(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');

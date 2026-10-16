@@ -10,7 +10,7 @@
     "esModuleInterop": true,
     "noEmit": true,
     "strict": true,
-    "types": ["node", "vite/client"],
+    "types": ["node", "vite/client", "@cloudflare/workers-types"],
     "resolveJsonModule": true
   },
   "include": ["src", "vite.config.ts", "tests"]

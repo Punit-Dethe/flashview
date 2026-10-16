@@ -38,7 +38,7 @@ async function runningServer() {
 }
 
 /** Construct a valid single-page PDF with a realistic (200 KB) byte-range surface. */
-function makePdf(): Buffer {
+function makePdf(fillerLines = 1400): Buffer {
   const pageCount = 10;
   const fontId = pageCount * 2 + 3;
   const kids = Array.from({ length: pageCount }, (_, i) => (3 + i * 2) + ' 0 R');
@@ -61,7 +61,7 @@ function makePdf(): Buffer {
     pdf += (i + 1) + ' 0 obj\n' + objects[i] + '\nendobj\n';
   }
   // Force noncontiguous PDF.js range requests for structure near the file tail.
-  pdf += ('% ' + 'PDF DATA '.repeat(15) + '\n').repeat(1400);
+  pdf += ('% ' + 'PDF DATA '.repeat(15) + '\n').repeat(fillerLines);
   const xref = Buffer.byteLength(pdf);
   pdf += 'xref\n0 ' + (objects.length + 1) + '\n0000000000 65535 f \n';
   for (const offset of offsets) pdf += String(offset).padStart(10, '0') + ' 00000 n \n';
@@ -311,6 +311,105 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     await host.screenshot({ path: 'test-artifacts/host-failure.png', fullPage: true }).catch(() => {});
     await student.screenshot({ path: 'test-artifacts/student-failure.png', fullPage: true }).catch(() => {});
     throw e;
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});
+
+
+test('PDF renders first page before the remaining middle chunks download', { timeout: 85000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await chromium.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage();
+  // Block all the middle chunks. Leave the first/last chunks accessible
+  // because PDF structures and cross-reference tables can live at either end.
+  await student.addInitScript(() => {
+    const realSlice = File.prototype.slice;
+    const realArrayBuffer = Blob.prototype.arrayBuffer;
+    const withheld = new WeakSet<Blob>();
+    const waiters: Array<() => void> = [];
+    let released = false;
+    File.prototype.slice = function (start?: number, end?: number, contentType?: string) {
+      const blob = realSlice.call(this, start, end, contentType);
+      if (this.name === 'progressive.pdf' &&
+          typeof start === 'number' && typeof end === 'number' &&
+          start >= 65536 && end < this.size - 65536) withheld.add(blob);
+      return blob;
+    };
+    Blob.prototype.arrayBuffer = async function () {
+      if (withheld.has(this) && !released) {
+        await new Promise<void>(resolve => waiters.push(resolve));
+      }
+      return realArrayBuffer.call(this);
+    };
+    (window as typeof window & { __releasePdfMiddleChunks?: () => void }).__releasePdfMiddleChunks = () => {
+      released = true;
+      for (const resolve of waiters.splice(0)) resolve();
+    };
+  });
+  const root = 'http://127.0.0.1:' + port;
+  let presentation: Page | null = null;
+  try {
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    const code = await host.locator('.room-code').innerText();
+    await host.locator('.connection.connected').waitFor();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await host.locator('.approval').waitFor();
+    await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
+    await student.getByText('Choose a PDF to share.').waitFor();
+
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'progressive.pdf',
+      mimeType: 'application/pdf',
+      buffer: makePdf(35000),
+    });
+    const row = host.locator('.document-row').filter({ hasText: 'progressive.pdf' });
+    await row.waitFor();
+    [presentation] = await Promise.all([
+      host.waitForEvent('popup'),
+      row.getByRole('button', { name: /Present/ }).click(),
+    ]);
+    await presentation.waitForFunction(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-rendered-page="1"]');
+      return Boolean(canvas && !document.querySelector('.viewer-alert'));
+    }, null, { timeout: 22000 });
+    assert.doesNotMatch(await row.innerText(), /Fully cached on this computer/,
+      'First page MUST be visible before withheld middle chunks finish');
+    assert.match(await presentation.locator('.viewer-filename').innerText(), /streaming preview/);
+
+    const ink = await presentation.locator('canvas').evaluate(canvas => {
+      const node = canvas as HTMLCanvasElement;
+      const context = node.getContext('2d');
+      if (!context) return false;
+      const { data } = context.getImageData(0, 0, node.width, node.height);
+      for (let i = 0; i < data.length; i += 4 * 40) {
+        if (data[i] < 140 && data[i + 1] < 140 && data[i + 2] < 140) return true;
+      }
+      return false;
+    });
+    assert.equal(ink, true, 'Early first page must contain actual text pixels');
+
+    // Finish downloading. Completing the cache should NOT destroy a working
+    // streaming presentation or blank an already visible first slide.
+    await student.evaluate(() => {
+      (window as typeof window & { __releasePdfMiddleChunks?: () => void })
+        .__releasePdfMiddleChunks?.();
+    });
+    await row.getByText('Fully cached on this computer').waitFor({ timeout: 30000 });
+    assert.equal(await presentation.locator('canvas[data-rendered-page="1"]').count(), 1);
+    assert.equal(await presentation.locator('.viewer-alert').count(), 0);
+  } catch (error) {
+    const doc = presentation ? await presentation.evaluate(() => document.body.innerText.slice(0, 1300))
+      .catch(reason => String(reason)) : 'No popup';
+    const hostText = await host.evaluate(() => document.body.innerText.slice(0, 1300))
+      .catch(reason => String(reason));
+    console.error('PROGRESSIVE_PDF_DIAGNOSTICS', JSON.stringify({ doc, hostText }));
+    throw error;
   } finally {
     await browser.close();
     child.kill('SIGTERM');

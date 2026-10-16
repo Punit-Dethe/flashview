@@ -87,12 +87,13 @@ class LivePdfRanges extends PDFDataRangeTransport {
  * A viewer can be closed and reopened without re-downloading the PDF because
  * its range source is backed by the room-level IndexedDB cache.
  */
-export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageRendered }: {
+export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage, onFirstPageRendered }: {
   file: PdfManifest;
   socket: PdfRangeSource;
   close: () => void;
   cached?: CacheProgress | null;
   cachedRoomId?: string | null;
+  previewImage?: string | null;
   onFirstPageRendered?: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -305,6 +306,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
     } else if (pdfDocument) setPageAttempt(value => value + 1);
     else setAttempt(value => value + 1);
   };
+  const showQuickPreview = Boolean(previewImage && page === 1 && renderedPage !== 1);
   const cachedLabel = cached
     ? (cached.complete ? 'Saved for this room · direct local rendering' :
       formatBytes(cached.bytes) + ' / ' + formatBytes(cached.size) + ' cached · streaming preview')
@@ -333,12 +335,16 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
       </header>
       {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
       <div className="page-stage">
-        {loading && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
-        {pdfDocument && <div className="page-shell">
-          <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>
-          {rendering && !error && <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
+        {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
+        {(pdfDocument || showQuickPreview) && <div className="page-shell">
+          {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>}
+          {showQuickPreview && <div className="quick-preview">
+            <img src={previewImage!} alt="First slide preview" data-first-page-preview="true"/>
+            <span>First slide ready · full PDF caching in background</span>
+          </div>}
+          {rendering && !error && !showQuickPreview && <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
         </div>}
-        {!loading && !pdfDocument && <div className="page-loading">PDF is not available yet. Cached bytes are preserved.<button className="outline-button" onClick={retry}>Retry PDF ↻</button></div>}
+        {!loading && !pdfDocument && !showQuickPreview && <div className="page-loading">PDF is not available yet. Cached bytes are preserved.<button className="outline-button" onClick={retry}>Retry PDF ↻</button></div>}
       </div>
       <footer className="viewer-footer">
         <span className="status-dot"/> {cached?.complete ? 'PDF available offline in this room' : 'Caching PDF in background'}

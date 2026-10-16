@@ -105,3 +105,11 @@ Some PDFs are not arranged for early byte-range rendering, so even an otherwise 
 - The range-only PDF.js transport now uses a single complete response per requested range, with explicit range-stream completion.
 
 Preview generation is best effort on low-powered phones and unusually large or password-protected PDFs. The compressed image may look less sharp than the final document.
+
+## Transfer throughput while a presentation tab is open
+
+The classroom tab owns the WebSocket and downloads PDFs continuously after student approval. Opening a presentation no longer pauses the background queue. The downloader retains up to **six concurrent 64 KiB background requests** per round, and immediate PDF.js page-range requests can run concurrently and share already-pending chunk downloads.
+
+Importantly, successful batches are processed by a **continuous asynchronous pump**, not a repeating short timer: browsers throttle short timers when the original classroom dashboard becomes a background tab after the teacher opens Present. The dashboard now shows an approximate **KB/s or MB/s transfer rate** alongside the saved-byte counter for real-world comparison.
+
+The speed is limited by the sending phone's upload link and the available WebSocket relay/network bandwidth; the app cannot guarantee constant throughput across different cellular networks or browsers. A fully suspended or closed classroom tab can still stop transfer; keep the room tab open.

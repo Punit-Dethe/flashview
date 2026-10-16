@@ -349,3 +349,21 @@ The solution adds sender-side first-slide rendering: the phone uses PDF.js on it
 - [ ] Real device verification with image-heavy/scanned PDFs, mobile memory limits, and classroom Wi-Fi.
 
 The image fallback is a still preview of page 1, not a fully interactive partial PDF. PDF.js is still responsible for full quality, zooming, and page navigation as the original PDF becomes ready.
+
+## October 2026 — Fix PDF download slowdown during presentation
+
+Observed: caching quickly advances while teacher views dashboard but stalls/slows when a separate viewer tab opens; navigating to an uncached page suddenly makes requests fast again.
+
+Concrete code issues found:
+- The room cache incremented a foreground counter for every PDF.js range request and explicitly paused background downloads while any such request remained active. PDF.js on a non-linearized PDF can keep these requests pending.
+- Even after successful transfers, the cache scheduled its next batch with a 75 ms setTimeout. Browsers throttle such repeated timers in hidden/background tabs, causing a large drop when the teacher switches to the separate presentation.
+- Foreground range assembly fetched successive 64 KiB chunks sequentially, adding avoidable round-trip latency.
+
+Fixes:
+- [x] Continue a bounded six-request background pipeline while presenting. Foreground range reads are independent and can reuse in-flight chunk promises.
+- [x] Remove the timer between successful batches. Keep one async loop driven by WebSocket reply + IndexedDB persistence completions; use a long backoff only when no file is making progress.
+- [x] Download page-range pieces concurrently, deduplicate in-flight lookups both before and after IndexedDB reads, and preserve fair round-robin scheduling for many students.
+- [x] Prevent an infinite hot loop when browser IndexedDB storage refuses persistence.
+- [x] Expose approximate transfer throughput in dashboard next to unique cached-byte count.
+- [x] Add an end-to-end browser regression: hold a deliberate foreground range pending while the remaining PDF caches; assert cache continues increasing with viewer open, using both Node and locally emulated Cloudflare.
+- [ ] Check actual throttling/power-saving rules on college desktops and phones. If browsers suspend the host page completely, a dedicated Worker/SharedWorker or server-side temporary storage may be needed.

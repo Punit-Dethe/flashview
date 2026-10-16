@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import { chromium, type Page } from 'playwright';
+import { chromium, firefox, type Page } from 'playwright';
+const browserEngine = process.env.FLASHVIEW_BROWSER === 'firefox' ? firefox : chromium;
 import { mkdir } from 'node:fs/promises';
 
 async function unusedPort(): Promise<number> {
@@ -70,9 +71,9 @@ function makePdf(fillerLines = 1400): Buffer {
   return Buffer.from(pdf);
 }
 
-test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSocket relay', { timeout: 90000 }, async () => {
+test('real browser: QR-equivalent room flow renders PDF.js page through WebSocket relay', { timeout: 90000 }, async () => {
   const { port, child } = await runningServer();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await browserEngine.launch({ headless: true });
   const host = await browser.newPage();
   const student = await browser.newPage();
   // Record the current WebSocket in the student's browser without adding a production debug API.
@@ -440,7 +441,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
 
 test('PDF renders first page while a multi-megabyte PDF is still transferring', { timeout: 85000 }, async () => {
   const { port, child } = await runningServer();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await browserEngine.launch({ headless: true });
   const host = await browser.newPage();
   const student = await browser.newPage();
   // Simulate an overloaded phone/campus relay. PDF.js may need bytes from
@@ -598,7 +599,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
 
 test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async () => {
   const { port, child } = await runningServer();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await browserEngine.launch({ headless: true });
   const host = await browser.newPage();
   const student = await browser.newPage();
   try {
@@ -640,7 +641,7 @@ test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async
 
 test('Stage 1: a temporarily full student send buffer waits and drains without rejecting PDFs', { timeout: 70000 }, async () => {
   const { port, child } = await runningServer();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await browserEngine.launch({ headless: true });
   const host = await browser.newPage();
   const student = await browser.newPage();
   await student.addInitScript(() => {

@@ -367,3 +367,20 @@ Fixes:
 - [x] Expose approximate transfer throughput in dashboard next to unique cached-byte count.
 - [x] Add an end-to-end browser regression: hold a deliberate foreground range pending while the remaining PDF caches; assert cache continues increasing with viewer open, using both Node and locally emulated Cloudflare.
 - [ ] Check actual throttling/power-saving rules on college desktops and phones. If browsers suspend the host page completely, a dedicated Worker/SharedWorker or server-side temporary storage may be needed.
+
+
+## Current performance pass — October 2026
+
+Completed:
+- [x] Skip individual IndexedDB transactions for 64 KiB chunks known absent from the room's cached index; still validate reads for known-present chunks.
+- [x] Throttle React and BroadcastChannel progress publications to about 350 ms while publishing 100% completion immediately.
+- [x] Independent fair per-file scheduling in a 16-request global background window, maximum six simultaneous requests per PDF. No successful-batch timer and no pauses on active viewers.
+- [x] Stop scheduling PDF chunks for offline students and allow the resumed file to continue after reconnection.
+- [x] For locally rendered first-page previews >=12 MB, use PDF.js local File.slice byte ranges and asynchronous toBlob JPEG encoding, with the former whole-file path as fallback.
+- [x] Browser test: a blocked student's transfer cannot stop another student's small PDF from caching.
+- [x] Separate large-PDF first-page preview regression fixture.
+
+Consciously deferred pending measured benefit:
+- [ ] A/B benchmark 64 vs 128 vs 256 KiB canonical cache chunks; changing the size also requires versioned room cache migration and tuning foreground PDF.js range retrieval.
+- [ ] Re-architect full-document reuse across tabs to reduce whole-file copies: current direct PDF.js loading from IndexedDB is reliable, while shared buffers or worker-driven decoding require broader cross-browser testing.
+- [ ] Quantitative 5-, 10-, 15-student real-device throughput and memory profiles, including image-heavy PDFs; synthetic Chromium tests cannot substitute for mobile browser suspensions and network effects.

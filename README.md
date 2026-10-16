@@ -113,3 +113,15 @@ The classroom tab owns the WebSocket and downloads PDFs continuously after stude
 Importantly, successful batches are processed by a **continuous asynchronous pump**, not a repeating short timer: browsers throttle short timers when the original classroom dashboard becomes a background tab after the teacher opens Present. The dashboard now shows an approximate **KB/s or MB/s transfer rate** alongside the saved-byte counter for real-world comparison.
 
 The speed is limited by the sending phone's upload link and the available WebSocket relay/network bandwidth; the app cannot guarantee constant throughput across different cellular networks or browsers. A fully suspended or closed classroom tab can still stop transfer; keep the room tab open.
+
+
+## Performance audit optimizations
+
+- **Less IndexedDB overhead:** an indexed cache manifest distinguishes stored chunks from missing chunks, so known missing chunks are fetched directly from the sender, without unnecessary IDB reads. Present-page requests still reuse inflight transfers.
+- **Throttled UI work, not transfers:** chunk bytes persist immediately; the teacher and viewer only receive visible progress broadcasts roughly every 350 ms, with immediate completion events.
+- **Independent student scheduling:** a bounded global window of 16 background chunk requests, up to 6 per file, runs round-robin across all queued PDFs. One slow student's request does not block other students' available slots. Page reads use independent requests. Disconnected senders are paused until they return.
+- **Lower phone memory for large previews:** for PDFs of at least 12 MB, PDF.js reads local byte ranges from the phone instead of first allocating the whole file as an ArrayBuffer. On unusual PDFs where the local range reader cannot finish promptly, the established full-file preview method is retained as a fallback. JPEG compression is asynchronous.
+- **64 KiB original PDF cache chunk layout remains unchanged.** A different chunk size would require a cache-format migration and real-network benchmarks; larger messages are not automatically faster.
+- Fully cached PDFs still use the original document bytes from IndexedDB. Their reconstruction across new presentation tabs has not been restructured because doing so risks extra persistent storage and memory usage.
+
+Tests include stalled foreground requests, a slow student alongside a second student completing a PDF, real PDF rendering, and a separate large-preview fixture. Automated green tests do not establish a universal network speedup. For useful before/after measurements, compare similar 10–20 MB PDFs with the same phone, browser and network, once with the presentation tab open and once closed.

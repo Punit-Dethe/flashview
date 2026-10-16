@@ -146,7 +146,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
       const sockets = record.__flashviewSockets ?? [];
       return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN &&
         document.querySelector('.connection.connected') !== null &&
-        (document.querySelector('.sent-row')?.textContent ?? '').includes('approved');
+        (document.querySelector('.sent-row')?.textContent ?? '').includes('Available while your phone stays online');
     }, null, { timeout: 20000 });
     assert.match(await student.locator('.sent-row').innerText(), /smoke\.pdf/);
 

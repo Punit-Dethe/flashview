@@ -10,6 +10,7 @@ export function Presenter() {
   const [source, setSource] = useState<PresentationGuest | null>(null);
   const [file, setFile] = useState<PdfManifest | null>(null);
   const [cached, setCached] = useState<CacheProgress | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
 
@@ -29,6 +30,7 @@ export function Presenter() {
       }
     };
     guest.onProgress = progress => setCached(progress);
+    guest.onPreview = url => setPreview(url);
     guest.onClosed = () => {
       setUnavailable(true);
       setFile(null);
@@ -67,7 +69,7 @@ export function Presenter() {
         <span>The classroom dashboard stays open in the original tab.</span>
       </div>
       {file && source && !unavailable
-        ? <Viewer file={file} socket={source} close={close} cached={cached} cachedRoomId={roomId} onFirstPageRendered={pageReady}/>
+        ? <Viewer file={file} socket={source} close={close} cached={cached} previewImage={preview} cachedRoomId={roomId} onFirstPageRendered={pageReady}/>
         : <div className="presentation-state" role="status">
           {!unavailable && <span className="spinner"/>}
           <h1>{unavailable ? 'Presentation unavailable.' : 'Opening your presentation.'}</h1>

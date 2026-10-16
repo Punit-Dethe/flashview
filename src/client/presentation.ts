@@ -45,6 +45,15 @@ export class PresentationHost {
     if (cache) await cache.clear();
   }
   resume(): void { this.cache?.resume(); }
+  async savePreview(fileId: string, dataUrl: string): Promise<void> {
+    if (!this.cache) return;
+    await this.cache.savePreview(fileId, dataUrl);
+    for (const tab of this.tabs.values()) {
+      if (tab.file.fileId === fileId) {
+        tab.channel.postMessage({ type: 'preview', fileId, dataUrl });
+      }
+    }
+  }
   /** Do not wait for the presentation window; begin caching on file arrival. */
   queue(file: PdfManifest): void {
     if (file.status === 'approved') this.cache?.prefetch(file);
@@ -76,6 +85,11 @@ export class PresentationHost {
         channel.postMessage({ type: 'metadata', file, roomId: this.cache?.roomId });
         void this.cache?.progress(file).then(progress =>
           channel.postMessage({ type: 'progress', progress })).catch(() => {});
+        void this.cache?.getPreview(file.fileId).then(dataUrl => {
+          if (dataUrl && this.tabs.has(key)) {
+            channel.postMessage({ type: 'preview', fileId: file.fileId, dataUrl });
+          }
+        }).catch(() => {});
       } else if (m.type === 'first-page') {
         this.cache?.prefetch(file);
       } else if (m.type === 'cancel' && typeof m.id === 'string') {
@@ -126,6 +140,7 @@ export class PresentationGuest implements PdfRangeSource {
   onFile: (file: PdfManifest, roomId: string) => void = () => {};
   onClosed: () => void = () => {};
   onProgress: (progress: CacheProgress) => void = () => {};
+  onPreview: (dataUrl: string) => void = () => {};
 
   constructor(key: string) {
     this.channel = new BroadcastChannel(PREFIX + key);
@@ -135,6 +150,8 @@ export class PresentationGuest implements PdfRangeSource {
       if (m.type === 'metadata' && typeof m.roomId === 'string') this.onFile(m.file as PdfManifest, m.roomId);
       if (m.type === 'closed') this.onClosed();
       if (m.type === 'progress' && m.progress) this.onProgress(m.progress as CacheProgress);
+      if (m.type === 'preview' && typeof m.dataUrl === 'string')
+        this.onPreview(m.dataUrl);
       if (m.type === 'data' || m.type === 'error') {
         const pending = this.pending.get(m.id);
         if (!pending) return;

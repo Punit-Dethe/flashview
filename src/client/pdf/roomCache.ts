@@ -1,5 +1,5 @@
-import { MAX_RANGE_BYTES, ROOM_TTL_MS, type PdfManifest } from '../shared/protocol';
-import type { RoomSocket } from './socket';
+import { MAX_RANGE_BYTES, ROOM_TTL_MS, type PdfManifest } from '../../shared/protocol';
+import type { RoomSocket } from '../socket';
 
 export const CHUNK_BYTES = 65_536;
 const DB_NAME = 'flashview-room-cache';
@@ -12,7 +12,7 @@ export type CacheProgress = { fileId: string; bytes: number; size: number; compl
 let openDatabase: Promise<IDBDatabase> | null = null;
 function database(): Promise<IDBDatabase> {
   if (!openDatabase) {
-    openDatabase = new Promise((resolve, reject) => {
+    openDatabase = new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
@@ -30,7 +30,7 @@ function database(): Promise<IDBDatabase> {
       throw error;
     });
   }
-  return openDatabase;
+  return openDatabase!;
 }
 
 function completion(file: PdfManifest, indices: Set<number>): CacheProgress {
@@ -199,12 +199,12 @@ export class RoomPdfCache {
     const promise = new Promise<Uint8Array>((resolve, reject) => {
       if (!this.socket.connected) return reject(Error('The sender is offline. Cached pages remain available.'));
       this.socket.requestRange(file.fileId, begin, end,
-        (start, data) => {
+        (start: number, data: Uint8Array) => {
           if (start !== begin || data.byteLength !== end - begin) {
             reject(Error('Incomplete PDF byte range')); return;
           }
           resolve(data);
-        }, reason => reject(Error(reason)));
+        }, (reason: string) => reject(Error(reason)));
     }).then(async data => {
       if (this.stopped) throw Error('Classroom cache closed');
       this.putMemory(key, data);

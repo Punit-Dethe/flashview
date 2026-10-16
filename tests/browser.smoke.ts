@@ -244,7 +244,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
       await presentation.waitForFunction(() => {
         const wrapper = document.querySelector<HTMLElement>('.viewer');
         const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
-        if (document.fullscreenElement !== wrapper || !canvas ||
+        if (!wrapper || document.fullscreenElement !== wrapper || !canvas ||
             canvas.dataset.renderedPage !== '1') return false;
         const stage = document.querySelector<HTMLElement>('.page-stage');
         if (!stage || stage.clientHeight < innerHeight - 15 ||

@@ -6,10 +6,10 @@
 
 ## Architecture
 
-- One TypeScript/Node server with `ws`: ephemeral classroom rooms, join approval, PDF metadata announcements, and binary WebSocket byte-range relay.
+- Cloudflare Worker + per-classroom Durable Object (Free tier) is the production relay; the small Node/`ws` server remains a local testing baseline.
 - React + Vite browser UI: QR pairing, host document review, mobile file selection, and presentation controls.
-- Mozilla PDF.js `PDFDataRangeTransport`: requests PDF byte ranges from the student's browser via the server, not a full-file upload before opening.
-- No permanent cloud file storage or database. The sender **must remain online**; the server **can access relayed document bytes** (not end-to-end encrypted).
+- Mozilla PDF.js requests only necessary byte ranges for fast first-page opening. Once the first page renders, the classroom tab downloads the rest in the background into room-scoped IndexedDB. Presentation tabs share the persistent byte cache.
+- No cloud file storage. The sender **must stay online until the entire PDF is cached on the classroom computer**; afterward, the PDF is available without the sender. The relay can access document bytes in transit (not end-to-end encrypted).
 - Direct P2P and upload-to-storage are deliberately out of scope for the first release.
 
 ## Local development
@@ -43,10 +43,20 @@ npm run build
 
 For a meaningful connectivity test, place host and student on **different internet connections**; campus Wi-Fi should be tested independently. The initial MVP requires WebSocket upgrade access via port 443. Ordinary HTTPS fallback and live-device benchmarking are planned but **not yet implemented**.
 
+## Room cache and cleanup
+
+- The teacher can open/close individual presentation tabs without losing the classroom queue.
+- FlashView saves received original PDF bytes in **IndexedDB on the teacher's computer**, not Cloudflare.
+- The dashboard shows each PDF's saved bytes; a fully cached document remains presentable after the sender disconnects.
+- After the first page renders, FlashView downloads missing chunks in the background (three chunks in flight); page requests take priority.
+- **End session** opens a confirmation dialogue. Only after checking the warning does FlashView close presentation tabs and delete the room's cached PDFs, without touching original student files. Refreshing/closing a tab doesn't delete the room cache.
+- Abandoned rooms get cleaned on a later website visit after the room's expiry. Browser storage quotas or private mode may limit persistent caching; FlashView displays a warning when local storage fails.
+- Deleting browser data is not forensic disk erasure.
+
 ## Limitations / work remaining
 
-- PDF range loading works as a designed transport interface but must be validated end-to-end with real PDF fixtures, browsers, and physical phones.
-- Student tab suspension/phone lock may interrupt streaming. Keep the sender tab open.
+- Multi-page and simulated connection-loss cases are covered in automated Chromium tests. Real classroom phones and the exact problematic slide PDF still need testing.
+- Student tab suspension/phone lock may interrupt downloads of **uncached** bytes. Keep the sender tab open until the teacher's cache shows 100%.
 - No HTTP-only fallback when firewalls block WebSocket upgrades yet.
 - Data is not encrypted end-to-end; do not use with confidential PDFs.
 - The local Node server uses transient rooms. Cloudflare uses short-lived persisted room metadata so objects can hibernate; PDF bytes are never saved.

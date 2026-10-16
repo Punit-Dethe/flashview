@@ -326,7 +326,7 @@ export function App() {
       socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
     }
     else if (initialJoin) socket.connect({ role: 'student', name: 'Student',
-      ...(/^\\d{6}$/.test(initialJoin) ? { code: initialJoin } : { joinToken: initialJoin }),
+      ...(/^\d{6}$/.test(initialJoin) ? { code: initialJoin } : { joinToken: initialJoin }),
     });
     return () => {
       document.removeEventListener('visibilitychange', wake);
@@ -477,8 +477,8 @@ export function App() {
     event.preventDefault();
     if (switchingRoom) return;
     const identifier = switchCode.trim();
-    if (!/^\\d{6}$/.test(identifier) &&
-        !/^\\d{6}\\.[A-Za-z0-9_-]+$/.test(identifier)) {
+    if (!/^\d{6}$/.test(identifier) &&
+        !/^\d{6}\.[A-Za-z0-9_-]+$/.test(identifier)) {
       setError('Enter a valid six-digit room code or invitation token.');
       return;
     }
@@ -507,7 +507,7 @@ export function App() {
       socket.connect({
         role: 'student',
         name: studentName.trim() || 'Student',
-        ...(/^\\d{6}$/.test(identifier) ? { code: identifier } : { joinToken: identifier }),
+        ...(/^\d{6}$/.test(identifier) ? { code: identifier } : { joinToken: identifier }),
       });
     } catch {
       setError('Unable to clear the current room. Please try again.');
@@ -756,7 +756,7 @@ export function App() {
               <form className="join-form" onSubmit={event => void switchToRoom(event)}>
                 <label htmlFor="switch-code">ROOM CODE</label>
                 <input id="switch-code" inputMode="numeric" autoFocus required autoComplete="off"
-                  placeholder="000 000" value={switchCode} onChange={event => setSwitchCode(event.target.value.replace(/\\s/g, ''))}/>
+                  placeholder="000 000" value={switchCode} onChange={event => setSwitchCode(event.target.value.replace(/\s/g, ''))}/>
                 <label htmlFor="switch-name">YOUR NAME <span>(optional)</span></label>
                 <input id="switch-name" maxLength={32} placeholder="Your name" value={studentName}
                   onChange={event => setStudentName(event.target.value)}/>

@@ -49,6 +49,13 @@ export function App() {
 
   useEffect(() => {
     socket.onStatus = setSocketStatus;
+    // On mobile, background tabs may have their timers and connections suspended.
+    // Returning to the tab checks the socket and resumes it if necessary.
+    const wake = () => { if (document.visibilityState === 'visible') socket.wake(); };
+    const online = () => socket.wake();
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('pageshow', online);
+    window.addEventListener('online', online);
     socket.onMessage = message => {
       const type = message.type;
       if (type === 'room.state') {
@@ -68,7 +75,21 @@ export function App() {
         setDocuments(existing => [...existing.filter(f => f.fileId !== file.fileId), file]);
       }
       if (type === 'join.pending') setJoinState('pending');
-      if (type === 'join.accepted') { setJoinState('accepted'); setError(''); }
+      if (type === 'join.accepted' || type === 'join.resumed') {
+        setJoinState('accepted');
+        setError('');
+        if (type === 'join.resumed' && Array.isArray(message.files)) {
+          const serverFiles = message.files as PdfManifest[];
+          for (const file of serverFiles) {
+            const local = filesOnPhone.current.get(file.fileId);
+            if (local) local.status = file.status;
+          }
+          setSentFiles(existing => existing.map(item => {
+            const server = serverFiles.find(file => file.fileId === item.fileId);
+            return server ? { ...item, status: server.status } : item;
+          }));
+        }
+      }
       if (type === 'join.rejected') { setJoinState('rejected'); setError('The teacher declined this connection.'); }
       if (type === 'host.offline') setError('The teacher disconnected. Waiting for the host to return.');
       if (type === 'file.pending' || type === 'file.approved' || type === 'file.rejected') {
@@ -93,7 +114,12 @@ export function App() {
 
     if (initialSession) socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
     else if (initialJoin) socket.connect({ role: 'student', name: 'Student', joinToken: initialJoin });
-    return () => socket.close();
+    return () => {
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('pageshow', online);
+      window.removeEventListener('online', online);
+      socket.close();
+    };
   // The socket callback refers only to stable refs and state setters.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket]);
@@ -321,6 +347,8 @@ export function App() {
                 </form>
               </div>
             )}
+            {socketStatus === 'connecting' && joinState === 'accepted' &&
+              <div className="stay-online" role="status">Restoring your classroom connection…</div>}
             {joinState === 'pending' && <div className="waiting-card"><span className="spinner"/><h2>Waiting for the teacher.</h2><p>Your request was delivered. Once approved, you can send a PDF.</p></div>}
             {joinState === 'accepted' && (
               <div className="send-workspace">
@@ -343,8 +371,11 @@ export function App() {
             )}
             {joinState === 'rejected' && <button className="outline-button" onClick={startFresh}>Return home →</button>}
             {socketStatus === 'disconnected' && joinState !== 'idle' &&
-              <div className="disconnect-notice">Connection lost. <button onClick={connectStudent}>Reconnect</button>
-                <small>After reconnecting, choose your PDF again to restore sharing.</small></div>}
+              <div className="disconnect-notice">
+                Connection interrupted. FlashView is reconnecting automatically.
+                <button onClick={() => socket.wake()}>Retry now</button>
+                <small>Keep this tab open. Previously selected PDFs remain available when the connection returns.</small>
+              </div>}
             <button className="subtle-link return-home" onClick={startFresh}>← Back to home</button>
           </div>
         )}

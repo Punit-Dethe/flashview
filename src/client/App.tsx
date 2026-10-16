@@ -56,6 +56,8 @@ export function App() {
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
   const [cacheProgress, setCacheProgress] = useState<Record<string, CacheProgress>>({});
+  const transferSamples = useRef(new Map<string, { bytes: number; time: number }>());
+  const [downloadSpeed, setDownloadSpeed] = useState<Record<string, number>>({});
   const [endConfirm, setEndConfirm] = useState(false);
   const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -141,8 +143,21 @@ export function App() {
         previewDelivered.current.clear();
       }
     };
-    presentation.onProgress = progress =>
+    presentation.onProgress = progress => {
       setCacheProgress(existing => ({ ...existing, [progress.fileId]: progress }));
+      const now = performance.now();
+      const sample = transferSamples.current.get(progress.fileId);
+      if (!sample) {
+        transferSamples.current.set(progress.fileId, { bytes: progress.bytes, time: now });
+      } else if (now - sample.time >= 1000 || progress.complete) {
+        const seconds = Math.max(.001, (now - sample.time) / 1000);
+        const bytesPerSecond = Math.max(0, Math.round((progress.bytes - sample.bytes) / seconds));
+        setDownloadSpeed(existing => ({
+          ...existing, [progress.fileId]: progress.complete ? 0 : bytesPerSecond,
+        }));
+        transferSamples.current.set(progress.fileId, { bytes: progress.bytes, time: now });
+      }
+    };
     presentation.onWarning = message => setError(message);
     // On mobile, background tabs may have their timers and connections suspended.
     // Returning to the tab checks the socket and resumes it if necessary.
@@ -315,6 +330,8 @@ export function App() {
       setStudents([]);
       setDocuments([]);
       setCacheProgress({});
+      setDownloadSpeed({});
+      transferSamples.current.clear();
       presentation.setRoom(newSession.code);
       socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });
     } catch (e) {
@@ -383,6 +400,8 @@ export function App() {
       sessionStorage.removeItem('flashview-host');
       setHostSession(null);
       setCacheProgress({});
+      setDownloadSpeed({});
+      transferSamples.current.clear();
       setEndConfirm(false);
       setEndAcknowledged(false);
       modeRef.current = 'welcome';
@@ -498,7 +517,9 @@ export function App() {
                             {cacheProgress[file.fileId]?.complete
                               ? '✓ Fully cached on this computer'
                               : cacheProgress[file.fileId]
-                                ? '↓ ' + formatBytes(cacheProgress[file.fileId].bytes) + ' / ' + formatBytes(file.size) + ' saved'
+                                ? '↓ ' + formatBytes(cacheProgress[file.fileId].bytes) + ' / ' + formatBytes(file.size) + ' saved' +
+                                  (downloadSpeed[file.fileId] > 0
+                                    ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
                                 : 'Ready for progressive transfer'}
                           </span>
                         </div>

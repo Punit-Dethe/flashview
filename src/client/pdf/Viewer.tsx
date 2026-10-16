@@ -100,6 +100,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const wrapper = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const reportedFirst = useRef(false);
   const renderSequence = useRef(0);
   const activeRender = useRef<ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | null>(null);
@@ -120,6 +122,30 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   const [sourceMode, setSourceMode] = useState<'partial' | 'full'>(
     cached?.complete ? 'full' : 'partial',
   );
+  // The projector is a full-viewport canvas. Render pages at the largest
+  // aspect-preserving size that fits it, then apply user-controlled zoom.
+  useEffect(() => {
+    const target = stage.current;
+    if (!target) return;
+    const measure = () => {
+      const width = target.clientWidth;
+      const height = target.clientHeight;
+      if (!width || !height) return;
+      setStageSize(previous => previous.width === width && previous.height === height
+        ? previous : { width, height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
   const completeAvailable = Boolean(cached?.complete && cachedRoomId);
   useEffect(() => {
     if (completeAvailable && sourceMode === 'partial' && !reportedFirst.current) {
@@ -228,7 +254,12 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       try {
         const pdfPage = await pdfDocument.getPage(page);
         if (cancelled || generation !== renderSequence.current || !canvas.current) return;
-        const viewport = pdfPage.getViewport({ scale: zoom });
+        const original = pdfPage.getViewport({ scale: 1 });
+        const fit = stageSize.width > 0 && stageSize.height > 0
+          ? Math.min((stageSize.width - 24) / original.width,
+              (stageSize.height - 12) / original.height)
+          : 1;
+        const viewport = pdfPage.getViewport({ scale: Math.max(0.1, fit) * zoom });
         const pixelRatio = Math.max(0.1, Math.min(
           window.devicePixelRatio || 1, 2,
           Math.sqrt(16_000_000 / Math.max(1, viewport.width * viewport.height)),
@@ -278,7 +309,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       renderSequence.current++;
       activeRender.current?.cancel();
     };
-  }, [pdfDocument, page, zoom, pageAttempt, onFirstPageRendered, onTiming]);
+  }, [pdfDocument, page, zoom, pageAttempt, stageSize.width, stageSize.height,
+    onFirstPageRendered, onTiming]);
 
   useEffect(() => { setPageInput(String(page)); }, [page]);
 
@@ -301,6 +333,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     try {
       if (window.document.fullscreenElement) await window.document.exitFullscreen();
       else await wrapper.current?.requestFullscreen();
+      // State also synchronizes when browser chrome exits via Escape.
       setFullscreen(Boolean(window.document.fullscreenElement));
     } catch { /* School devices may not permit fullscreen. */ }
   };
@@ -321,31 +354,49 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     <section ref={wrapper} className="viewer" style={fileAccentStyle(file.fileId)} aria-label="PDF presenter">
       <header className="viewer-toolbar">
         <div className="viewer-filename">
-          <button type="button" className="icon-button close-viewer" onClick={close} aria-label="Back to documents">←</button>
-          <div><strong title={file.name}>{file.name}</strong><small>{formatBytes(file.size)} · {cachedLabel}</small></div>
+          <button type="button" className="icon-button close-viewer" onClick={close}
+            aria-label="Back to documents" title="Back to classroom">←</button>
+          <div><strong title={file.name}>{file.name}</strong>
+            <small>{cachedLabel}</small>
+          </div>
         </div>
-        <div className="viewer-controls">
-          <button disabled={!pdfDocument || page <= 1} onClick={() => go(page - 1)} aria-label="Previous page">‹</button>
+        <nav className="viewer-controls" aria-label="Presentation controls">
+          <button type="button" disabled={!pdfDocument || page <= 1}
+            onClick={() => go(page - 1)} aria-label="Previous page" title="Previous page (←)">‹</button>
           <form onSubmit={event => { event.preventDefault(); go(Number(pageInput)); }}>
             <input aria-label="Page number" type="number" min={1} max={pdfDocument?.numPages ?? 1}
               value={pageInput} onChange={event => setPageInput(event.target.value)}/>
             <span>/ {pdfDocument?.numPages ?? '—'}</span>
           </form>
-          <button disabled={!pdfDocument || page >= pdfDocument.numPages} onClick={() => go(page + 1)} aria-label="Next page">›</button>
-          <span className="toolbar-divider"/>
-          <button disabled={!pdfDocument || zoom <= 0.5} onClick={() => setZoom(z => Math.max(.5, +(z - .25).toFixed(2)))} aria-label="Zoom out">−</button>
-          <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-          <button disabled={!pdfDocument || zoom >= 2} onClick={() => setZoom(z => Math.min(2, +(z + .25).toFixed(2)))} aria-label="Zoom in">+</button>
-          <button onClick={changeFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>⛶</button>
-        </div>
+          <button type="button" disabled={!pdfDocument || page >= pdfDocument.numPages}
+            onClick={() => go(page + 1)} aria-label="Next page" title="Next page (→)">›</button>
+          <span className="toolbar-divider" aria-hidden="true"/>
+          <button type="button" disabled={(!pdfDocument && !showQuickPreview) || zoom <= 0.5}
+            onClick={() => setZoom(z => Math.max(.5, +(z - .25).toFixed(2)))}
+            aria-label="Zoom out" title="Zoom out">−</button>
+          <button type="button" className="zoom-reset" disabled={zoom === 1}
+            onClick={() => setZoom(1)} aria-label="Reset zoom to fit" title="Reset to fit">
+            {Math.round(zoom * 100)}%
+          </button>
+          <button type="button" disabled={(!pdfDocument && !showQuickPreview) || zoom >= 2}
+            onClick={() => setZoom(z => Math.min(2, +(z + .25).toFixed(2)))}
+            aria-label="Zoom in" title="Zoom in">+</button>
+          <span className="toolbar-divider" aria-hidden="true"/>
+          <button type="button" onClick={changeFullscreen}
+            aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            title={fullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}>
+            {fullscreen ? '⤢' : '⛶'}
+          </button>
+        </nav>
       </header>
       {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
-      <div className="page-stage">
+      <div className="page-stage" ref={stage}>
         {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
         {(pdfDocument || showQuickPreview) && <div className="page-shell">
           {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>}
           {showQuickPreview && <div className="quick-preview">
-            <img src={previewImage!} alt="First slide preview" data-first-page-preview="true"/>
+            <img src={previewImage!} alt="First slide preview" data-first-page-preview="true"
+              style={{ transform: `scale(${zoom})` }}/>
             <span>First slide ready · full PDF caching in background</span>
           </div>}
           {rendering && !error && !showQuickPreview && <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}

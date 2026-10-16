@@ -88,10 +88,6 @@ export function Presenter() {
 
   return (
     <div className="presentation-layout">
-      <div className="presentation-caption">
-        <strong>FLASHVIEW / PRESENTATION</strong>
-        <span>The classroom dashboard stays open in the original tab.</span>
-      </div>
       {file && source && !unavailable
         ? <Viewer file={file} socket={source} close={close} cached={cached} previewImage={preview} cachedRoomId={roomId} onFirstPageRendered={pageReady}
           onTiming={reportTiming}/>

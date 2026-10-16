@@ -140,9 +140,9 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
         canvas.dataset.renderedPage === '1' && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 20000 });
     const renderedDarkPixels = await presentation.locator('.page-shell canvas').evaluate(canvas => {
-      const context = canvas.getContext('2d');
+      const context = (canvas as HTMLCanvasElement).getContext('2d');
       if (!context) return 0;
-      const { width, height } = canvas;
+      const { width, height } = canvas as HTMLCanvasElement;
       const image = context.getImageData(0, 0, width, height);
       let ink = 0;
       // A valid PDF page has visible black text, not merely an empty canvas.

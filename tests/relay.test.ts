@@ -116,13 +116,12 @@ test('different devices exchange metadata, approvals and byte-range PDF data via
     const pdf = Buffer.from('%PDF-1.7\nsample-pdf-binary');
     const fileId = 'pdfabcdef12345';
     student.send({ type: 'file.offer', fileId, name: 'class.pdf', size: pdf.length });
-    await student.wait('file.pending');
+    await student.wait('file.approved');
     const announcement = await host.wait('file.announced');
     assert.equal((announcement.file as { name: string }).name, 'class.pdf');
 
-    host.send({ type: 'file.approve', fileId });
-    await student.wait('file.approved');
-    await host.wait('file.updated');
+    assert.equal((announcement.file as { status: string }).status, 'approved');
+    // Student authorization is the only approval step; no file.allow action.
 
     const requestId = 'requestabc12345';
     host.send({ type: 'range.request', requestId, fileId, begin: 0, end: pdf.length });

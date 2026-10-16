@@ -417,3 +417,16 @@ baseline review and separate user approval.
 - [x] Deterministic adaptive-controller unit tests and congested-sender browser test.
 - [x] Repeated CI A/B benchmark under matched synthetic conditions.
 - [ ] Review A/B and real-phone baseline before tuning further or starting Stage 2.
+
+### Stage 1 result checkpoint
+
+- [x] Three-run Node fixed-vs-adaptive matched benchmark: 1406 vs 909 ms
+  median full-cache completion on artificial 40-ms sender read delay.
+- [x] Three-run Cloudflare local fixed-vs-adaptive matched benchmark:
+  1470 vs 934 ms full-cache median (~36% shorter).
+- [x] Native student socket congestion regression: verified queue pressure
+  applied after authentication, then PDF finished caching without busy error.
+- [x] All TypeScript, relay, Node Chromium and Cloudflare Chromium CI checks
+  passing on implementation commit f3a27ae24d735bc5e6e0cc91533e9ac5233fccf7.
+- [ ] Compare fixed/adaptive on actual phone and smartboard at least three
+  times under similar real classroom conditions before proceeding to Stage 2.

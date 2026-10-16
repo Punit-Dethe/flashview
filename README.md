@@ -186,3 +186,22 @@ Cloudflare relay protocol, room approval, or PDF.js.
   A localhost synthetic comparison is not a real-world phone benchmark.
 
 Stage 2 network packet-size changes are deliberately not included.
+
+### Stage 1 paired synthetic results — Node and Cloudflare local
+
+Three-run medians on GitHub Actions Chromium, four-MiB synthetic PDF,
+one student, 40-ms artificial delay on each local file read:
+
+| Backend | Fixed cache | Adaptive cache | Improvement | Fixed first slide | Adaptive first slide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Node | 1406 ms | 909 ms | 35% | 608 ms | 622 ms |
+| Cloudflare local | 1470 ms | 934 ms | 36% | 654 ms | 637 ms |
+
+Full PDF caching improved in this controlled scenario. Page-jump medians
+remained near the tens-of-milliseconds range but have substantial run-to-run
+jitter. These numbers are not representative of actual phone/Wi-Fi throughput.
+The original fixed-window mode remains available with ?transfer=fixed.
+Source: GitHub Actions run 38959904035, stage1-comparison artifact.
+
+Stage 2 has NOT started. Real-device A/B and multi-student stress results
+are needed before changing packet size or raising global concurrency caps.

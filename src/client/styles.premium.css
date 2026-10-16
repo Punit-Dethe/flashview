@@ -206,3 +206,13 @@ html, body { background: var(--canvas); }
 .premium-app .premium-onboarding h1 { color: #f5f5f8; font-weight: 580; font-size: clamp(26px,4vw,37px); letter-spacing: -.05em; margin-bottom: 10px; }
 .premium-app .premium-onboarding p { color: #989aa8; font-size: 13px; margin-bottom: 26px; }
 .premium-app .premium-onboarding button { opacity: .7; }
+
+/* Full dark-mode coverage: legacy shared sections must not leak light surfaces. */
+.premium-app .site-footer { background: #0e0f12; }
+.premium-app .sent-list { background: transparent; border: 0; border-radius: 0; padding: 0; }
+.premium-app .sent-list h3 { color: #e3e3eb; font-size: 14px; font-weight: 570; letter-spacing: -.02em; }
+.premium-app .sent-row { background: #1b1c22; border: 1px solid #34363f; border-radius: 10px; }
+.premium-app .sent-row .file-meta > span { color: #9b9dab; }
+.premium-app .sent-row .plain-action { color: #c3c5d7; }
+.premium-app .simple-state { background: #1a1b21; border-color: #383942; }
+.premium-app .waiting-card h2 { color: #f0f0f5; }

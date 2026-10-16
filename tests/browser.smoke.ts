@@ -435,6 +435,25 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
       assert.equal(await image.evaluate(el => (el as HTMLImageElement).naturalWidth > 200), true);
     }
 
+    // A second student's small PDF must complete even while the first
+    // student has an intentionally blocked range request. This used to be
+    // impossible when the scheduler awaited a whole per-file batch.
+    const fastStudent = await browser.newPage();
+    await fastStudent.goto(root);
+    await fastStudent.locator('#code').fill(code);
+    await fastStudent.getByRole('button', { name: /Join room/ }).click();
+    const fastApproval = host.locator('.approval').filter({ hasText: 'Student' });
+    await fastApproval.last().getByRole('button', { name: 'Allow' }).click();
+    await fastStudent.getByText('Choose a PDF to share.').waitFor();
+    await fastStudent.locator('input[type=file]').setInputFiles({
+      name: 'fast-peer.pdf', mimeType: 'application/pdf', buffer: makePdf(),
+    });
+    await host.locator('.document-row').filter({ hasText: 'fast-peer.pdf' })
+      .getByText('Fully cached on this computer').waitFor({ timeout: 15000 });
+    assert.doesNotMatch(await row.innerText(), /Fully cached on this computer/,
+      'The deliberately blocked first sender must still be downloading');
+    await fastStudent.close();
+
     // Release the delayed foreground request and the document's cross-ref
     // tail. The original bytes should finish caching without closing the viewer.
     await student.evaluate(() => {

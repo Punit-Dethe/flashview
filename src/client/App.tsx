@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { MAX_PDF_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
@@ -78,6 +78,11 @@ export function App() {
   const [endConfirm, setEndConfirm] = useState(false);
   const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [joinDialogOpen, setJoinDialogOpen] = useState(false);
+  const [switchingRoom, setSwitchingRoom] = useState(false);
+  const [switchCode, setSwitchCode] = useState('');
+  const [copied, setCopied] = useState(false);
+  const autoStarted = useRef(false);
 
   useEffect(() => {
     // Abandoned rooms expire automatically; delete their old browser-stored PDFs
@@ -354,6 +359,18 @@ export function App() {
     }
   }
 
+  // The normal homepage is a ready-to-use room, without an extra setup click.
+  // Student invite links and the explicit ?manual=1 fallback must never auto-create.
+  useEffect(() => {
+    if (autoStarted.current || initialSession || initialJoin ||
+        window.location.pathname !== '/' ||
+        new URLSearchParams(window.location.search).has('manual')) return;
+    autoStarted.current = true;
+    void createRoom();
+  // Intentionally once per mounted app; the ref protects StrictMode effect replays.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function createRoom(): Promise<void> {
     setBusy(true);
     setError('');
@@ -451,6 +468,57 @@ export function App() {
     } finally { setEnding(false); }
   }
 
+  async function switchToRoom(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (switchingRoom) return;
+    const identifier = switchCode.trim();
+    if (!/^\\d{6}$/.test(identifier) &&
+        !/^\\d{6}\\.[A-Za-z0-9_-]+$/.test(identifier)) {
+      setError('Enter a valid six-digit room code or invitation token.');
+      return;
+    }
+    setSwitchingRoom(true);
+    try {
+      // Discard only this room's cache; never touch files on student devices.
+      if (hostSession) {
+        await presentation.clearRoom();
+        socket.send({ type: 'room.end' });
+        sessionStorage.removeItem('flashview-host');
+      }
+      socket.close();
+      presentation.dispose();
+      setHostSession(null);
+      setStudents([]);
+      setDocuments([]);
+      setCacheProgress({});
+      setDownloadSpeed({});
+      setJoinDialogOpen(false);
+      setJoinCode(identifier);
+      setJoinState('idle');
+      setError('');
+      modeRef.current = 'student';
+      setMode('student');
+      window.history.replaceState({}, '', '/?join=' + encodeURIComponent(identifier));
+      socket.connect({
+        role: 'student',
+        name: studentName.trim() || 'Student',
+        ...(/^\\d{6}$/.test(identifier) ? { code: identifier } : { joinToken: identifier }),
+      });
+    } catch {
+      setError('Unable to clear the current room. Please try again.');
+    } finally {
+      setSwitchingRoom(false);
+    }
+  }
+
+  async function copyInvite(): Promise<void> {
+    if (!joinLink) return;
+    try {
+      await navigator.clipboard.writeText(joinLink);
+      setCopied(true);
+    } catch { setError('Could not copy invitation. Check your clipboard permissions.'); }
+  }
+
   function startFresh(): void {
     if (modeRef.current === 'host') { setEndConfirm(true); return; }
     socket.close();
@@ -468,7 +536,7 @@ export function App() {
   const approvedStudents = students.filter(s => s.approved).length;
 
   return (
-    <div className="app">
+    <div className="app premium-app">
       <header className="site-header">
         <div className="brand" onClick={startFresh} role="button" tabIndex={0}
           onKeyDown={e => { if (e.key === 'Enter') startFresh(); }} aria-label="FlashView home">
@@ -476,7 +544,7 @@ export function App() {
           <span>flashview<span className="brand-dot">.</span></span>
         </div>
         <div className="header-right">
-          <span className="header-caption">PDF sharing, without the wait.</span>
+          <span className="header-caption">An easier way to present.</span>
           {mode !== 'welcome' && <span className={'connection ' + socketStatus}><span className="status-dot"/>{statusText(socketStatus)}</span>}
         </div>
       </header>
@@ -518,75 +586,94 @@ export function App() {
         )}
 
         {mode === 'host' && hostSession && (
-          <div className="workspace">
-            <>
-              <div className="workspace-topline"><div className="eyebrow">LIVE ROOM / {hostSession.code}</div><button className="subtle-link" onClick={() => setEndConfirm(true)}>End session ↗</button></div>
-              <h1 className="section-heading">Your room is <em>live.</em></h1>
-              <p className="section-intro">One place for everyone’s slides. Invite students, watch files arrive, and present whenever you're ready.</p>
-              <div className="host-grid">
-                <aside className="room-card">
-                  <div className="card-index">INVITE TO ROOM <span className="room-live"><span className="status-dot"/> LIVE</span></div>
-                  <div className="qr-plate"><QRCodeSVG value={joinLink} size={190} marginSize={1} bgColor="#ffffff" fgColor="#172b2d"/></div>
-                  <div className="room-code-label">SIX-DIGIT ROOM CODE</div>
-                  <div className="room-code">{hostSession.code}</div>
-                  <button className="copy-link" onClick={() => void navigator.clipboard.writeText(joinLink)}>Copy invitation link ↗</button>
-                  <div className="room-divider"/>
-                  <div className="room-metric"><span>Students connected</span><strong>{approvedStudents.toString().padStart(2, '0')}</strong></div>
-                  {students.filter(s => !s.approved).map(s => (
-                    <div className="approval" key={s.id}>
-                      <span><strong>{s.name}</strong><small>Wants to join</small></span>
-                      <div><button className="mini-accept" onClick={() => socket.send({ type: 'student.accept', studentId: s.id })}>Allow</button>
-                        <button className="mini-reject" aria-label={'Decline ' + s.name} onClick={() => socket.send({ type: 'student.reject', studentId: s.id })}>×</button></div>
-                    </div>
-                  ))}
-                </aside>
-                <section className="document-column">
-                  <div className="list-heading"><div className="list-heading-title"><span className="list-kicker">YOUR PRESENTATION QUEUE</span><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2></div><button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>Refresh submissions <span aria-hidden="true">↻</span></button></div>
-                  {documents.length === 0 && (
-                    <div className="empty-list"><span className="empty-art">▤</span>
-                      <h3>Nothing shared yet.</h3><p>Once a student selects a PDF, it'll show up here — no full upload required.</p></div>
-                  )}
-                  <div className="document-list">
-                    {documents.filter(f => f.status !== 'rejected').map(file => (
-                      <article className="document-row" key={file.fileId} style={fileAccentStyle(file.fileId)}>
-                        <div className="file-icon" aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></div>
-                        <div className="file-meta"><strong title={file.name}>{file.name}</strong>
-                          <span>{file.ownerName} · {formatBytes(file.size)}</span>
-                          <span className="cache-status" data-testid={'cache-' + file.fileId}>
-                            {cacheProgress[file.fileId]?.complete
-                              ? '✓ Fully cached on this computer'
-                              : cacheProgress[file.fileId]
-                                ? '↓ ' + formatBytes(cacheProgress[file.fileId].bytes) + ' / ' + formatBytes(file.size) + ' saved' +
-                                  (downloadSpeed[file.fileId] > 0
-                                    ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
-                                : 'Ready for progressive transfer'}
-                          </span>
-                          <div className="cache-percent-line">
-                            <span>{cacheProgress[file.fileId]?.complete ? 'Ready offline' :
-                              cacheProgress[file.fileId]?.bytes ? 'Downloading PDF' : 'Waiting for download'}</span>
-                            <strong className="cache-percent" data-testid={'percent-' + file.fileId}>
-                              {visibleCachePercent(cacheProgress[file.fileId], file.size)}
-                            </strong>
-                          </div>
-                          <div className={'file-progress-track' + (cacheProgress[file.fileId]?.complete ? ' is-complete' : '')} role="progressbar" aria-label={'Cached progress for ' + file.name}
-                            aria-valuemin={0} aria-valuemax={100}
-                            aria-valuenow={Math.min(100, Math.round((cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100))}>
-                            <span style={{ width: Math.min(100, (cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100) + '%' }}/>
-                          </div>
-                        </div>
-                        {file.status === 'approved' || cacheProgress[file.fileId]?.complete ? (
-                          <button className="open-button" onClick={() => {
-                            try { presentation.open(file); }
-                            catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
-                          }}>Present ↗</button>
-                        ) : <span className="unavailable">{file.status === 'offline' ? 'Sender offline' : file.status}</span>}
-                      </article>
-                    ))}
-                  </div>
-                  {approvedStudents > 0 && <p className="participants">{students.filter(s => s.approved).map(s => s.name).join(' · ')} connected</p>}
-                </section>
+          <div className="workspace premium-workspace">
+            <div className="workspace-topline">
+              <span className="workspace-location">Workspace <span aria-hidden="true">/</span> <strong>Room overview</strong></span>
+              <button type="button" className="subtle-link session-end" onClick={() => setEndConfirm(true)}>End session</button>
+            </div>
+            <div className="workspace-introduction">
+              <div className="eyebrow"><span className="status-dot"/> ROOM IS READY</div>
+              <h1 className="section-heading">Your room is live.</h1>
+              <p className="section-intro">Share the code, welcome your participants, and present in seconds.</p>
+            </div>
+            <section className="room-card premium-invite" aria-label="Invite people to your room">
+              <div className="invite-content">
+                <div className="room-code-label">YOUR ROOM CODE</div>
+                <div className="room-code">{hostSession.code}</div>
+                <p className="room-instructions">Anyone with the code can request to join. You'll approve participants before they can share.</p>
+                <div className="invite-actions">
+                  <button type="button" className="primary-button" onClick={() => void copyInvite()}>
+                    {copied ? 'Link copied' : 'Copy invite link'} <span aria-hidden="true">{copied ? '✓' : '↗'}</span>
+                  </button>
+                  <button type="button" className="outline-button" onClick={() => {
+                    setSwitchCode('');
+                    setJoinDialogOpen(true);
+                  }}>Join another room <span aria-hidden="true">↗</span></button>
+                </div>
               </div>
-            </>
+              <div className="qr-side">
+                <div className="qr-plate"><QRCodeSVG value={joinLink} size={190} marginSize={1} bgColor="#ffffff" fgColor="#151619"/></div>
+                <span>SCAN TO JOIN</span>
+              </div>
+            </section>
+            {students.some(s => !s.approved) && <section className="pending-panel" aria-label="Pending participants">
+              <div className="pending-heading"><span className="status-dot"/> Waiting for your approval</div>
+              {students.filter(s => !s.approved).map(s => <div className="approval" key={s.id}>
+                <span><strong>{s.name}</strong><small>Requested access to this room</small></span>
+                <div>
+                  <button className="mini-accept" onClick={() => socket.send({ type: 'student.accept', studentId: s.id })}>Allow</button>
+                  <button className="mini-reject" onClick={() => socket.send({ type: 'student.reject', studentId: s.id })} aria-label={'Decline ' + s.name}>Decline</button>
+                </div>
+              </div>)}
+            </section>}
+            <section className="document-column">
+              <div className="list-heading">
+                <div className="list-heading-title"><h2>Documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2><p>Files appear here as soon as they're shared.</p></div>
+                <button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>Refresh submissions <span aria-hidden="true">↻</span></button>
+              </div>
+              <div className="document-list">
+                {documents.filter(f => f.status !== 'rejected').length === 0 &&
+                  <div className="empty-list">
+                    <span className="empty-art" aria-hidden="true">▤</span>
+                    <h3>Nothing shared yet</h3>
+                    <p>Once a participant sends a PDF, it will appear here automatically.</p>
+                  </div>}
+                {documents.filter(f => f.status !== 'rejected').map(file => (
+                  <article className="document-row" key={file.fileId} style={fileAccentStyle(file.fileId)}>
+                    <div className="file-icon" aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></div>
+                    <div className="file-meta">
+                      <strong title={file.name}>{file.name}</strong>
+                      <span>{file.ownerName} · {formatBytes(file.size)}</span>
+                      <span className="cache-status" data-testid={'cache-' + file.fileId}>
+                        {cacheProgress[file.fileId]?.complete
+                          ? '✓ Fully cached on this computer'
+                          : cacheProgress[file.fileId]
+                            ? '↓ ' + formatBytes(cacheProgress[file.fileId].bytes) + ' / ' + formatBytes(file.size) + ' saved' +
+                              (downloadSpeed[file.fileId] > 0 ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
+                            : 'Ready for progressive transfer'}
+                      </span>
+                      <div className="cache-percent-line">
+                        <span>{cacheProgress[file.fileId]?.complete ? 'Ready offline' :
+                          cacheProgress[file.fileId]?.bytes ? 'Downloading PDF' : 'Waiting for download'}</span>
+                        <strong className="cache-percent" data-testid={'percent-' + file.fileId}>{visibleCachePercent(cacheProgress[file.fileId], file.size)}</strong>
+                      </div>
+                      <div className={'file-progress-track' + (cacheProgress[file.fileId]?.complete ? ' is-complete' : '')}
+                        role="progressbar" aria-label={'Cached progress for ' + file.name} aria-valuemin={0} aria-valuemax={100}
+                        aria-valuenow={Math.min(100, Math.round((cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100))}>
+                        <span style={{ width: Math.min(100, (cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100) + '%' }}/>
+                      </div>
+                    </div>
+                    {file.status === 'approved' || cacheProgress[file.fileId]?.complete ?
+                      <button className="open-button" onClick={() => {
+                        try { presentation.open(file); }
+                        catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
+                      }}>Present <span aria-hidden="true">↗</span></button>
+                      : <span className="unavailable">{file.status === 'offline' ? 'Sender offline' : file.status}</span>}
+                  </article>
+                ))}
+              </div>
+              {approvedStudents > 0 && <p className="participants">{approvedStudents} participant{approvedStudents === 1 ? '' : 's'} connected · {students.filter(s => s.approved).map(s => s.name).join(', ')}</p>}
+            </section>
           </div>
         )}
 
@@ -640,6 +727,29 @@ export function App() {
                 <small>Keep this tab open. Previously selected PDFs remain available when the connection returns.</small>
               </div>}
             <button className="subtle-link return-home" onClick={startFresh}>← Back to home</button>
+          </div>
+        )}
+        {joinDialogOpen && mode === 'host' && hostSession && (
+          <div className="dialog-backdrop" onMouseDown={event => {
+            if (event.target === event.currentTarget && !switchingRoom) setJoinDialogOpen(false);
+          }}>
+            <section className="end-dialog switch-dialog" role="dialog" aria-modal="true" aria-labelledby="switch-title">
+              <div className="eyebrow">JOIN ANOTHER ROOM</div>
+              <h2 id="switch-title">Have a room code?</h2>
+              <p>Enter the six-digit code shared by your teacher. Joining will end your current room and clear its saved PDF copies on this computer.</p>
+              <form className="join-form" onSubmit={event => void switchToRoom(event)}>
+                <label htmlFor="switch-code">ROOM CODE</label>
+                <input id="switch-code" inputMode="numeric" autoFocus required autoComplete="off"
+                  placeholder="000 000" value={switchCode} onChange={event => setSwitchCode(event.target.value.replace(/\\s/g, ''))}/>
+                <label htmlFor="switch-name">YOUR NAME <span>(optional)</span></label>
+                <input id="switch-name" maxLength={32} placeholder="Your name" value={studentName}
+                  onChange={event => setStudentName(event.target.value)}/>
+                <div className="end-dialog-actions">
+                  <button type="button" className="outline-button" disabled={switchingRoom} onClick={() => setJoinDialogOpen(false)}>Cancel</button>
+                  <button type="submit" className="primary-button" disabled={switchingRoom}>{switchingRoom ? 'Joining…' : 'Join room →'}</button>
+                </div>
+              </form>
+            </section>
           </div>
         )}
         {endConfirm && mode === 'host' && hostSession && (

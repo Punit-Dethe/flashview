@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import { chromium } from 'playwright';
+import { chromium, type Page } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 
 async function unusedPort(): Promise<number> {
@@ -86,6 +86,12 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
   ` });
   const root = 'http://127.0.0.1:' + port;
   const browserLogs: string[] = [];
+  const presenters: Page[] = [];
+  host.on('popup', page => {
+    presenters.push(page);
+    page.on('pageerror', err => browserLogs.push('presenter JS ERROR: ' + err.message));
+    page.on('console', m => { if (m.type() === 'error') browserLogs.push('presenter console: ' + m.text()); });
+  });
   host.on('pageerror', error => browserLogs.push('host JS ERROR: ' + error.message));
   student.on('pageerror', error => browserLogs.push('student JS ERROR: ' + error.message));
   host.on('console', message => { if (message.type() === 'error') browserLogs.push('host CONSOLE: ' + message.text()); });
@@ -203,7 +209,16 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     const studentState = await student.evaluate(() => ({
       text: document.body.innerText.slice(0, 1400),
     })).catch(reason => ({ error: String(reason) }));
-    console.error('BROWSER_DIAGNOSTICS', JSON.stringify({ hostState, studentState, browserLogs }));
+    const presenterStates = await Promise.all(presenters.map(page => page.evaluate(() => ({
+      href: location.href,
+      viewer: document.querySelector('.viewer')?.textContent?.slice(0, 600),
+      error: document.querySelector('.viewer-alert')?.textContent,
+      stage: document.querySelector('.page-loading')?.textContent,
+      overlay: document.querySelector('.page-overlay')?.textContent,
+      canvas: document.querySelector('canvas')?.width,
+      text: document.body.innerText.slice(0, 1300),
+    })).catch(err => ({ failure: String(err) }))));
+    console.error('BROWSER_DIAGNOSTICS', JSON.stringify({ hostState, studentState, presenterStates, browserLogs }));
     await mkdir('test-artifacts', { recursive: true });
     await host.screenshot({ path: 'test-artifacts/host-failure.png', fullPage: true }).catch(() => {});
     await student.screenshot({ path: 'test-artifacts/student-failure.png', fullPage: true }).catch(() => {});

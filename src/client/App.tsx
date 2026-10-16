@@ -4,7 +4,7 @@ import { MAX_PDF_BYTES, type PdfManifest, type StudentInfo } from '../shared/pro
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
 import { formatBytes } from './pdf/Viewer';
 import { PresentationHost } from './presentation';
-import type { CacheProgress } from './pdf/roomCache';
+import { cleanExpiredRoomCaches, type CacheProgress } from './pdf/roomCache';
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string };
@@ -53,6 +53,12 @@ export function App() {
   const [endConfirm, setEndConfirm] = useState(false);
   const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
+
+  useEffect(() => {
+    // Abandoned rooms expire automatically; delete their old browser-stored PDFs
+    // on the next visit even if no new room is created.
+    void cleanExpiredRoomCaches(initialSession?.code);
+  }, []);
 
   useEffect(() => {
     if (!hostSession) return;

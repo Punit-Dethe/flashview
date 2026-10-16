@@ -306,3 +306,18 @@ Root issue: the UI previously listed a picked `File` immediately and called it u
 Comparison: `https://nologin.in/` (the service discoverable by research; `nologin.com` was not accessible) advertises full upload once, server-backed access from any device and default 48h expiry. No reliable open-source implementation link was found. This explains why sender closure does not affect NoLogin files. FlashView deliberately keeps byte-range PDFs on the sender for fast first-page delivery and zero object-storage costs. **It cannot load uncached pages while the sender browser is suspended or closed.** Future opt-in R2 staging, resumable uploads (tus.io protocol), and expiry policies need explicit cost/quota/privacy research, not promises.
 
 References: https://nologin.in/ ; https://tus.io/faq.html ; https://developers.cloudflare.com/durable-objects/best-practices/websockets/ .
+
+
+## Completed cache implementation (16 October 2026)
+
+- [x] Room-scoped IndexedDB cache of original 64 KiB PDF byte chunks, shared across all presenter tabs on the classroom computer.
+- [x] PDF.js receives cached byte ranges first, downloads missing ranges through existing Cloudflare WSS relay, deduplicates simultaneous misses, and retains chunks after the presenter tab closes.
+- [x] After first successful page render, the classroom host downloads remaining PDF chunks in a modest parallel window; interactive page ranges take priority.
+- [x] Progress displayed as unique cached bytes / original PDF size. Fully cached PDFs can be reopened even if the student's browser disconnects; no persistent cloud storage costs.
+- [x] Fix 30s PDF.js watchdog destroying an already-open document; fix raster slide hiding from maxImageSize limit; guard asynchronous page render/cancel races; request upcoming page dependencies.
+- [x] Explicit End Room dialog requires acknowledgement, closes presenter tabs, deletes only that room's locally cached PDF data (without deleting originals on student devices), and closes the room.
+- [x] Refresh/accidental tab closure does not delete cache. Expired, abandoned rooms get cleaned up on a subsequent visit. Browser quotas/eviction can still remove local storage; privacy modes may disable IndexedDB.
+- [ ] Physical-device test with large, scanned and image-heavy PDFs, slow networks and 15 simultaneous students (the supplied problematic file is not yet attached).
+- [ ] Evaluate further JPEG2000/CMap decoder compatibility and per-file quality issues using failing document fixtures.
+
+Privacy caveat: deletion removes browser-accessible IndexedDB records but does not guarantee forensic secure erasure. No promise of byte caching if browser storage is denied or full.

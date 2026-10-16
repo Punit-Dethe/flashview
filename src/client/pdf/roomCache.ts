@@ -262,15 +262,19 @@ export class RoomPdfCache {
       for (const [fileId, file] of this.jobs) {
         const total = Math.ceil(file.size / CHUNK_BYTES);
         let finished = true;
-        for (let i = 0; i < total; i++) {
+        // Three chunks per round trip window keeps transfer moving under latency
+        // without flooding a mobile sender or delaying interactive page requests.
+        const parallel = 3;
+        for (let i = 0; i < total; i += parallel) {
           if (this.stopped) return;
-          // Foreground PDF.js requests always get priority over prefetching.
           while (this.foreground > 0 && !this.stopped) {
             await new Promise(resolve => setTimeout(resolve, 80));
           }
           if (!this.socket.connected) { finished = false; break; }
-          try { await this.chunk(file, i); }
-          catch { finished = false; break; }
+          try {
+            await Promise.all(Array.from({ length: Math.min(parallel, total - i) },
+              (_, offset) => this.chunk(file, i + offset)));
+          } catch { finished = false; break; }
         }
         if (finished) this.jobs.delete(fileId);
         else break;

@@ -20,7 +20,8 @@ export function Presenter() {
     const guest = new PresentationGuest(key);
     let received = false;
     guest.onFile = pdf => {
-      if (pdf.status === 'approved') {
+      // Host only opens offline PDFs when the room cache is complete.
+      if (pdf.status === 'approved' || pdf.status === 'offline') {
         received = true;
         setFile(pdf);
       }
@@ -35,10 +36,14 @@ export function Presenter() {
     const retry = setInterval(() => {
       if (!received) guest.ready();
     }, 1200);
+    const waitLimit = setTimeout(() => {
+      if (!received) setUnavailable(true);
+    }, 10_000);
     const unload = () => guest.close();
     window.addEventListener('pagehide', unload);
     return () => {
       clearInterval(retry);
+      clearTimeout(waitLimit);
       window.removeEventListener('pagehide', unload);
       guest.close();
     };

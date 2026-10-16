@@ -278,37 +278,48 @@ export class RoomPdfCache {
       this.foreground--;
     }
   }
-  /** Called after the first page renders: fetch every remaining chunk once. */
+  /** Queue a PDF immediately when an approved student's file is announced. */
   prefetch(file: PdfManifest): void {
     if (this.stopped || this.jobs.has(file.fileId)) return;
     this.jobs.set(file.fileId, file);
     void this.work();
   }
-  /** Resume stopped background jobs when a student rejoins. */
+  /** Resume pending transfers on socket reconnection. */
   resume(): void { if (!this.stopped) void this.work(); }
   private async work(): Promise<void> {
     if (this.working || this.stopped || this.jobs.size === 0) return;
     this.working = true;
+    let progressed = false;
     try {
+      // Fair round-robin: a 50 MB file or an offline student must not block
+      // the next 14 students' PDFs from caching.
       for (const [fileId, file] of this.jobs) {
+        if (this.stopped) return;
+        if (!this.socket.connected) break;
+        const cached = await this.indexSet(fileId);
         const total = Math.ceil(file.size / CHUNK_BYTES);
-        let finished = true;
-        // Three chunks per round trip window keeps transfer moving under latency
-        // without flooding a mobile sender or delaying interactive page requests.
-        const parallel = 3;
-        for (let i = 0; i < total; i += parallel) {
-          if (this.stopped) return;
-          while (this.foreground > 0 && !this.stopped) {
-            await new Promise(resolve => setTimeout(resolve, 80));
-          }
-          if (!this.socket.connected) { finished = false; break; }
-          try {
-            await Promise.all(Array.from({ length: Math.min(parallel, total - i) },
-              (_, offset) => this.chunk(file, i + offset)));
-          } catch { finished = false; break; }
+        const next: number[] = [];
+        for (let i = 0; i < total && next.length < 3; i++) {
+          if (!cached.has(i)) next.push(i);
         }
-        if (finished) this.jobs.delete(fileId);
-        else break;
+        if (next.length === 0) {
+          this.jobs.delete(fileId);
+          this.onProgress(completion(file, cached));
+          continue;
+        }
+        // Interactive PDF.js pages outrank background copies.
+        while (this.foreground > 0 && !this.stopped) {
+          await new Promise(resolve => setTimeout(resolve, 60));
+        }
+        if (this.stopped) return;
+        try {
+          await Promise.all(next.map(index => this.chunk(file, index)));
+          progressed = true;
+          if (cached.size >= total) this.jobs.delete(fileId);
+        } catch {
+          // Sender may be temporarily offline. Keep this file queued, but
+          // continue to other students rather than blocking the classroom.
+        }
       }
     } finally {
       this.working = false;
@@ -317,7 +328,7 @@ export class RoomPdfCache {
         this.retryTimer = setTimeout(() => {
           this.retryTimer = null;
           void this.work();
-        }, 4500);
+        }, progressed ? 75 : 4500);
       }
     }
   }

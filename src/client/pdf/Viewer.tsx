@@ -60,6 +60,7 @@ export function Viewer({ file, socket, close }: {
   const [rendering, setRendering] = useState(false);
   const [received, setReceived] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const wrapper = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,11 +71,23 @@ export function Viewer({ file, socket, close }: {
     setPage(1);
     setPageInput('1');
     setReceived(0);
-    const transport = new LivePdfRanges(file, socket,
-      reason => { if (!disposed) setError(reason); },
+    let failed = false;
+    let task: ReturnType<typeof getDocument> | null = null;
+    let transport: LivePdfRanges;
+    const fail = (reason: string) => {
+      if (disposed || failed) return;
+      failed = true;
+      setError(reason);
+      setLoading(false);
+      setRendering(false);
+      transport.abort();
+      void task?.destroy();
+    };
+    transport = new LivePdfRanges(file, socket,
+      reason => fail('Cannot receive PDF data: ' + reason),
       bytes => { if (!disposed) setReceived(n => n + bytes); },
     );
-    const task = getDocument({
+    task = getDocument({
       range: transport,
       rangeChunkSize: REQUEST_CHUNK,
       disableStream: true,
@@ -82,26 +95,29 @@ export function Viewer({ file, socket, close }: {
       disableRange: false,
       maxImageSize: 15_000_000,
     });
+    const watchdog = setTimeout(() =>
+      fail('The PDF is taking too long to load. Check the sender connection and retry.'), 30_000);
     task.onPassword = () => {
-      if (!disposed) setError('This PDF is password protected. Password entry is not supported yet.');
+      fail('This PDF is password protected. Password entry is not supported yet.');
     };
     task.promise.then(pdf => {
-      if (disposed) return;
+      if (disposed || failed) return;
       setDocument(pdf);
       setLoading(false);
       setError('');
     }).catch(e => {
-      if (!disposed) {
+      if (!disposed && !failed) {
         setLoading(false);
         setError(e instanceof Error ? e.message : 'Unable to load this PDF');
       }
     });
     return () => {
       disposed = true;
+      clearTimeout(watchdog);
       transport.abort();
-      void task.destroy();
+      void task?.destroy();
     };
-  }, [file.fileId, file.size, socket]);
+  }, [file.fileId, file.size, socket, attempt]);
 
   useEffect(() => {
     if (!document || !canvas.current) return;
@@ -175,14 +191,14 @@ export function Viewer({ file, socket, close }: {
           <button onClick={changeFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>⛶</button>
         </div>
       </header>
-      {error && <div className="viewer-alert" role="alert">{error} <button onClick={() => setError('')}>Dismiss</button></div>}
+      {error && <div className="viewer-alert" role="alert">{error} <button onClick={() => setAttempt(value => value + 1)}>Retry PDF ↻</button></div>}
       <div className="page-stage">
         {loading && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Requesting document structure from the sender…</span></div>}
         {document && <div className="page-shell">
           <canvas ref={canvas} aria-label={'Page ' + page}/>
-          {rendering && <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
+          {rendering && !error && <div className="page-overlay" aria-live="polite"><div className="spinner"/>Loading page {page}…</div>}
         </div>}
-        {!loading && !document && <div className="page-loading">Unable to open this PDF. Check that the student's phone is connected and the file is valid.</div>}
+        {!loading && !document && <div className="page-loading">Unable to open this PDF. Check that the student's phone is connected and the file is valid.<button className="outline-button" onClick={() => setAttempt(value => value + 1)}>Retry PDF ↻</button></div>}
       </div>
       <footer className="viewer-footer">
         <span className="status-dot"/> Live PDF stream

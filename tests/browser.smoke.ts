@@ -524,36 +524,17 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
   const host = await browser.newPage();
   const student = await browser.newPage();
   await student.addInitScript(() => {
+    // Record real native student sockets, but do not alter their behavior
+    // during connection, authentication or approval.
     const Native = window.WebSocket;
-    const originalAmount = Object.getOwnPropertyDescriptor(Native.prototype, 'bufferedAmount')?.get;
-    if (!originalAmount) throw Error('WebSocket bufferedAmount getter not found');
-    let heldUntil = 0;
-    let enforcedReads = 0;
     const sockets: WebSocket[] = [];
     window.WebSocket = new Proxy(Native, {
       construct(Target, args) {
         const ws = Reflect.construct(Target, args) as WebSocket;
-        Object.defineProperty(ws, 'bufferedAmount', {
-          configurable: true,
-          get: () => {
-            if (Date.now() < heldUntil) {
-              enforcedReads++;
-              return 5 * 1024 * 1024;
-            }
-            return originalAmount.call(ws);
-          },
-        });
         sockets.push(ws);
         return ws;
       },
     });
-    (window as typeof window & {
-      __holdSocketBuffer?: (ms: number) => void;
-      __testSocketReads?: () => number;
-      __testSocket?: () => WebSocket | undefined;
-    }).__holdSocketBuffer = ms => { heldUntil = Date.now() + ms; };
-    (window as typeof window & { __testSocketReads?: () => number })
-      .__testSocketReads = () => enforcedReads;
     (window as typeof window & { __testSocket?: () => WebSocket | undefined })
       .__testSocket = () => sockets.at(-1);
   });
@@ -570,11 +551,27 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
     await student.getByText('Choose a PDF to share.').waitFor();
     const pressureApplied = await student.evaluate(() => {
       const w = window as typeof window & {
-        __holdSocketBuffer?: (ms: number) => void;
         __testSocket?: () => WebSocket | undefined;
+        __testSocketReads?: () => number;
       };
-      w.__holdSocketBuffer?.(3200);
-      return (w.__testSocket?.()?.bufferedAmount ?? 0) >= 5 * 1024 * 1024;
+      const ws = w.__testSocket?.();
+      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      let reads = 0;
+      const original = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'bufferedAmount')?.get;
+      if (!original) return false;
+      const deadline = Date.now() + 3200;
+      Object.defineProperty(ws, 'bufferedAmount', {
+        configurable: true,
+        get() {
+          if (Date.now() < deadline) {
+            reads++;
+            return 5 * 1024 * 1024;
+          }
+          return original.call(ws);
+        },
+      });
+      w.__testSocketReads = () => reads;
+      return ws.bufferedAmount >= 5 * 1024 * 1024;
     });
     assert.equal(pressureApplied, true, 'Simulated backlog must affect the REAL student WebSocket');
     await student.locator('input[type=file]').setInputFiles({

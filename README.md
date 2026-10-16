@@ -93,3 +93,15 @@ Vercel gained native WebSocket support in June 2026, but a student and host can 
 
 
 Cloudflare references: https://developers.cloudflare.com/durable-objects/platform/pricing/ · https://developers.cloudflare.com/durable-objects/best-practices/websockets/ · https://developers.cloudflare.com/workers/static-assets/
+
+## Fast first-slide preview
+
+Some PDFs are not arranged for early byte-range rendering, so even an otherwise correct PDF.js viewer can wait for more data before displaying page 1. FlashView now uses a complementary preview:
+
+- On selecting a PDF, the student's browser generates a compressed JPEG of page 1 and sends it to the classroom using the authenticated WebSocket relay.
+- That image appears in presentation tabs **while the original PDF continues downloading**. It is a temporary visual preview, not a replacement for the PDF document.
+- The classroom caches the exact original PDF, not just the preview. Once the PDF becomes renderable it replaces the image; after 100% caching every page can open from the original PDF offline.
+- Both original PDF bytes and the preview are stored only in IndexedDB on the classroom computer. Confirming **End session** deletes both, never the student originals.
+- The range-only PDF.js transport now uses a single complete response per requested range, with explicit range-stream completion.
+
+Preview generation is best effort on low-powered phones and unusually large or password-protected PDFs. The compressed image may look less sharp than the final document.

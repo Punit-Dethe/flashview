@@ -333,3 +333,19 @@ Privacy caveat: deletion removes browser-accessible IndexedDB records but does n
 - [x] Fair background queue: don't let one 50MB PDF or an offline sender block the others. Foreground page requests retain priority.
 - [x] Browser regression tests now assert *actual drawn pixels* and 100% background caching before the first presentation, rather than just canvas dimensions.
 - [ ] Test the exact image-heavy PDF reported by the user, which hasn't been uploaded, and real mobile Firefox/Android/iOS browsers.
+
+## October 2026 — hybrid progressive preview and local PDF cache
+
+Non-linearized PDFs can need arbitrary data before PDF.js paints the first slide. A test with deliberately slowed 4.6 MB transfer showed that fixes to range offsets alone did not reliably produce first-page content ahead of 100% caching.
+
+The solution adds sender-side first-slide rendering: the phone uses PDF.js on its own local PDF to produce a bounded JPEG preview, relays it to the teacher as small validated and authenticated WebSocket messages, and stores it in room-scoped IndexedDB. That preview is visible while the original bytes continue downloading. The exact PDF replaces the preview when ready. No cloud PDF storage or paid services are added.
+
+- [x] Complete range responses matching PDF.js requested offsets; mark range-only transports correctly.
+- [x] Preserve already-rendered pages when background caching completes; fallback to direct full PDF loading if the ranged viewer stalls.
+- [x] Phone-generated first-slide JPEG, bounded size with scale/quality fallback.
+- [x] Authenticated and file-owner-validated relay; room-scoped preview cache; preview-to-presentation BroadcastChannel.
+- [x] Do not repeat preview transmissions on every 20-second manifest sync; resend after genuine reconnect.
+- [x] Browser test for first slide appearing ahead of 100% original PDF cache; tested with Node and Cloudflare Workers.
+- [ ] Real device verification with image-heavy/scanned PDFs, mobile memory limits, and classroom Wi-Fi.
+
+The image fallback is a still preview of page 1, not a fully interactive partial PDF. PDF.js is still responsible for full quality, zooming, and page navigation as the original PDF becomes ready.

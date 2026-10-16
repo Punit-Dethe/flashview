@@ -71,17 +71,19 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
   const host = await browser.newPage();
   const student = await browser.newPage();
   // Record the current WebSocket in the student's browser without adding a production debug API.
-  await student.addInitScript(() => {
-    const NativeSocket = window.WebSocket;
-    class TrackedSocket extends NativeSocket {
-      constructor(url: string | URL, protocols?: string | string[]) {
-        super(url, protocols);
-        const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
-        (record.__flashviewSockets ??= []).push(this);
-      }
-    }
-    window.WebSocket = TrackedSocket as typeof WebSocket;
-  });
+  await student.addInitScript({ content: `
+    (() => {
+      const Original = window.WebSocket;
+      window.__flashviewSockets = [];
+      window.WebSocket = new Proxy(Original, {
+        construct(target, args) {
+          const ws = Reflect.construct(target, args);
+          window.__flashviewSockets.push(ws);
+          return ws;
+        }
+      });
+    })();
+  ` });
   const root = 'http://127.0.0.1:' + port;
   const browserLogs: string[] = [];
   host.on('pageerror', error => browserLogs.push('host JS ERROR: ' + error.message));

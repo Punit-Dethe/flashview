@@ -24,9 +24,14 @@ export class AdaptiveTransferWindow {
     const ms = Math.max(1, elapsedMs);
     this.bestMs = Math.min(this.bestMs, ms);
     this.smoothedMs = this.smoothedMs === 0 ? ms : (this.smoothedMs * .85 + ms * .15);
-    if (this.recovery > 0) { this.recovery--; return; }
     // Use a floor to avoid reacting to the normal noise of localhost tests.
     const baseline = Math.max(12, this.bestMs);
+    if (ms <= baseline * 1.4) {
+      // When the sender becomes fast again, the old congestion EWMA must not
+      // cause a second backoff from otherwise healthy responses.
+      this.smoothedMs = Math.min(this.smoothedMs, baseline * 1.4);
+    }
+    if (this.recovery > 0) { this.recovery--; return; }
     if (this.smoothedMs > baseline * 2.2 && this.slots > WINDOW_MIN) {
       this.slots = Math.max(WINDOW_MIN, Math.ceil(this.slots / 2));
       this.successful = 0;

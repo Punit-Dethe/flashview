@@ -6,7 +6,7 @@ import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
 // Foreground page reads use separate requests and can join in-flight chunks.
-const BACKGROUND_WINDOW = 6;
+const BACKGROUND_WINDOW = WINDOW_INITIAL;
 const MAX_BACKGROUND_REQUESTS = 16; // Leaves >30 available server slots for foreground requests.
 const DB_NAME = 'flashview-room-cache';
 const DB_VERSION = 2;

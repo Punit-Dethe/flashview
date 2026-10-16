@@ -327,7 +327,7 @@ export function App() {
       const readStart = perf.enabled ? performance.now() : 0;
       const bytes = await shared.file.slice(begin, end).arrayBuffer();
       if (perf.enabled) perf.record('sender_read_ms', performance.now() - readStart, { bytes: bytes.byteLength });
-      if (!socket.sendBytes(requestId, fileId, begin, bytes)) {
+      if (!await socket.sendBytesWhenReady(requestId, fileId, begin, bytes)) {
         socket.send({ type: 'range.error', requestId, message: 'Network sender is busy' });
       }
     } catch {

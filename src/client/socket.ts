@@ -178,10 +178,38 @@ export class RoomSocket {
     return true;
   }
 
-  sendBytes(requestId: string, fileId: string, begin: number, bytes: ArrayBuffer): boolean {
-    if (!this.connected || this.ws!.bufferedAmount > 4 * 1024 * 1024) return false;
-    this.ws!.send(encodeRangePacket({ type: 'range.data', requestId, fileId, begin }, bytes));
-    return true;
+  /**
+   * Stage 1: backpressure-aware response sender. A temporarily congested
+   * browser WebSocket must NOT cause an immediate range.error and 4.5-second
+   * retry. Wait for the existing queue to drain, without ever accumulating
+   * an unbounded userspace send queue or sending after a reconnect.
+   */
+  async sendBytesWhenReady(
+    requestId: string, fileId: string, begin: number, bytes: ArrayBuffer,
+  ): Promise<boolean> {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    const packet = encodeRangePacket({ type: 'range.data', requestId, fileId, begin }, bytes);
+    const maxBuffered = 4 * 1024 * 1024;
+    const started = performance.now();
+    while (this.ws === ws && ws.readyState === WebSocket.OPEN) {
+      if (ws.bufferedAmount + packet.byteLength <= maxBuffered) {
+        try {
+          ws.send(packet);
+          if (perf.enabled && performance.now() - started > 2)
+            perf.record('sender_backpressure_ms', performance.now() - started);
+          return true;
+        } catch { return false; }
+      }
+      // Deliberately shorter than the server's 20-second range timeout.
+      if (performance.now() - started >= 6500) {
+        if (perf.enabled)
+          perf.record('sender_backpressure_ms', performance.now() - started, { outcome: 'error' });
+        return false;
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, 45));
+    }
+    return false;
   }
 
   requestRange(

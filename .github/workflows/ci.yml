@@ -25,6 +25,24 @@ jobs:
         run: npm run test:browser
         env:
           FLASHVIEW_BACKEND: cloudflare
+      - name: Stage 0 baseline — Node (synthetic 2 MiB)
+        run: npm run bench:baseline
+        env:
+          BENCH_MIB: 2
+          BENCH_RUNS: 1
+      - name: Stage 0 baseline — Cloudflare (synthetic 2 MiB)
+        run: npm run bench:baseline
+        env:
+          BENCH_MIB: 2
+          BENCH_RUNS: 1
+          FLASHVIEW_BACKEND: cloudflare
+      - name: Upload Stage 0 baselines
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flashview-stage0-baseline
+          path: test-artifacts/stage0-*.json
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

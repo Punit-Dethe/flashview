@@ -20,7 +20,8 @@
     "test:browser:cloudflare": "node --import tsx tests/cloudflare-runner.ts",
     "prepare:pdf": "node scripts/copy-pdf-assets.mjs",
     "prebuild": "npm run prepare:pdf",
-    "predev:client": "npm run prepare:pdf"
+    "predev:client": "npm run prepare:pdf",
+    "bench:baseline": "node --import tsx tests/benchmark.baseline.ts"
   },
   "dependencies": {
     "pdfjs-dist": "^6.4.299",

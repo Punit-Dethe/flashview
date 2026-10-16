@@ -125,3 +125,41 @@ The speed is limited by the sending phone's upload link and the available WebSoc
 - Fully cached PDFs still use the original document bytes from IndexedDB. Their reconstruction across new presentation tabs has not been restructured because doing so risks extra persistent storage and memory usage.
 
 Tests include stalled foreground requests, a slow student alongside a second student completing a PDF, real PDF rendering, and a separate large-preview fixture. Automated green tests do not establish a universal network speedup. For useful before/after measurements, compare similar 10–20 MB PDFs with the same phone, browser and network, once with the presentation tab open and once closed.
+
+
+## Performance 2.0 — Stage 0, measurement only
+
+The new diagnostics do not change PDF transfer, caching or rendering. They are
+opt-in, memory-only and never uploaded to a server.
+
+Add ?perf=1 to the classroom or student page URL. For an invitation URL which
+already contains ?join=..., append &perf=1. Then open the Performance diagnostics
+section at the bottom of the page. Use Copy JSON report to manually collect
+local timing samples. Filenames, students' names, PDF contents, room codes and
+access tokens are not included. Records clear when the tab closes.
+
+Measurements: connection handshake, heartbeat RTT, file receipt, preview
+generation and relay, sender disk reads, range RTT, IndexedDB writes, full-cache
+completion, PDF.js opening, page rendering and first-slide-after-Present time.
+The latest 1600 samples are retained in memory. Render timings from new
+presentation tabs go only to the teacher's original tab through BroadcastChannel.
+
+Repeatable synthetic browser baseline:
+
+    npm run build
+    npm run bench:baseline
+
+Additional scenarios:
+
+    BENCH_MIB=12 BENCH_RUNS=3 BENCH_STUDENTS=5 BENCH_FILE_READ_DELAY_MS=25 npm run bench:baseline
+    FLASHVIEW_BACKEND=cloudflare BENCH_MIB=2 BENCH_RUNS=2 npm run bench:baseline
+
+The script creates a deterministic 10-page non-linearized synthetic PDF,
+starts a local Node or Cloudflare relay, runs real Chromium student and host
+sessions, caches and presents the PDF, and exports
+test-artifacts/stage0-*.json.
+
+GitHub Actions saves one-run Node and Cloudflare baseline JSON artifacts.
+These measure a synthetic file on local headless Chromium, not real campus
+Wi-Fi, cellular latency or phone CPU. Compare the same hardware and scenario,
+preferably with three or more runs, before implementing Stage 1.

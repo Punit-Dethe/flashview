@@ -384,3 +384,25 @@ Consciously deferred pending measured benefit:
 - [ ] A/B benchmark 64 vs 128 vs 256 KiB canonical cache chunks; changing the size also requires versioned room cache migration and tuning foreground PDF.js range retrieval.
 - [ ] Re-architect full-document reuse across tabs to reduce whole-file copies: current direct PDF.js loading from IndexedDB is reliable, while shared buffers or worker-driven decoding require broader cross-browser testing.
 - [ ] Quantitative 5-, 10-, 15-student real-device throughput and memory profiles, including image-heavy PDFs; synthetic Chromium tests cannot substitute for mobile browser suspensions and network effects.
+
+
+## Performance 2.0 Stage 0 — Approved measurement implementation
+
+Scope restriction: measurements and benchmarks only. Stage 1 must wait for
+baseline review and separate user approval.
+
+- [x] Opt-in ?perf=1 local-only diagnostic panel with bounded samples and
+  mean, median and p95 statistics.
+- [x] Manual JSON copy. No filename, room credential, user name or document
+  bytes included; no automatic telemetry upload.
+- [x] Instrument handshake, heartbeat, file acknowledgement, phone preview,
+  sender reads, byte-range RTT, IndexedDB writes, full-cache completion,
+  PDF.js opening, page rendering and first-visible-slide timing.
+- [x] Send presentation timing to classroom using existing local
+  BroadcastChannel; no separate privileged WebSocket.
+- [x] Configurable local Node and Cloudflare synthetic browser baseline
+  runner with file size, student count, repeats and sender read delay.
+- [x] GitHub Actions stores baseline JSON artifacts separately from failure
+  screenshots.
+- [ ] Obtain real-device baseline measurements with actual slide decks,
+  multiple phones and weaker networks; review before Stage 1.

@@ -165,6 +165,17 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   if (!peer) return void sendError(ws, 'Authentication required');
   const room = peer.room;
   if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
+  if (msg.type === 'room.sync' && peer.role === 'host') {
+    return void send(ws, {
+      type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
+      students: students(room), files: [...room.files.values()],
+    });
+  }
+  if (msg.type === 'file.sync' && peer.role === 'student' && peer.approved) {
+    return void send(ws, {
+      type: 'file.manifest', files: [...room.files.values()].filter(file => file.ownerId === peer.id),
+    });
+  }
   if (peer.role === 'host') {
     if (msg.type === 'student.accept' && typeof msg.studentId === 'string') {
       const student = room.students.get(msg.studentId);
@@ -228,17 +239,25 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     const size = msg.size;
     if (!validId(fileId) || !Number.isSafeInteger(size) ||
         Number(size) <= 0 || Number(size) > MAX_PDF_BYTES ||
-        room.files.has(fileId) || [...room.files.values()].filter(f => f.ownerId === peer.id).length >= 10) {
+        (!room.files.has(fileId) && [...room.files.values()].filter(f => f.ownerId === peer.id).length >= 10)) {
       return void sendError(ws, 'Invalid PDF file or room file limit reached');
     }
     const name = acceptableText(msg.name, 130) || 'Document.pdf';
     if (!name.toLowerCase().endsWith('.pdf')) return void sendError(ws, 'PDF files only');
+    const existing = room.files.get(fileId);
+    if (existing) {
+      if (existing.ownerId !== peer.id || existing.size !== Number(size) || existing.name !== name) {
+        return void sendError(ws, 'Conflicting document ID');
+      }
+      return void send(ws, { type: 'file.state', file: existing });
+    }
     const file: PdfManifest = {
       fileId, name, size: Number(size), ownerId: peer.id, ownerName: peer.name, status: 'pending',
     };
     room.files.set(fileId, file);
     notifyHost(room, { type: 'file.announced', file });
     send(ws, { type: 'file.pending', fileId });
+    send(ws, { type: 'file.state', file });
   } else if (msg.type === 'range.error' && typeof msg.requestId === 'string') {
     const pending = room.outstanding.get(msg.requestId);
     if (pending?.senderId === peer.id) {

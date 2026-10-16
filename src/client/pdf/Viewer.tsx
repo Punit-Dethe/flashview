@@ -14,7 +14,7 @@ const REQUEST_CHUNK = 65_536;
 /** Pure byte-range transport. The host tab handles IndexedDB and network deduplication. */
 class LivePdfRanges extends PDFDataRangeTransport {
   private cancelled = false;
-  private cancels: Array<() => void> = [];
+  private cancels = new Set<() => void>();
   constructor(
     private readonly file: PdfManifest,
     private readonly source: PdfRangeSource,
@@ -23,22 +23,58 @@ class LivePdfRanges extends PDFDataRangeTransport {
 
   override requestDataRange(begin: number, end: number): void {
     if (this.cancelled) return;
-    for (let offset = begin; offset < end; offset += REQUEST_CHUNK) {
-      const finish = Math.min(offset + REQUEST_CHUNK, end);
+    if (!Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
+        begin < 0 || end <= begin || end > this.file.size) {
+      this.onError('PDF.js requested an invalid byte range');
+      return;
+    }
+    // PDF.js identifies its range reader by its ORIGINAL begin offset and
+    // closes the reader after ONE onDataRange notification. A partial response
+    // or multiple onDataRange(begin+offset, ...) calls permanently stall it.
+    const response = new Uint8Array(end - begin);
+    const cancellations = new Set<() => void>();
+    const expectedChunks = Math.ceil((end - begin) / REQUEST_CHUNK);
+    let receivedChunks = 0;
+    let failed = false;
+    const cleanUp = () => {
+      for (const cancel of cancellations) this.cancels.delete(cancel);
+      cancellations.clear();
+    };
+    const fail = (message: string) => {
+      if (this.cancelled || failed) return;
+      failed = true;
+      for (const cancel of cancellations) cancel();
+      cleanUp();
+      this.onError(message);
+    };
+    for (let offset = begin; offset < end && !this.cancelled && !failed; offset += REQUEST_CHUNK) {
+      const requestedBegin = offset;
+      const requestedEnd = Math.min(offset + REQUEST_CHUNK, end);
       const cancel = this.source.requestRange(
-        this.file.fileId, offset, finish,
+        this.file.fileId, requestedBegin, requestedEnd,
         (start, bytes) => {
-          if (!this.cancelled) this.onDataRange(start, bytes);
+          if (this.cancelled || failed) return;
+          if (start !== requestedBegin || bytes.byteLength !== requestedEnd - requestedBegin) {
+            fail('Received an incomplete PDF byte range');
+            return;
+          }
+          response.set(bytes, requestedBegin - begin);
+          if (++receivedChunks === expectedChunks) {
+            cleanUp();
+            // Exactly one response, exactly at the begin offset PDF.js expects.
+            this.onDataRange(begin, response);
+          }
         },
-        message => { if (!this.cancelled) this.onError(message); },
+        message => fail(message),
       );
-      this.cancels.push(cancel);
+      cancellations.add(cancel);
+      this.cancels.add(cancel);
     }
   }
   override abort(): void {
     this.cancelled = true;
     for (const cancel of this.cancels) cancel();
-    this.cancels.length = 0;
+    this.cancels.clear();
   }
 }
 
@@ -70,8 +106,20 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
   const [attempt, setAttempt] = useState(0);
   const [pageAttempt, setPageAttempt] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  // A functioning partial viewer must remain visible when caching finishes.
+  // Only fall back to the complete local file if the first page has NOT
+  // rendered yet or a later page needs repair.
+  const [sourceMode, setSourceMode] = useState<'partial' | 'full'>(
+    cached?.complete ? 'full' : 'partial',
+  );
+  const completeAvailable = Boolean(cached?.complete && cachedRoomId);
+  useEffect(() => {
+    if (completeAvailable && sourceMode === 'partial' && !reportedFirst.current) {
+      setSourceMode('full');
+    }
+  }, [completeAvailable, sourceMode]);
+  const loadingFullPdf = completeAvailable && sourceMode === 'full';
 
-  const complete = Boolean(cached?.complete && cachedRoomId);
   useEffect(() => {
     let disposed = false;
     let task: ReturnType<typeof getDocument> | null = null;
@@ -101,7 +149,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
           wasmUrl: '/pdf-assets/wasm/',
           iccUrl: '/pdf-assets/icc_profiles/',
         };
-        if (complete && cachedRoomId) {
+        if (loadingFullPdf && cachedRoomId) {
           const data = await readCompletedPdf(cachedRoomId, file);
           if (disposed) return;
           if (!data) throw Error('Some cached PDF chunks are missing. Reopen after the download finishes.');
@@ -149,7 +197,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
     };
     // Switching to completed cached data intentionally restarts the document
     // exactly once, rather than continuing a potentially stalled range stream.
-  }, [file.fileId, file.size, socket, cachedRoomId, complete, attempt]);
+  }, [file.fileId, file.size, socket, cachedRoomId, loadingFullPdf, attempt]);
 
   useEffect(() => {
     if (!pdfDocument || !canvas.current) return;
@@ -246,12 +294,15 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageR
   };
 
   const retry = () => {
-    if (pdfDocument) setPageAttempt(value => value + 1);
+    if (completeAvailable && sourceMode === 'partial') {
+      // A stalled range reader can be replaced with the already-saved PDF.
+      setSourceMode('full');
+    } else if (pdfDocument) setPageAttempt(value => value + 1);
     else setAttempt(value => value + 1);
   };
   const cachedLabel = cached
     ? (cached.complete ? 'Saved for this room · direct local rendering' :
-      formatBytes(cached.bytes) + ' / ' + formatBytes(cached.size) + ' cached')
+      formatBytes(cached.bytes) + ' / ' + formatBytes(cached.size) + ' cached · streaming preview')
     : 'Checking local cache…';
   return (
     <section ref={wrapper} className="viewer" aria-label="PDF presenter">

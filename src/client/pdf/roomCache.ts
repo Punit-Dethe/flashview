@@ -74,6 +74,32 @@ async function cachedIndices(room: string, fileId: string): Promise<Set<number>>
     request.onerror = () => reject(request.error);
   });
 }
+/**
+ * Read an entire completed PDF from the teacher's local browser.
+ * Once complete, PDF.js can consume an ordinary Uint8Array instead of
+ * custom range transport (eliminates streamed-page scheduling races).
+ */
+export async function readCompletedPdf(roomId: string, file: PdfManifest): Promise<Uint8Array | null> {
+  const db = await database();
+  const chunks = await new Promise<ChunkRecord[]>((resolve, reject) => {
+    const request = db.transaction('chunks', 'readonly').objectStore('chunks')
+      .index('document').getAll(IDBKeyRange.only(roomId + '/' + file.fileId));
+    request.onsuccess = () => resolve(request.result as ChunkRecord[]);
+    request.onerror = () => reject(request.error);
+  });
+  const count = Math.ceil(file.size / CHUNK_BYTES);
+  if (chunks.length !== count) return null;
+  chunks.sort((a, b) => a.index - b.index);
+  const result = new Uint8Array(file.size);
+  for (let i = 0; i < count; i++) {
+    const chunk = chunks[i];
+    const length = Math.min(CHUNK_BYTES, file.size - i * CHUNK_BYTES);
+    if (chunk.index !== i || chunk.room !== roomId || chunk.data.byteLength !== length) return null;
+    result.set(new Uint8Array(chunk.data), i * CHUNK_BYTES);
+  }
+  return result;
+}
+
 async function writeRoom(room: string): Promise<void> {
   const db = await database();
   await new Promise<void>((resolve, reject) => {

@@ -86,12 +86,14 @@ test('real browser: default homepage creates a QR room and can join another room
     await first.reload();
     assert.equal((await first.locator('.room-code').textContent())?.trim(), firstCode,
       'Refreshing a classroom must reuse its room rather than consume another room creation');
+    await first.locator('.connection.connected').waitFor();
 
     await second.goto(root);
     await second.locator('.room-code').waitFor();
     const secondCode = (await second.locator('.room-code').textContent())?.trim();
     assert.match(secondCode ?? '', /^\\d{6}$/);
     assert.notEqual(firstCode, secondCode);
+    await second.locator('.connection.connected').waitFor();
     await first.getByRole('button', { name: /Join another room/ }).click();
     await first.locator('#switch-code').fill(secondCode!);
     await first.getByRole('button', { name: /Join room/ }).click();

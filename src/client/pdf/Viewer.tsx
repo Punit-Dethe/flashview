@@ -149,9 +149,9 @@ export function Viewer({ file, socket, close }: {
   };
   const changeFullscreen = async () => {
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
+      if (window.document.fullscreenElement) await window.document.exitFullscreen();
       else await wrapper.current?.requestFullscreen();
-      setFullscreen(Boolean(document.fullscreenElement));
+      setFullscreen(Boolean(window.document.fullscreenElement));
     } catch { /* Browser/teacher device can deny fullscreen. */ }
   };
   return (

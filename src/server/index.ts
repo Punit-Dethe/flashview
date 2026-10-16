@@ -86,7 +86,11 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
   if (msg.role === 'host') {
     const room = rooms.get(String(msg.roomId ?? ''));
     if (!room || msg.token !== room.hostToken) return void sendError(ws, 'Invalid host session');
-    if (room.host && room.host.ws.readyState === WebSocket.OPEN) return void sendError(ws, 'Host already online');
+    // A holder of the high-entropy host secret may replace an outdated connection
+    // (e.g. refresh or reconnection before the browser's close event is processed).
+    if (room.host && room.host.ws.readyState === WebSocket.OPEN) {
+      room.host.ws.close(4000, 'Host reconnected');
+    }
     const peer: Peer = { ws, id: randomUUID(), role: 'host', room, name: 'Host', approved: true };
     room.host = peer;
     connections.set(ws, peer);
@@ -173,6 +177,8 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
         fileId, senderId: sender.id, begin: Number(begin), end: Number(end), created: Date.now(),
       });
       send(sender.ws, { type: 'range.request', fileId, requestId, begin, end });
+    } else if (msg.type === 'range.cancel' && typeof msg.requestId === 'string') {
+      room.outstanding.delete(msg.requestId);
     } else if (msg.type === 'room.end') {
       closeRoom(room);
     }
@@ -195,10 +201,25 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     room.files.set(fileId, file);
     notifyHost(room, { type: 'file.announced', file });
     send(ws, { type: 'file.pending', fileId });
+  } else if (msg.type === 'range.error' && typeof msg.requestId === 'string') {
+    const pending = room.outstanding.get(msg.requestId);
+    if (pending?.senderId === peer.id) {
+      room.outstanding.delete(msg.requestId);
+      notifyHost(room, {
+        type: 'range.error', requestId: msg.requestId,
+        message: acceptableText(msg.message, 120) || 'Sender cannot provide PDF bytes',
+      });
+    }
   } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
     const file = room.files.get(msg.fileId);
     if (file?.ownerId === peer.id) {
       file.status = 'offline';
+      for (const [id, pending] of room.outstanding) {
+        if (pending.fileId === msg.fileId) {
+          room.outstanding.delete(id);
+          notifyHost(room, { type: 'range.error', requestId: id, message: 'File sharing stopped' });
+        }
+      }
       notifyHost(room, { type: 'file.updated', file });
     }
   }

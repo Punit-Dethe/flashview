@@ -92,6 +92,7 @@ export function App() {
     };
 
     if (initialSession) socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
+    else if (initialJoin) socket.connect({ role: 'student', name: 'Student', joinToken: initialJoin });
     return () => socket.close();
   // The socket callback refers only to stable refs and state setters.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,8 +135,7 @@ export function App() {
     } finally { setBusy(false); }
   }
 
-  function connectStudent(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
+  function connectStudent(): void {
     if (!joinCode.trim()) return setError('Enter a code or use the QR code link.');
     setError('');
     setJoinState('idle');
@@ -234,7 +234,7 @@ export function App() {
                 <div className="action-icon">⌁</div>
                 <h2>Join a session</h2>
                 <p>Have a room code? Enter it here and send a PDF straight from your device.</p>
-                <form onSubmit={connectStudent} className="join-form">
+                <form onSubmit={e => { e.preventDefault(); connectStudent(); }} className="join-form">
                   <label htmlFor="code">ROOM CODE</label>
                   <input id="code" placeholder="6-digit room code" autoComplete="off" value={joinCode}
                     onChange={e => setJoinCode(e.target.value)} required/>
@@ -312,7 +312,7 @@ export function App() {
             {joinState === 'idle' && (
               <div className="join-panel">
                 <p>Connect to your teacher's room to send a PDF.</p>
-                <form onSubmit={connectStudent} className="join-form">
+                <form onSubmit={e => { e.preventDefault(); connectStudent(); }} className="join-form">
                   <label htmlFor="join-code">ROOM LINK OR 6-DIGIT CODE</label>
                   <input id="join-code" value={joinCode} autoComplete="off" onChange={e => setJoinCode(e.target.value)} required/>
                   <label htmlFor="join-name">YOUR NAME <span>(optional)</span></label>
@@ -343,7 +343,7 @@ export function App() {
             )}
             {joinState === 'rejected' && <button className="outline-button" onClick={startFresh}>Return home →</button>}
             {socketStatus === 'disconnected' && joinState !== 'idle' &&
-              <div className="disconnect-notice">Connection lost. <button onClick={e => connectStudent({ preventDefault: () => {} } as React.FormEvent<HTMLFormElement>)}>Reconnect</button>
+              <div className="disconnect-notice">Connection lost. <button onClick={connectStudent}>Reconnect</button>
                 <small>After reconnecting, choose your PDF again to restore sharing.</small></div>}
             <button className="subtle-link return-home" onClick={startFresh}>← Back to home</button>
           </div>

@@ -6,7 +6,7 @@ import {
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PdfManifest } from '../../shared/protocol';
 import type { PdfRangeSource } from '../presentation';
-import type { CacheProgress } from './roomCache';
+import { readCompletedPdf, type CacheProgress } from './roomCache';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const REQUEST_CHUNK = 65_536;
@@ -46,16 +46,19 @@ class LivePdfRanges extends PDFDataRangeTransport {
  * A viewer can be closed and reopened without re-downloading the PDF because
  * its range source is backed by the room-level IndexedDB cache.
  */
-export function Viewer({ file, socket, close, cached, onFirstPageRendered }: {
+export function Viewer({ file, socket, close, cached, cachedRoomId, onFirstPageRendered }: {
   file: PdfManifest;
   socket: PdfRangeSource;
   close: () => void;
   cached?: CacheProgress | null;
+  cachedRoomId?: string | null;
   onFirstPageRendered?: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const wrapper = useRef<HTMLDivElement>(null);
   const reportedFirst = useRef(false);
+  const renderSequence = useRef(0);
+  const activeRender = useRef<ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | null>(null);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
   const [pageInput, setPageInput] = useState('1');
@@ -67,125 +70,150 @@ export function Viewer({ file, socket, close, cached, onFirstPageRendered }: {
   const [pageAttempt, setPageAttempt] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
 
+  const complete = Boolean(cached?.complete && cachedRoomId);
   useEffect(() => {
     let disposed = false;
-    let loadingPhase = true;
-    let aborted = false;
+    let task: ReturnType<typeof getDocument> | null = null;
+    let transport: LivePdfRanges | null = null;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
     setPdfDocument(null);
     setLoading(true);
     setError('');
-    setPage(1);
-    setPageInput('1');
+    setRendering(false);
     reportedFirst.current = false;
-    const transport = new LivePdfRanges(file, socket, reason => {
-      if (disposed || aborted) return;
-      if (loadingPhase) {
-        aborted = true;
-        setLoading(false);
-        setError('Unable to receive PDF: ' + reason);
-        transport.abort();
-        void task.destroy();
-      } else {
-        // Do not destroy a valid PDF when an individual page request fails.
-        setError('Unable to load page: ' + reason);
-        setRendering(false);
-      }
-    });
-    const task = getDocument({
-      range: transport,
-      rangeChunkSize: REQUEST_CHUNK,
-      disableStream: true,
-      disableAutoFetch: true, // Our independent background downloader owns prefetch.
-      disableRange: false,
-      maxImageSize: -1, // Never silently hide a high-resolution slide image.
-    });
-    // This watchdog applies ONLY while obtaining the document structure.
-    // The old code destroyed a successfully opened PDF after 30 seconds.
-    const watchdog = setTimeout(() => {
-      if (disposed || !loadingPhase) return;
-      aborted = true;
-      setLoading(false);
-      setError("PDF opening timed out. Check the student's connection and retry.");
-      transport.abort();
-      void task.destroy();
-    }, 30_000);
 
-    task.onPassword = () => {
+    const fail = (reason: string) => {
       if (disposed) return;
-      aborted = true;
-      setError('Password-protected PDFs are not supported yet.');
+      setError(reason);
       setLoading(false);
-      clearTimeout(watchdog);
-      transport.abort();
-      void task.destroy();
+      setRendering(false);
     };
-    void task.promise.then(pdf => {
-      if (disposed || aborted) return;
-      loadingPhase = false;
-      clearTimeout(watchdog);
-      setPdfDocument(pdf);
-      setLoading(false);
-      setError('');
-    }).catch(reason => {
-      clearTimeout(watchdog);
-      if (!disposed && !aborted) {
+
+    const run = async () => {
+      try {
+        let loadingTask: ReturnType<typeof getDocument>;
+        const options = {
+          maxImageSize: -1,
+          cMapUrl: '/pdf-assets/cmaps/',
+          cMapPacked: true,
+          standardFontDataUrl: '/pdf-assets/standard_fonts/',
+          wasmUrl: '/pdf-assets/wasm/',
+          iccUrl: '/pdf-assets/icc_profiles/',
+        };
+        if (complete && cachedRoomId) {
+          const data = await readCompletedPdf(cachedRoomId, file);
+          if (disposed) return;
+          if (!data) throw Error('Some cached PDF chunks are missing. Reopen after the download finishes.');
+          // This is the normal, resilient path once the background download ends.
+          // No live WebSocket or PDFDataRangeTransport is involved in rendering.
+          loadingTask = getDocument({ ...options, data });
+        } else {
+          transport = new LivePdfRanges(file, socket, reason => {
+            if (disposed) return;
+            fail('A PDF byte-range request failed: ' + reason);
+          });
+          loadingTask = getDocument({
+            ...options, range: transport,
+            rangeChunkSize: REQUEST_CHUNK,
+            disableStream: true,
+            disableAutoFetch: true,
+          });
+        }
+        task = loadingTask;
+        watchdog = setTimeout(() => {
+          fail('The document is taking too long to open. Try again after it is fully cached.');
+        }, 30_000);
+        loadingTask.onPassword = () => {
+          fail('This PDF is password protected; password entry is not supported yet.');
+        };
+        const pdf = await loadingTask.promise;
+        if (disposed) return;
+        if (watchdog !== null) clearTimeout(watchdog);
+        watchdog = null;
+        setPdfDocument(pdf);
         setLoading(false);
-        setError(reason instanceof Error ? reason.message : 'Unable to open PDF');
+        setError('');
+      } catch (err) {
+        fail(err instanceof Error ? err.message : 'Unable to open this PDF');
       }
-    });
+    };
+    void run();
     return () => {
       disposed = true;
-      clearTimeout(watchdog);
-      transport.abort();
-      void task.destroy();
+      renderSequence.current++;
+      if (watchdog !== null) clearTimeout(watchdog);
+      activeRender.current?.cancel();
+      transport?.abort();
+      void task?.destroy();
     };
-  }, [file.fileId, file.size, socket, attempt]);
+    // Switching to completed cached data intentionally restarts the document
+    // exactly once, rather than continuing a potentially stalled range stream.
+  }, [file.fileId, file.size, socket, cachedRoomId, complete, attempt]);
 
   useEffect(() => {
     if (!pdfDocument || !canvas.current) return;
     let cancelled = false;
-    let renderTask: ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | null = null;
+    const generation = ++renderSequence.current;
     setRendering(true);
     setError('');
-    void pdfDocument.getPage(page).then(pdfPage => {
-      if (cancelled || !canvas.current) return;
-      const viewport = pdfPage.getViewport({ scale: zoom });
-      // Cap actual canvas pixels rather than dropping large images from the PDF.
-      const pixelRatio = Math.max(0.1, Math.min(
-        window.devicePixelRatio || 1, 2,
-        Math.sqrt(16_000_000 / Math.max(1, viewport.width * viewport.height)),
-      ));
-      const element = canvas.current;
-      const context = element.getContext('2d');
-      if (!context) throw new Error('Canvas is unavailable');
-      element.height = Math.max(1, Math.floor(viewport.height * pixelRatio));
-      element.width = Math.max(1, Math.floor(viewport.width * pixelRatio));
-      element.style.height = viewport.height + 'px';
-      element.style.width = viewport.width + 'px';
-      renderTask = pdfPage.render({
-        canvas: element, canvasContext: context, viewport,
-        transform: pixelRatio !== 1 ? [pixelRatio, 0, 0, pixelRatio, 0, 0] : undefined,
-      });
-      return renderTask.promise;
-    }).then(() => {
-      if (cancelled) return;
-      setRendering(false);
-      if (!reportedFirst.current) {
-        reportedFirst.current = true;
-        onFirstPageRendered?.();
-      }
-      // Load upcoming page objects while the full byte download proceeds.
-      if (page < pdfDocument.numPages) void pdfDocument.getPage(page + 1).catch(() => {});
-      if (page + 1 < pdfDocument.numPages) void pdfDocument.getPage(page + 2).catch(() => {});
-    }).catch(reason => {
-      if (!cancelled && reason?.name !== 'RenderingCancelledException') {
+    const timer = setTimeout(() => {
+      if (!cancelled && renderSequence.current === generation) {
         setRendering(false);
-        setError(reason instanceof Error ? reason.message : 'Unable to render the selected page');
+        setError('This page is taking too long to render. Try Retry page, or wait for caching to finish.');
       }
-    });
+    }, 25_000);
+
+    const run = async () => {
+      try {
+        const pdfPage = await pdfDocument.getPage(page);
+        if (cancelled || generation !== renderSequence.current || !canvas.current) return;
+        const viewport = pdfPage.getViewport({ scale: zoom });
+        const pixelRatio = Math.max(0.1, Math.min(
+          window.devicePixelRatio || 1, 2,
+          Math.sqrt(16_000_000 / Math.max(1, viewport.width * viewport.height)),
+        ));
+        const previous = activeRender.current;
+        if (previous) {
+          previous.cancel();
+          await previous.promise.catch(() => {});
+        }
+        if (cancelled || generation !== renderSequence.current || !canvas.current) return;
+        const element = canvas.current;
+        const context = element.getContext('2d');
+        if (!context) throw new Error('Canvas unavailable');
+        element.height = Math.max(1, Math.floor(viewport.height * pixelRatio));
+        element.width = Math.max(1, Math.floor(viewport.width * pixelRatio));
+        element.style.height = viewport.height + 'px';
+        element.style.width = viewport.width + 'px';
+        const task = pdfPage.render({
+          canvas: element, canvasContext: context, viewport,
+          transform: pixelRatio !== 1 ? [pixelRatio, 0, 0, pixelRatio, 0, 0] : undefined,
+        });
+        activeRender.current = task;
+        await task.promise;
+        if (cancelled || generation !== renderSequence.current) return;
+        setRendering(false);
+        setError('');
+        if (!reportedFirst.current) {
+          reportedFirst.current = true;
+          onFirstPageRendered?.();
+        }
+      } catch (err) {
+        if (!cancelled && generation === renderSequence.current &&
+          (err as Error)?.name !== 'RenderingCancelledException') {
+          setError(err instanceof Error ? err.message : 'Unable to render page');
+          setRendering(false);
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    void run();
     return () => {
       cancelled = true;
-      renderTask?.cancel();
+      clearTimeout(timer);
+      renderSequence.current++;
+      activeRender.current?.cancel();
     };
   }, [pdfDocument, page, zoom, pageAttempt, onFirstPageRendered]);
 
@@ -219,7 +247,7 @@ export function Viewer({ file, socket, close, cached, onFirstPageRendered }: {
     else setAttempt(value => value + 1);
   };
   const cachedLabel = cached
-    ? (cached.complete ? 'Saved for this room' :
+    ? (cached.complete ? 'Saved for this room · direct local rendering' :
       formatBytes(cached.bytes) + ' / ' + formatBytes(cached.size) + ' cached')
     : 'Checking local cache…';
   return (

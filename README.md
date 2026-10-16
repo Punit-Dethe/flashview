@@ -1,6 +1,6 @@
 # FlashView
 
-**Instant PDF presentation across devices.** A teacher opens a room on a smartboard, a student scans its QR code from their phone, chooses a PDF, and the teacher can view its pages without waiting for the entire file to upload.
+**Instant PDF presentation across devices.** A teacher opens FlashView on a smartboard and receives a room instantly. A student scans its QR code from their phone, chooses a PDF, and the teacher can view its pages without waiting for the entire file to upload.
 
 [Read the full technical roadmap and design decisions](./plan.md).
 
@@ -12,6 +12,12 @@
 - No cloud file storage. The sender **must stay online until the entire PDF is cached on the classroom computer**; afterward, the PDF is available without the sender. The relay can access document bytes in transit (not end-to-end encrypted).
 - Direct P2P and upload-to-storage are deliberately out of scope for the first release.
 
+## Premium dark workspace (October 2026)
+
+The default homepage is a single dark classroom workspace. Opening it automatically creates a short-lived room; refresh reuses the host session in that browser tab. The invitation area contains the live QR code, six-digit room number, Copy invite link and **Join another room**. Switching rooms ends the current session and clears only its local classroom cache. Mobile layouts stack the QR above the invitation controls.
+
+A student opening a **?join=** invitation goes straight to the joining flow without creating a room. **?manual=1** retains the older explicit room-creation entry point for compatibility and browser baseline tests. Cloudflare account deployment is separate from GitHub source changes; pushing to a branch does not itself publish a Worker unless Cloudflare Git builds are connected.
+
 ## Local development
 
 Requires Node.js 22+.
@@ -21,7 +27,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173**. Create a room in the host tab. Join with a separate private browser window using the six-digit room code, allow the student, and choose a PDF. The teacher must approve the file before opening it.
+Open **http://localhost:5173**. A room is created automatically and the QR code appears on the homepage. Open a separate private browser window, select **Join another room**, enter the six-digit room code, allow the student, and choose a PDF. Student approval also allows their documents to be shared; there is no separate PDF approval step. For an explicit Create Room screen during tests, open **/?manual=1**.
 
 The QR produced by a localhost development server will not be reachable from a separate phone. Use a public HTTPS deployment or an HTTPS tunnel exposing the Vite frontend for cross-device testing.
 

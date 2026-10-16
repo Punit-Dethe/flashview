@@ -39,27 +39,32 @@ async function runningServer() {
 
 /** Construct a valid single-page PDF with a realistic (200 KB) byte-range surface. */
 function makePdf(): Buffer {
+  const pageCount = 10;
+  const fontId = pageCount * 2 + 3;
+  const kids = Array.from({ length: pageCount }, (_, i) => (3 + i * 2) + ' 0 R');
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
-    '<< /Length 45 >>\nstream\nBT /F1 24 Tf 72 700 Td (FlashView demo) Tj ET\nendstream',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Pages /Kids [' + kids.join(' ') + '] /Count ' + pageCount + ' >>',
   ];
-  // The exact length must match the encoded content stream.
-  const stream = 'BT /F1 24 Tf 72 700 Td (FlashView demo) Tj ET';
-  objects[3] = '<< /Length ' + Buffer.byteLength(stream) + ' >>\nstream\n' + stream + '\nendstream';
+  for (let i = 0; i < pageCount; i++) {
+    const contentId = 4 + i * 2;
+    const stream = 'BT /F1 26 Tf 72 690 Td (FlashView page ' + (i + 1) + ') Tj ET';
+    objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 ' + fontId + ' 0 R >> >> /Contents ' + contentId + ' 0 R >>');
+    objects.push('<< /Length ' + Buffer.byteLength(stream) + ' >>\nstream\n' + stream + '\nendstream');
+  }
+  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
   let pdf = '%PDF-1.4\n';
-  const offsets = [0];
+  const offsets: number[] = [];
   for (let i = 0; i < objects.length; i++) {
     offsets.push(Buffer.byteLength(pdf));
     pdf += (i + 1) + ' 0 obj\n' + objects[i] + '\nendobj\n';
   }
-  // Comments are ignorable, but force a tail xref lookup as for ordinary PDFs.
+  // Force noncontiguous PDF.js range requests for structure near the file tail.
   pdf += ('% ' + 'PDF DATA '.repeat(15) + '\n').repeat(1400);
   const xref = Buffer.byteLength(pdf);
   pdf += 'xref\n0 ' + (objects.length + 1) + '\n0000000000 65535 f \n';
-  for (const offset of offsets.slice(1)) pdf += String(offset).padStart(10, '0') + ' 00000 n \n';
+  for (const offset of offsets) pdf += String(offset).padStart(10, '0') + ' 00000 n \n';
   pdf += 'trailer\n<< /Size ' + (objects.length + 1) + ' /Root 1 0 R >>\n';
   pdf += 'startxref\n' + xref + '\n%%EOF\n';
   return Buffer.from(pdf);
@@ -130,6 +135,23 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
         !document.querySelector('.page-overlay'));
     }, null, { timeout: 20000 });
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
+    // Regression: moving around the PDF and waiting past the old 30s watchdog
+    // must not destroy the successfully opened PDF document.
+    await presentation.getByRole('spinbutton', { name: 'Page number' }).fill('10');
+    await presentation.getByRole('spinbutton', { name: 'Page number' }).press('Enter');
+    await presentation.waitForFunction(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
+      return Boolean(canvas?.getAttribute('aria-label') === 'Page 10' &&
+        !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'));
+    }, null, { timeout: 20000 });
+    await host.getByText('Fully cached on this computer').waitFor({ timeout: 15000 });
+    await delay(process.env.FLASHVIEW_BACKEND === 'cloudflare' ? 350 : 31_200);
+    assert.equal(await presentation.locator('.viewer-alert').count(), 0);
+    await presentation.getByRole('spinbutton', { name: 'Page number' }).fill('1');
+    await presentation.getByRole('spinbutton', { name: 'Page number' }).press('Enter');
+    await presentation.waitForFunction(() =>
+      !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'),
+      null, { timeout: 20000 });
     await presentation.close();
     assert.equal(await host.locator('.document-row').count(), 1);
 
@@ -196,6 +218,50 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     // Closing the presentation must not close the classroom or remove the queue.
     assert.equal(await host.locator('.document-row').count(), 2);
     assert.equal(await host.locator('.connection.connected').count(), 1);
+
+    // Prove that a completed cache works after the student is entirely offline
+    // and the original host page has been reloaded.
+    await student.close();
+    await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
+      .getByText('Fully cached on this computer').waitFor();
+    await host.reload();
+    await host.locator('.connection.connected').waitFor();
+    await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
+      .getByText('Fully cached on this computer').waitFor({ timeout: 12000 });
+    const [offlinePresentation] = await Promise.all([
+      host.waitForEvent('popup'),
+      host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
+        .getByRole('button', { name: /Present/ }).click(),
+    ]);
+    await offlinePresentation.waitForFunction(() =>
+      Boolean(document.querySelector('canvas[aria-label="Page 1"]')) &&
+      !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'),
+      null, { timeout: 20000 });
+    await offlinePresentation.getByRole('spinbutton', { name: 'Page number' }).fill('10');
+    await offlinePresentation.getByRole('spinbutton', { name: 'Page number' }).press('Enter');
+    await offlinePresentation.waitForFunction(() =>
+      Boolean(document.querySelector('canvas[aria-label="Page 10"]')) &&
+      !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'),
+      null, { timeout: 20000 });
+    await offlinePresentation.close();
+
+    const countRoomChunks = async () => host.evaluate(room => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('flashview-room-cache');
+      request.onsuccess = () => {
+        const tx = request.result.transaction('chunks', 'readonly');
+        const count = tx.objectStore('chunks').index('room').count(IDBKeyRange.only(room));
+        count.onsuccess = () => resolve(count.result);
+        count.onerror = () => reject(count.error);
+      };
+      request.onerror = () => reject(request.error);
+    }), roomCode!);
+    assert.ok(await countRoomChunks() >= 3, 'Expected cached PDF chunks');
+    await host.getByRole('button', { name: /End session/ }).click();
+    await host.getByRole('button', { name: /End & clear cache/ }).isDisabled().then(x => assert.equal(x, true));
+    await host.getByRole('checkbox', { name: /I understand/ }).check();
+    await host.getByRole('button', { name: /End & clear cache/ }).click();
+    await host.getByRole('button', { name: /Create a room/ }).waitFor();
+    assert.equal(await countRoomChunks(), 0, 'Ending the room must purge its IndexedDB bytes');
   } catch (e) {
     const hostState = await host.evaluate(() => ({
       alert: document.querySelector('.viewer-alert')?.textContent,

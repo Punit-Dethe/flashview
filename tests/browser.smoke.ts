@@ -103,6 +103,10 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
   student.on('console', message => { if (message.type() === 'error') browserLogs.push('student CONSOLE: ' + message.text()); });
   try {
     await host.goto(root);
+    if (!process.env.FLASHVIEW_BACKEND) {
+      await mkdir('test-artifacts/ui', { recursive: true });
+      await host.screenshot({ path: 'test-artifacts/ui/welcome.png', fullPage: true });
+    }
     await host.getByRole('button', { name: /Create a room/ }).click();
     const roomCode = await host.locator('.room-code').textContent();
     assert.match(roomCode ?? '', /^\d{6}$/);
@@ -132,6 +136,10 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     });
     assert.match(swatch?.accent ?? '', /^#[0-9A-Fa-f]{6}$/);
     assert.notEqual(swatch?.background, 'rgba(0, 0, 0, 0)');
+    if (!process.env.FLASHVIEW_BACKEND) {
+      await host.screenshot({ path: 'test-artifacts/ui/classroom.png', fullPage: true });
+      await student.screenshot({ path: 'test-artifacts/ui/student.png', fullPage: true });
+    }
     // Student approval also approves each new PDF automatically.
     await student.locator('.sent-row').filter({ hasText: 'smoke.pdf' })
       .getByText('Shared — caching on classroom computer').waitFor();
@@ -169,6 +177,9 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
       return ink;
     });
     assert.ok(renderedDarkPixels > 3, 'Page 1 should contain actually rendered pixels');
+    if (!process.env.FLASHVIEW_BACKEND) {
+      await presentation.screenshot({ path: 'test-artifacts/ui/presentation.png' });
+    }
     assert.match(await presentation.locator('.viewer-filename').innerText(), /direct local rendering/);
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
     // Regression: moving around the PDF and waiting past the old 30s watchdog

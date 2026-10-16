@@ -70,6 +70,13 @@ jobs:
           BENCH_STUDENTS: 1
           BENCH_FILE_READ_DELAY_MS: 40
           BENCH_TRANSFER_MODE: adaptive
+      - name: Upload UI reference screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flashview-ui-reference
+          path: test-artifacts/ui/*.png
+          if-no-files-found: warn
       - name: Upload Stage 1 A/B reports
         uses: actions/upload-artifact@v4
         if: always()

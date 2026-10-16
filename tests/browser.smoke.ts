@@ -222,12 +222,54 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
         Math.abs(canvas.getBoundingClientRect().height - expected) < 2 &&
         !document.querySelector('.page-overlay');
     }, normalHeight, { timeout: 15000 });
-    // Native Fullscreen API should engage from the dock and exit cleanly.
+    // Top-left identity uses the document's curated accent, matching its
+    // teacher-side file card instead of a generic gray back arrow.
+    assert.equal(await presentation.locator('.viewer-file-mark').count(), 1);
+    const identity = await presentation.locator('.viewer-filename').evaluate(el => {
+      const marker = el.querySelector('.viewer-file-mark');
+      return {
+        radius: getComputedStyle(el).borderRadius,
+        accent: marker ? getComputedStyle(marker).color : '',
+      };
+    });
+    assert.equal(identity.radius, '15px');
+    assert.notEqual(identity.accent, '');
+
+    // Native Fullscreen API should engage from the floating pill AND keep a
+    // fully painted PDF on-screen. Merely asserting fullscreenElement existed
+    // previously missed the real-world "fullscreen goes black" regression.
     if (await presentation.evaluate(() => document.fullscreenEnabled)) {
       await presentation.getByRole('button', { name: 'Fullscreen', exact: true }).click();
       await presentation.waitForFunction(() => document.fullscreenElement !== null, null, { timeout: 10000 });
+      await presentation.waitForFunction(() => {
+        const wrapper = document.querySelector<HTMLElement>('.viewer');
+        const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
+        if (document.fullscreenElement !== wrapper || !canvas ||
+            canvas.dataset.renderedPage !== '1') return false;
+        const stage = document.querySelector<HTMLElement>('.page-stage');
+        if (!stage || stage.clientHeight < innerHeight - 15 ||
+            Math.abs(wrapper.getBoundingClientRect().height - innerHeight) > 2) return false;
+        const bounds = canvas.getBoundingClientRect();
+        if (bounds.width < 200 || bounds.height < 300 ||
+            bounds.bottom <= 0 || bounds.top >= innerHeight) return false;
+        const context = canvas.getContext('2d');
+        if (!context) return false;
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+        let ink = 0, paper = 0;
+        for (let i = 0; i < data.length; i += 4 * 12) {
+          if (data[i] < 130 && data[i+1] < 130 && data[i+2] < 130) ink++;
+          if (data[i] > 230 && data[i+1] > 230 && data[i+2] > 230) paper++;
+        }
+        return ink >= 3 && paper > 200;
+      }, null, { timeout: 25000 });
+      if (!process.env.FLASHVIEW_BACKEND) {
+        await presentation.screenshot({ path: 'test-artifacts/ui/presentation-fullscreen.png' });
+      }
       await presentation.getByRole('button', { name: 'Exit fullscreen' }).click();
       await presentation.waitForFunction(() => document.fullscreenElement === null, null, { timeout: 10000 });
+      await presentation.waitForFunction(() =>
+        document.querySelector<HTMLCanvasElement>('canvas[data-rendered-page="1"]') !== null,
+        null, { timeout: 12000 });
     }
     if (!process.env.FLASHVIEW_BACKEND) {
       await presentation.screenshot({ path: 'test-artifacts/ui/presentation.png' });

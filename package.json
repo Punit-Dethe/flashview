@@ -13,7 +13,10 @@
     "build": "tsc --noEmit && vite build",
     "start": "node --import tsx src/server/index.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:browser": "node --import tsx --test tests/browser.smoke.ts"
+    "test:browser": "node --import tsx --test tests/browser.smoke.ts",
+    "dev:cloudflare": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "check:cloudflare": "wrangler deploy --dry-run --outdir .wrangler/dry-run"
   },
   "dependencies": {
     "pdfjs-dist": "^6.4.299",
@@ -32,6 +35,8 @@
     "concurrently": "^9.2.1",
     "typescript": "^5.9.3",
     "vite": "^7.1.9",
-    "playwright": "^1.55.0"
+    "playwright": "^1.55.0",
+    "wrangler": "^4.0.0",
+    "@cloudflare/workers-types": "^4.0.0"
   }
 }

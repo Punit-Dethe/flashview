@@ -19,7 +19,9 @@ export class RoomSocket {
   connect(identity: Record<string, unknown>): void {
     this.close();
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(protocol + '//' + window.location.host + '/ws');
+    const roomCode = typeof identity.code === 'string' ? identity.code : typeof identity.joinToken === 'string' ? identity.joinToken.split('.')[0] : typeof identity.roomId === 'string' ? identity.roomId : '';
+    const suffix = /^\d{6}$/.test(roomCode) ? '?room=' + encodeURIComponent(roomCode) : '';
+    const ws = new WebSocket(protocol + '//' + window.location.host + '/ws' + suffix);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     this.onStatus('connecting');

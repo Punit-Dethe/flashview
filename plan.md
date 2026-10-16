@@ -1,6 +1,6 @@
 # FlashView — Engineering Plan
 
-**Status:** Architecture approved for initial implementation; performance and campus-firewall assumptions require real-device validation.  
+**Status:** Cloudflare Workers Free selected; implementing a per-room Durable Object relay. Browser and campus performance tests are pending.  
 **Last researched:** 16 October 2026  
 **Product:** Instant, browser-based PDF presentation across different networks, particularly student phones to a classroom smartboard.
 
@@ -249,3 +249,21 @@ Test corpus: 0.3 MB single-page, 2 MB normal, 10 MB image-heavy, 50 MB, lineariz
 ## 13. Implementation discipline
 
 Keep changes small; implement M0/M1 first, validate with tests, then iterate M2/M3. Do not prematurely claim functionality merely because API supports it. Record benchmark findings and architectural deviations in this file as we learn. The core differentiator is **instant discoverability and progressive usability of a PDF across restricted networks**, not a claim of extraordinary raw bandwidth.
+
+## 14. Zero-cost permanent hosting decision (16 October 2026)
+
+**Project requirement:** ₹0 indefinitely, no expiring trial, no laptop kept running, and website accessible even after a month. Railway paid always-on, Fly.io paid and Render Free (~1-minute idle sleep) do not qualify.
+
+**Primary hosting:** Cloudflare Workers Free for React static assets, API and WebSocket entry; SQLite-backed Durable Objects Free for hibernatable, room-specific WebSocket relays. Each classroom room code maps to one Durable Object, so all connected browser clients reach the same instance without Redis. Transferred PDFs stay in the student File object; relay forwards requested binary ranges without persistent storage. Room secrets and small manifests can be persisted to restore across object hibernation.
+
+**Free limits (as of Oct 2026):** 100,000 DO requests/day; 13,000 GB-s/day; incoming WebSocket frames amortized 20:1 for billed request counts; outgoing DO WebSocket messages not billed as requests. Free overages fail rather than bill; Cloudflare Worker Free has its own request limits. This does not mean unlimited data/traffic, and it is subject to provider terms.
+
+**Startup:** static assets are edge-hosted and do not wait for a sleeping web process. Room Durable Object may initialize on first contact or wake from hibernation, but there is no paid always-on instance. Real latency must be measured.
+
+**Vercel correction:** Vercel Functions introduced WebSocket support in June 2026. However, new connections can land on distinct instances and cannot assume shared in-memory rooms. This complicates relay behavior vs per-room Durable Objects.
+
+**Other permanent free alternatives:** Deno Deploy Free currently offers 20 GiB/mo egress; promising but finite PDF traffic budget. Render Free sleeps after 15 min inactivity and takes about a minute to wake.
+
+**Manual deployment:** owner creates Cloudflare Workers Free account and authorizes Wrangler login/deploy. No paid plan, billing setup or custom domain needed. College Wi-Fi may still block WebSocket upgrades: HTTPS fallback remains on roadmap.
+
+Official references: https://developers.cloudflare.com/durable-objects/platform/pricing/ | https://developers.cloudflare.com/durable-objects/best-practices/websockets/ | https://developers.cloudflare.com/workers/static-assets/ | https://vercel.com/changelog/websocket-support-is-now-in-public-beta | https://deno.com/deploy/pricing

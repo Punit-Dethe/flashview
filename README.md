@@ -49,7 +49,7 @@ For a meaningful connectivity test, place host and student on **different intern
 - Student tab suspension/phone lock may interrupt streaming. Keep the sender tab open.
 - No HTTP-only fallback when firewalls block WebSocket upgrades yet.
 - Data is not encrypted end-to-end; do not use with confidential PDFs.
-- Session/room data is transient. Restarting the server loses rooms.
+- The local Node server uses transient rooms. Cloudflare uses short-lived persisted room metadata so objects can hibernate; PDF bytes are never saved.
 - Large or unusual PDFs may need multiple noncontiguous ranges before page 1 can render.
 - Host can approve student connections and each submitted document; high-traffic production abuse controls need additional work.
 
@@ -61,14 +61,22 @@ PairDrop's complete WebRTC/TURN infrastructure is unnecessary for our firewall-f
 
 Project license has not yet been chosen. External dependencies retain their respective licenses.
 
-## Production deployment
+## Permanent free hosting — Cloudflare Workers (recommended)
 
-A public HTTPS deployment is required for students on mobile data and college smartboards to share a room. The repository includes a multi-stage `Dockerfile` and `railway.json` for Railway or an equivalent always-on container host.
+FlashView is designed for the **Cloudflare Workers Free + SQLite-backed Durable Objects Free** tiers. No expiring trial, paid container or custom domain is required. Cloudflare serves the React site as static assets and uses one hibernatable Durable Object per classroom, even when students are on different networks.
 
-1. Connect this GitHub repository to the hosting provider (Railway is one reasonable option).
-2. Deploy the Dockerfile as a web service and obtain its public HTTPS domain.
-3. Set the service environment variable `PUBLIC_ORIGIN` to that exact HTTPS origin (without a trailing path), e.g. `https://flashview.example.app`. The service honors the provider's `PORT`.
-4. Check `/health`, then open the website on the smartboard and scan its QR code from a phone on **mobile data**.
+1. Register for **Cloudflare Workers Free** and enable your free `workers.dev` subdomain.
+2. On your computer run `npm install`, then `npx wrangler login` to authorize deployment.
+3. Run `npm run deploy` to build and publish the website plus Durable Object relay.
+4. Open the resulting HTTPS `workers.dev` URL; create a room and scan its QR from a phone on mobile data.
+
+To run the Cloudflare backend locally, use `npm run dev:cloudflare`. For the existing Node baseline, `npm run dev` still works.
+
+Current Cloudflare Free allowances include 100,000 Durable Object requests/day and 13,000 GB-s/day of compute. Over-limit requests fail rather than becoming automatic paid overages on the Free plan. Real performance and quotas still need testing.
+
+Vercel gained native WebSocket support in June 2026, but a student and host can be assigned different function instances, adding coordination complexity. Deno Deploy has a free tier with 20 GiB monthly egress, but that quota may constrain streamed PDFs.
 
 **Security boundary:** The hosted server has no end-to-end PDF encryption and should not be used with sensitive documents. Enable the campus firewall's outbound HTTPS access to the domain and verify WebSocket upgrades. If WSS is blocked, an ordinary HTTP fallback is still a future milestone.
 
+
+Cloudflare references: https://developers.cloudflare.com/durable-objects/platform/pricing/ · https://developers.cloudflare.com/durable-objects/best-practices/websockets/ · https://developers.cloudflare.com/workers/static-assets/

@@ -7,6 +7,7 @@ import { makeFirstPagePreview } from './pdf/firstPagePreview';
 import { PresentationHost } from './presentation';
 import { cleanExpiredRoomCaches, type CacheProgress } from './pdf/roomCache';
 import { PerfPanel } from './PerfPanel';
+import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
 
 type Mode = 'welcome' | 'host' | 'student';
@@ -502,13 +503,13 @@ export function App() {
           <div className="workspace">
             <>
               <div className="workspace-topline"><div className="eyebrow">LIVE ROOM / {hostSession.code}</div><button className="subtle-link" onClick={() => setEndConfirm(true)}>End session ↗</button></div>
-              <h1 className="section-heading">Your classroom,<br/><em>connected.</em></h1>
-              <p className="section-intro">Students join using the QR code and choose a PDF. Present each document in a separate tab while your classroom queue stays here.</p>
+              <h1 className="section-heading">Your room is <em>live.</em></h1>
+              <p className="section-intro">One place for everyone’s slides. Invite students, watch files arrive, and present whenever you're ready.</p>
               <div className="host-grid">
                 <aside className="room-card">
-                  <div className="card-index">YOUR ROOM <span className="room-live"><span className="status-dot"/> LIVE</span></div>
+                  <div className="card-index">INVITE TO ROOM <span className="room-live"><span className="status-dot"/> LIVE</span></div>
                   <div className="qr-plate"><QRCodeSVG value={joinLink} size={190} marginSize={1} bgColor="#ffffff" fgColor="#172b2d"/></div>
-                  <div className="room-code-label">OR ENTER THIS CODE</div>
+                  <div className="room-code-label">SIX-DIGIT ROOM CODE</div>
                   <div className="room-code">{hostSession.code}</div>
                   <button className="copy-link" onClick={() => void navigator.clipboard.writeText(joinLink)}>Copy invitation link ↗</button>
                   <div className="room-divider"/>
@@ -522,15 +523,15 @@ export function App() {
                   ))}
                 </aside>
                 <section className="document-column">
-                  <div className="list-heading"><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2><button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>Refresh submissions ↻</button></div>
+                  <div className="list-heading"><div className="list-heading-title"><span className="list-kicker">YOUR PRESENTATION QUEUE</span><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2></div><button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>Refresh <span aria-hidden="true">↻</span></button></div>
                   {documents.length === 0 && (
                     <div className="empty-list"><span className="empty-art">▤</span>
                       <h3>Nothing shared yet.</h3><p>Once a student selects a PDF, it'll show up here — no full upload required.</p></div>
                   )}
                   <div className="document-list">
                     {documents.filter(f => f.status !== 'rejected').map(file => (
-                      <article className="document-row" key={file.fileId}>
-                        <div className="file-icon">PDF</div>
+                      <article className="document-row" key={file.fileId} style={fileAccentStyle(file.fileId)}>
+                        <div className="file-icon" aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></div>
                         <div className="file-meta"><strong title={file.name}>{file.name}</strong>
                           <span>{file.ownerName} · {formatBytes(file.size)}</span>
                           <span className="cache-status" data-testid={'cache-' + file.fileId}>
@@ -542,6 +543,11 @@ export function App() {
                                     ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
                                 : 'Ready for progressive transfer'}
                           </span>
+                          <div className="file-progress-track" role="progressbar" aria-label={'Cached progress for ' + file.name}
+                            aria-valuemin={0} aria-valuemax={100}
+                            aria-valuenow={Math.min(100, Math.round((cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100))}>
+                            <span style={{ width: Math.min(100, (cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100) + '%' }}/>
+                          </div>
                         </div>
                         {file.status === 'approved' || cacheProgress[file.fileId]?.complete ? (
                           <button className="open-button" onClick={() => {
@@ -595,7 +601,7 @@ export function App() {
                 <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={addPdf}/>
                 {sentFiles.length > 0 && <div className="sent-list"><h3>Files you're sharing</h3>
                   {sentFiles.map(f => <div className="sent-row" key={f.fileId}>
-                    <span className="file-icon">PDF</span><div className="file-meta"><strong>{f.name}</strong><span>{formatBytes(f.size)} · {f.status === 'announcing' ? 'Sending announcement…' : f.status === 'approved' ? 'Shared — caching on classroom computer' : f.status}</span></div>
+                    <span className="file-icon" style={fileAccentStyle(f.fileId)} aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></span><div className="file-meta"><strong>{f.name}</strong><span>{formatBytes(f.size)} · {f.status === 'announcing' ? 'Sending announcement…' : f.status === 'approved' ? 'Shared — caching on classroom computer' : f.status}</span></div>
                     {f.status !== 'offline' && <button className="plain-action" onClick={() => revoke(f.fileId)}>Stop sharing</button>}
                   </div>)}</div>}
                 <div className="stay-online">FlashView sends a document announcement first, not the complete PDF. A confirmation means your file is listed in the classroom. Keep this browser tab running for the teacher to view uncached pages.</div>

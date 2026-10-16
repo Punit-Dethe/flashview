@@ -1,6 +1,7 @@
 import { MAX_RANGE_BYTES, ROOM_TTL_MS, type PdfManifest } from '../../shared/protocol';
 import type { RoomSocket } from '../socket';
 import { perf } from '../perf';
+import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
 
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
@@ -183,6 +184,9 @@ export class RoomPdfCache {
   private nextIndex = new Map<string, number>();
   private cooldown = new Map<string, number>();
   private rotation = 0;
+  private readonly adaptive = new Map<string, AdaptiveTransferWindow>();
+  // Keep a fixed scheduler available for identical-file A/B tests.
+  private readonly fixedTransfer = new URLSearchParams(location.search).get('transfer') === 'fixed';
   private storageFailedFiles = new Set<string>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
@@ -287,6 +291,7 @@ export class RoomPdfCache {
     if (afterRead) return afterRead;
     const begin = index * CHUNK_BYTES;
     const end = Math.min(file.size, begin + CHUNK_BYTES);
+    const networkStartedAt = performance.now();
     const promise = new Promise<Uint8Array>((resolve, reject) => {
       if (!this.socket.connected) return reject(Error('The sender is offline. Cached pages remain available.'));
       this.socket.requestRange(file.fileId, begin, end,
@@ -294,8 +299,13 @@ export class RoomPdfCache {
           if (start !== begin || data.byteLength !== end - begin) {
             reject(Error('Incomplete PDF byte range')); return;
           }
+          if (!this.fixedTransfer && !this.stopped)
+            this.tuner(file.fileId).success(performance.now() - networkStartedAt);
           resolve(data);
-        }, (reason: string) => reject(Error(reason)));
+        }, (reason: string) => {
+          if (!this.fixedTransfer && !this.stopped) this.tuner(file.fileId).failure();
+          reject(Error(reason));
+        });
     }).then(async data => {
       if (this.stopped) throw Error('Classroom cache closed');
       this.putMemory(key, data);
@@ -359,6 +369,7 @@ export class RoomPdfCache {
     this.jobs.delete(fileId);
     this.nextIndex.delete(fileId);
     this.cooldown.delete(fileId);
+    this.adaptive.delete(fileId);
   }
   resume(): void {
     if (this.stopped) return;
@@ -367,6 +378,14 @@ export class RoomPdfCache {
     void this.work();
   }
 
+  private tuner(fileId: string): AdaptiveTransferWindow {
+    let value = this.adaptive.get(fileId);
+    if (!value) {
+      value = new AdaptiveTransferWindow();
+      this.adaptive.set(fileId, value);
+    }
+    return value;
+  }
   private reserveNext(file: PdfManifest, cached: Set<number>): number | null {
     const total = Math.ceil(file.size / CHUNK_BYTES);
     let reserved = this.reserved.get(file.fileId);
@@ -374,7 +393,8 @@ export class RoomPdfCache {
       reserved = new Set<number>();
       this.reserved.set(file.fileId, reserved);
     }
-    if (reserved.size >= BACKGROUND_WINDOW) return null;
+    const currentWindow = this.fixedTransfer ? BACKGROUND_WINDOW : this.tuner(file.fileId).limit;
+    if (reserved.size >= currentWindow) return null;
     let cursor = this.nextIndex.get(file.fileId) ?? 0;
     for (let checked = 0; checked < total; checked++) {
       const index = (cursor + checked) % total;
@@ -419,6 +439,7 @@ export class RoomPdfCache {
                 this.nextIndex.delete(fileId);
                 this.cooldown.delete(fileId);
                 this.reserved.delete(fileId);
+                this.adaptive.delete(fileId);
                 this.onProgress(completion(file, cached));
               }
               continue;
@@ -475,6 +496,7 @@ export class RoomPdfCache {
     this.reserved.clear();
     this.nextIndex.clear();
     this.cooldown.clear();
+    this.adaptive.clear();
     this.storageFailedFiles.clear();
   }
   async clear(): Promise<void> {

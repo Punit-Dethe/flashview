@@ -10,10 +10,12 @@ import {
 
 type Role = 'host' | 'student';
 type Peer = { ws: WebSocket; id: string; role: Role; room: Room; approved: boolean; name: string };
+type ResumeSession = { id: string; name: string; approved: boolean; token: string };
 type Outstanding = { fileId: string; senderId: string; begin: number; end: number; created: number };
 type Room = {
   id: string; code: string; joinToken: string; hostToken: string;
   created: number; host: Peer | null; students: Map<string, Peer>;
+  sessions: Map<string, ResumeSession>;
   files: Map<string, PdfManifest>; outstanding: Map<string, Outstanding>;
 };
 const rooms = new Map<string, Room>();
@@ -55,9 +57,10 @@ function validOrigin(req: IncomingMessage): boolean {
 }
 function removeStudent(peer: Peer): void {
   const room = peer.room;
+  if (room.students.get(peer.id) !== peer) return;
   room.students.delete(peer.id);
   for (const file of room.files.values()) {
-    if (file.ownerId === peer.id) {
+    if (file.ownerId === peer.id && file.status === 'approved') {
       file.status = 'offline';
       notifyHost(room, { type: 'file.updated', file });
     }
@@ -77,6 +80,7 @@ function closeRoom(room: Room): void {
   }
   if (room.host) { send(room.host.ws, { type: 'room.closed' }); room.host.ws.close(1000, 'Room ended'); }
   room.students.clear();
+  room.sessions.clear();
   room.files.clear();
   room.outstanding.clear();
   rooms.delete(room.id);
@@ -108,14 +112,41 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     if (!room.host || room.host.ws.readyState !== WebSocket.OPEN) {
       return void sendError(ws, 'The host is offline');
     }
+    const previous = typeof msg.resumeToken === 'string'
+      ? room.sessions.get(msg.resumeToken) : undefined;
+    if (previous) {
+      const oldPeer = room.students.get(previous.id);
+      if (oldPeer) oldPeer.ws.close(4000, 'Session resumed on another socket');
+      const peer: Peer = {
+        ws, id: previous.id, role: 'student', room,
+        name: previous.name, approved: previous.approved,
+      };
+      room.students.set(peer.id, peer);
+      connections.set(ws, peer);
+      const ownFiles = [...room.files.values()].filter(f => f.ownerId === peer.id);
+      for (const file of ownFiles) {
+        if (file.status === 'offline') {
+          file.status = previous.approved ? 'approved' : 'pending';
+          notifyHost(room, { type: 'file.updated', file });
+        }
+      }
+      send(ws, {
+        type: previous.approved ? 'join.resumed' : 'join.pending',
+        roomCode: room.code, resumeToken: previous.token, files: ownFiles,
+      });
+      notifyHost(room, { type: 'student.updated', student: { id: peer.id, name: peer.name, approved: peer.approved } });
+      return;
+    }
     if (room.students.size >= MAX_STUDENTS) return void sendError(ws, 'Room is full');
     const peer: Peer = {
       ws, id: randomUUID(), role: 'student', room,
       name: acceptableText(msg.name, 32) || 'Student', approved: false,
     };
+    const resumeToken = randomToken(32);
+    room.sessions.set(resumeToken, { id: peer.id, token: resumeToken, name: peer.name, approved: false });
     room.students.set(peer.id, peer);
     connections.set(ws, peer);
-    send(ws, { type: 'join.pending', roomCode: room.code });
+    send(ws, { type: 'join.pending', roomCode: room.code, resumeToken });
     notifyHost(room, { type: 'student.pending', student: { id: peer.id, name: peer.name, approved: false } });
     return;
   }
@@ -133,17 +164,24 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   const peer = connections.get(ws);
   if (!peer) return void sendError(ws, 'Authentication required');
   const room = peer.room;
+  if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
   if (peer.role === 'host') {
     if (msg.type === 'student.accept' && typeof msg.studentId === 'string') {
       const student = room.students.get(msg.studentId);
       if (student) {
         student.approved = true;
-        send(student.ws, { type: 'join.accepted', roomCode: room.code });
+        const session = [...room.sessions.values()].find(record => record.id === student.id);
+        if (session) session.approved = true;
+        send(student.ws, { type: 'join.accepted', roomCode: room.code, resumeToken: session?.token });
         notifyHost(room, { type: 'student.updated', student: { id: student.id, name: student.name, approved: true } });
       }
     } else if (msg.type === 'student.reject' && typeof msg.studentId === 'string') {
       const student = room.students.get(msg.studentId);
-      if (student) { send(student.ws, { type: 'join.rejected' }); student.ws.close(1008, 'Rejected'); }
+      if (student) {
+        for (const [key, record] of room.sessions) if (record.id === student.id) room.sessions.delete(key);
+        send(student.ws, { type: 'join.rejected' });
+        student.ws.close(1008, 'Rejected');
+      }
     } else if (msg.type === 'file.approve' && typeof msg.fileId === 'string') {
       const file = room.files.get(msg.fileId);
       const sender = file && room.students.get(file.ownerId);
@@ -287,7 +325,7 @@ const http = createServer((req, res) => {
     const room: Room = {
       id: randomUUID(), code, joinToken: randomToken(20),
       hostToken: randomToken(32), created: now,
-      host: null, students: new Map(), files: new Map(), outstanding: new Map(),
+      host: null, students: new Map(), sessions: new Map(), files: new Map(), outstanding: new Map(),
     };
     rooms.set(room.id, room);
     res.writeHead(201, {

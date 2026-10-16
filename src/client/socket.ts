@@ -1,4 +1,5 @@
 import { decodeRangePacket, encodeRangePacket } from '../shared/protocol';
+import { perf } from './perf';
 
 export type ServerMessage = { type: string; [key: string]: unknown };
 export type SocketStatus = 'disconnected' | 'connecting' | 'connected';
@@ -23,6 +24,7 @@ export class RoomSocket {
   private pingTimeout: ReturnType<typeof setTimeout> | null = null;
   private retryCount = 0;
   private stopped = false;
+  private pingSentAt: number | null = null;
   onMessage: (message: ServerMessage) => void = () => {};
   onStatus: (status: SocketStatus) => void = () => {};
 
@@ -39,11 +41,13 @@ export class RoomSocket {
     if (this.pingTimeout !== null) clearTimeout(this.pingTimeout);
     this.pingTimer = null;
     this.pingTimeout = null;
+    this.pingSentAt = null;
   }
 
   private ping(): void {
     if (!this.connected || this.pingTimeout !== null) return;
     if (!this.send({ type: 'heartbeat.ping' })) return;
+    if (perf.enabled) this.pingSentAt = performance.now();
     this.pingTimeout = setTimeout(() => {
       this.pingTimeout = null;
       if (this.ws?.readyState === WebSocket.OPEN) {
@@ -76,6 +80,8 @@ export class RoomSocket {
       : typeof this.identity.joinToken === 'string' ? this.identity.joinToken.split('.')[0]
       : typeof this.identity.roomId === 'string' ? this.identity.roomId : '';
     const suffix = /^\d{6}$/.test(roomCode) ? '?room=' + encodeURIComponent(roomCode) : '';
+    const connectStarted = perf.enabled ? performance.now() : 0;
+    let authenticated = false;
     const ws = new WebSocket(protocol + '//' + window.location.host + '/ws' + suffix);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
@@ -91,6 +97,8 @@ export class RoomSocket {
         try {
           const message: ServerMessage = JSON.parse(event.data);
           if (message.type === 'heartbeat.pong') {
+            if (this.pingSentAt !== null) perf.record('heartbeat_rtt_ms', performance.now() - this.pingSentAt);
+            this.pingSentAt = null;
             if (this.pingTimeout !== null) clearTimeout(this.pingTimeout);
             this.pingTimeout = null;
             return;
@@ -103,6 +111,10 @@ export class RoomSocket {
           }
           if (message.type === 'room.state' || message.type === 'join.pending' ||
               message.type === 'join.accepted' || message.type === 'join.resumed') {
+            if (!authenticated && perf.enabled) {
+              authenticated = true;
+              perf.record('socket_connect_ms', performance.now() - connectStarted);
+            }
             this.retryCount = 0;
             this.onStatus('connected');
           }
@@ -177,15 +189,24 @@ export class RoomSocket {
     resolve: (start: number, data: Uint8Array) => void, reject: (message: string) => void,
   ): () => void {
     const requestId = crypto.randomUUID().replaceAll('-', '');
+    const started = perf.enabled ? performance.now() : 0;
+    const successful = (start: number, data: Uint8Array) => {
+      if (perf.enabled) perf.record('range_roundtrip_ms', performance.now() - started, { bytes: data.byteLength });
+      resolve(start, data);
+    };
+    const unsuccessful = (message: string) => {
+      if (perf.enabled) perf.record('range_roundtrip_ms', performance.now() - started, { outcome: 'error' });
+      reject(message);
+    };
     const timer = setTimeout(() => {
       this.pending.delete(requestId);
-      reject('PDF range request timed out');
+      unsuccessful('PDF range request timed out');
     }, 25_000);
-    this.pending.set(requestId, { fileId, begin, timer, resolve, reject });
+    this.pending.set(requestId, { fileId, begin, timer, resolve: successful, reject: unsuccessful });
     if (!this.send({ type: 'range.request', requestId, fileId, begin, end })) {
       clearTimeout(timer);
       this.pending.delete(requestId);
-      reject('Not connected');
+      unsuccessful('Not connected');
     }
     return () => {
       const pending = this.pending.get(requestId);

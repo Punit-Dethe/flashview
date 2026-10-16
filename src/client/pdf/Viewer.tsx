@@ -143,6 +143,10 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   useEffect(() => {
     const sync = () => {
       setFullscreen(document.fullscreenElement === wrapper.current);
+      // The element moves into/out of the browser top layer. Some browsers
+      // don't repaint an existing canvas even when its measured size stays
+      // identical; request one fresh frame while retaining the old pixels.
+      setPageAttempt(value => value + 1);
       // Native fullscreen transitions can change dimensions before the
       // ResizeObserver reports its next frame on Chromium/Firefox.
       requestAnimationFrame(() => {

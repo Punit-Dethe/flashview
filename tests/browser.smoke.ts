@@ -516,3 +516,55 @@ test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async
     child.kill('SIGTERM');
   }
 });
+
+
+test('Stage 1: a temporarily full student send buffer waits and drains without rejecting PDFs', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await chromium.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage();
+  await student.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    let heldUntil = 0;
+    class CongestedWebSocket extends NativeWebSocket {
+      override get bufferedAmount(): number {
+        return Date.now() < heldUntil ? 5 * 1024 * 1024 : super.bufferedAmount;
+      }
+    }
+    window.WebSocket = CongestedWebSocket;
+    (window as typeof window & { __holdSocketBuffer?: (ms: number) => void })
+      .__holdSocketBuffer = ms => { heldUntil = Date.now() + ms; };
+  });
+  try {
+    const url = 'http://127.0.0.1:' + port;
+    await host.goto(url + '/?perf=1');
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    const code = await host.locator('.room-code').innerText();
+    await host.locator('.connection.connected').waitFor();
+    await student.goto(url + '/?perf=1');
+    await student.locator('#code').fill(code);
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
+    await student.getByText('Choose a PDF to share.').waitFor();
+    await student.evaluate(() => {
+      (window as typeof window & { __holdSocketBuffer?: (ms: number) => void })
+        .__holdSocketBuffer?.(1100);
+    });
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'temporary-backpressure.pdf', mimeType: 'application/pdf',
+      buffer: makePdf(16000),
+    });
+    await host.locator('.document-row').filter({ hasText: 'temporary-backpressure.pdf' })
+      .getByText('Fully cached on this computer').waitFor({ timeout: 25000 });
+    const samples = await student.evaluate(() =>
+      (window as typeof window & {
+        __flashviewPerf?: { snapshot: () => { summary: Array<{ metric: string; count: number }> } };
+      }).__flashviewPerf?.snapshot().summary ?? []);
+    assert.ok(samples.some(s => s.metric === 'sender_backpressure_ms' && s.count > 0),
+      'The sender should record that it waited for the simulated busy socket');
+    assert.equal(await student.getByText(/Network sender is busy/).count(), 0);
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

@@ -87,7 +87,7 @@ class LivePdfRanges extends PDFDataRangeTransport {
  * A viewer can be closed and reopened without re-downloading the PDF because
  * its range source is backed by the room-level IndexedDB cache.
  */
-export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage, onFirstPageRendered }: {
+export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage, onFirstPageRendered, onTiming }: {
   file: PdfManifest;
   socket: PdfRangeSource;
   close: () => void;
@@ -95,6 +95,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   cachedRoomId?: string | null;
   previewImage?: string | null;
   onFirstPageRendered?: () => void;
+  onTiming?: (metric: 'pdf_open_ms' | 'page_render_ms', duration: number, page?: number) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const wrapper = useRef<HTMLDivElement>(null);
@@ -136,6 +137,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     setError('');
     setRendering(false);
     reportedFirst.current = false;
+    const openedAt = performance.now();
 
     const fail = (reason: string) => {
       if (disposed) return;
@@ -185,6 +187,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
         if (disposed) return;
         if (watchdog !== null) clearTimeout(watchdog);
         watchdog = null;
+        onTiming?.('pdf_open_ms', performance.now() - openedAt);
         setPdfDocument(pdf);
         setLoading(false);
         setError('');
@@ -203,12 +206,13 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     };
     // Switching to completed cached data intentionally restarts the document
     // exactly once, rather than continuing a potentially stalled range stream.
-  }, [file.fileId, file.size, socket, cachedRoomId, loadingFullPdf, attempt]);
+  }, [file.fileId, file.size, socket, cachedRoomId, loadingFullPdf, attempt, onTiming]);
 
   useEffect(() => {
     if (!pdfDocument || !canvas.current) return;
     let cancelled = false;
     const generation = ++renderSequence.current;
+    const pageStartedAt = performance.now();
     setRendering(true);
     setRenderedPage(null);
     setError('');
@@ -248,6 +252,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
         activeRender.current = task;
         await task.promise;
         if (cancelled || generation !== renderSequence.current) return;
+        onTiming?.('page_render_ms', performance.now() - pageStartedAt, page);
         setRendering(false);
         setRenderedPage(page);
         setError('');
@@ -272,7 +277,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       renderSequence.current++;
       activeRender.current?.cancel();
     };
-  }, [pdfDocument, page, zoom, pageAttempt, onFirstPageRendered]);
+  }, [pdfDocument, page, zoom, pageAttempt, onFirstPageRendered, onTiming]);
 
   useEffect(() => { setPageInput(String(page)); }, [page]);
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CacheProgress } from './pdf/roomCache';
 import type { PdfManifest } from '../shared/protocol';
 import { PresentationGuest } from './presentation';
@@ -13,6 +13,7 @@ export function Presenter() {
   const [preview, setPreview] = useState<string | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const slideVisible = useRef(false);
 
   useEffect(() => {
     if (!/^[a-f0-9]{32}$/i.test(key) || typeof BroadcastChannel === 'undefined') {
@@ -53,7 +54,30 @@ export function Presenter() {
     };
   }, [key]);
 
-  const pageReady = useCallback(() => source?.firstPageRendered(), [source]);
+  const markVisible = useCallback(() => {
+    if (!slideVisible.current) {
+      slideVisible.current = true;
+      source?.report('first_slide_after_present_ms');
+    }
+  }, [source]);
+  const pageReady = useCallback(() => {
+    source?.firstPageRendered();
+    markVisible();
+  }, [source, markVisible]);
+  useEffect(() => {
+    if (!preview || !file || !source || slideVisible.current) return;
+    // Mark after the preview is painted, not merely when bytes arrive.
+    const first = requestAnimationFrame(() => {
+      const second = requestAnimationFrame(() => markVisible());
+      // A separate animation frame paints the preview between these callbacks.
+      return second;
+    });
+    return () => cancelAnimationFrame(first);
+  }, [preview, file, source, markVisible]);
+  const reportTiming = useCallback((metric: 'pdf_open_ms' | 'page_render_ms',
+    duration: number, page?: number) => {
+    source?.report(metric, duration, page);
+  }, [source]);
 
   const close = () => {
     source?.close();
@@ -69,7 +93,8 @@ export function Presenter() {
         <span>The classroom dashboard stays open in the original tab.</span>
       </div>
       {file && source && !unavailable
-        ? <Viewer file={file} socket={source} close={close} cached={cached} previewImage={preview} cachedRoomId={roomId} onFirstPageRendered={pageReady}/>
+        ? <Viewer file={file} socket={source} close={close} cached={cached} previewImage={preview} cachedRoomId={roomId} onFirstPageRendered={pageReady}
+          onTiming={reportTiming}/>
         : <div className="presentation-state" role="status">
           {!unavailable && <span className="spinner"/>}
           <h1>{unavailable ? 'Presentation unavailable.' : 'Opening your presentation.'}</h1>

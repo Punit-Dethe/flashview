@@ -2,6 +2,7 @@ import type { PdfManifest } from '../shared/protocol';
 import { MAX_RANGE_BYTES } from '../shared/protocol';
 import { RoomPdfCache, type CacheProgress, cleanExpiredRoomCaches } from './pdf/roomCache';
 import type { RoomSocket } from './socket';
+import { perf, perfEnabled, type PerfName } from './perf';
 
 const PREFIX = 'flashview-present-';
 type Pending = { cancel: () => void };
@@ -75,6 +76,8 @@ export class PresentationHost {
     if (!this.socket.connected && file.status !== 'offline') throw Error('Classroom connection interrupted.');
     if (typeof BroadcastChannel === 'undefined') throw Error('Presentation tabs are unsupported in this browser.');
     const key = crypto.randomUUID().replaceAll('-', '');
+    const openedAt = perf.enabled ? performance.now() : 0;
+    let firstSlideObserved = false;
     const channel = new BroadcastChannel(PREFIX + key);
     const requests = new Map<string, Pending>();
     const close = () => {
@@ -102,6 +105,14 @@ export class PresentationHost {
         }).catch(() => {});
       } else if (m.type === 'first-page') {
         this.cache?.prefetch(file);
+      } else if (m.type === 'perf' && perf.enabled) {
+        if (m.metric === 'first_slide_after_present_ms' && !firstSlideObserved) {
+          firstSlideObserved = true;
+          perf.record('first_slide_after_present_ms', performance.now() - openedAt);
+        } else if ((m.metric === 'page_render_ms' || m.metric === 'pdf_open_ms') &&
+            Number.isFinite(m.ms) && m.ms >= 0 && m.ms < 300000) {
+          perf.record(m.metric as PerfName, m.ms, { page: m.page });
+        }
       } else if (m.type === 'cancel' && typeof m.id === 'string') {
         requests.get(m.id)?.cancel();
         requests.delete(m.id);
@@ -127,7 +138,7 @@ export class PresentationHost {
         }).finally(() => requests.delete(m.id));
       }
     };
-    const tab = window.open('/present#' + key, '_blank');
+    const tab = window.open('/present' + (perfEnabled ? '?perf=1' : '') + '#' + key, '_blank');
     if (!tab) { close(); throw Error('Allow popups to open the presentation in a new tab.'); }
     try { tab.opener = null; } catch { /* Browser manages opener restrictions. */ }
   }
@@ -175,6 +186,10 @@ export class PresentationGuest implements PdfRangeSource {
 
   ready(): void { this.channel.postMessage({ type: 'ready' }); }
   firstPageRendered(): void { this.channel.postMessage({ type: 'first-page' }); }
+  report(metric: 'first_slide_after_present_ms' | 'page_render_ms' | 'pdf_open_ms',
+    ms = 0, page?: number): void {
+    if (perf.enabled) this.channel.postMessage({ type: 'perf', metric, ms, page });
+  }
   requestRange(_fileId: string, begin: number, end: number, resolve: Reply, reject: Failure): () => void {
     const id = crypto.randomUUID().replaceAll('-', '');
     const timer = setTimeout(() => {

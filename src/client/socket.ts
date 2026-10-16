@@ -121,6 +121,9 @@ export class RoomSocket {
     this.failAll('Connection closed');
     const previous = this.ws;
     this.ws = null;
-    previous?.close();
+    if (previous?.readyState === WebSocket.CONNECTING) {
+      // Closing an unestablished browser WebSocket can throw InvalidStateError.
+      previous.addEventListener('open', () => previous.close(), { once: true });
+    } else previous?.close();
   }
 }

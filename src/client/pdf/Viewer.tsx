@@ -80,7 +80,6 @@ export function Viewer({ file, socket, close }: {
       disableStream: true,
       disableAutoFetch: true,
       disableRange: false,
-      isEvalSupported: false,
       maxImageSize: 15_000_000,
     });
     task.onPassword = () => {

@@ -174,7 +174,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
         return void send(ws, { type: 'range.error', requestId, message: 'Sender unavailable' });
       }
       room.outstanding.set(requestId, {
-        fileId, senderId: sender.id, begin: Number(begin), end: Number(end), created: Date.now(),
+        fileId: file.fileId, senderId: sender.id, begin: Number(begin), end: Number(end), created: Date.now(),
       });
       send(sender.ws, { type: 'range.request', fileId, requestId, begin, end });
     } else if (msg.type === 'range.cancel' && typeof msg.requestId === 'string') {
@@ -315,8 +315,9 @@ wss.on('connection', ws => {
   ws.on('message', (data, isBinary) => {
     if (isBinary) { handleBinary(ws, data); return; }
     try {
-      if (data.length > 8192) return void sendError(ws, 'Message too large');
-      const msg: unknown = JSON.parse(data.toString());
+      const incoming = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+      if (incoming.byteLength > 8192) return void sendError(ws, 'Message too large');
+      const msg: unknown = JSON.parse(incoming.toString());
       if (!msg || typeof msg !== 'object' || Array.isArray(msg)) throw new Error();
       handleControl(ws, msg as Record<string, unknown>);
     } catch { sendError(ws, 'Invalid message'); }

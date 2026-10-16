@@ -70,6 +70,18 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
   const browser = await chromium.launch({ headless: true });
   const host = await browser.newPage();
   const student = await browser.newPage();
+  // Record the current WebSocket in the student's browser without adding a production debug API.
+  await student.addInitScript(() => {
+    const NativeSocket = window.WebSocket;
+    class TrackedSocket extends NativeSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
+        (record.__flashviewSockets ??= []).push(this);
+      }
+    }
+    window.WebSocket = TrackedSocket as typeof WebSocket;
+  });
   const root = 'http://127.0.0.1:' + port;
   const browserLogs: string[] = [];
   host.on('pageerror', error => browserLogs.push('host JS ERROR: ' + error.message));
@@ -106,6 +118,29 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
         !document.querySelector('.page-overlay'));
     }, null, { timeout: 20000 });
     assert.equal(await host.locator('.viewer-alert').count(), 0);
+
+    // Simulate exactly what happens when a mobile browser drops the connection.
+    // No teacher reapproval or file reselection should be needed on recovery.
+    await student.evaluate(() => {
+      const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
+      const ws = record.__flashviewSockets?.at(-1);
+      if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('Expected an open WebSocket');
+      ws.close(4100, 'Simulated mobile tab background');
+    });
+    await student.waitForFunction(() => {
+      const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
+      const sockets = record.__flashviewSockets ?? [];
+      return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN &&
+        document.querySelector('.connection.connected') !== null &&
+        (document.querySelector('.sent-row')?.textContent ?? '').includes('approved');
+    }, null, { timeout: 20000 });
+    assert.match(await student.locator('.sent-row').innerText(), /smoke\.pdf/);
+    await host.getByRole('button', { name: 'Back to documents' }).click();
+    await host.locator('.document-row').getByRole('button', { name: /Open/ }).click();
+    await host.waitForFunction(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
+      return Boolean(canvas && canvas.width >= 500 && !document.querySelector('.page-overlay'));
+    }, null, { timeout: 20000 });
   } catch (e) {
     const hostState = await host.evaluate(() => ({
       alert: document.querySelector('.viewer-alert')?.textContent,

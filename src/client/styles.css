@@ -172,3 +172,15 @@ button { border: none; }
   .viewer-footer span:last-child { display: none; }
 }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }
+
+/* Separate projector-ready tab. Room moderation remains in the original tab. */
+.presentation-layout { min-height: 100vh; display: flex; flex-direction: column; padding: 0; background: #f4f3ed; }
+.presentation-caption { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 25px; min-height: 52px; background: #f6f5f0; color: #86938a; font-size: 11px; }
+.presentation-caption strong { color: #294d43; font-size: 11px; letter-spacing: .14em; }
+.presentation-layout > .viewer { flex: 1; height: calc(100vh - 52px); border-left: 0; border-right: 0; border-bottom: 0; }
+.presentation-layout .page-stage { align-items: center; }
+.presentation-state { margin: auto; text-align: center; padding: 60px 28px; max-width: 600px; }
+.presentation-state h1 { font-size: clamp(30px, 5vw, 46px); letter-spacing: -.055em; margin: 24px 0 12px; }
+.presentation-state p { color: #77867a; font-size: 14px; line-height: 1.7; margin-bottom: 30px; }
+.presentation-state .outline-button { margin: 0 auto; }
+@media(max-width:650px) { .presentation-caption { flex-direction: column; align-items: flex-start; gap: 4px; padding: 11px 15px; } .presentation-layout > .viewer { height: calc(100vh - 64px); } }

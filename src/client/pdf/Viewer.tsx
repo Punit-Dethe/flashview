@@ -5,7 +5,7 @@ import {
 } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PdfManifest } from '../../shared/protocol';
-import type { RoomSocket } from '../socket';
+import type { PdfRangeSource } from '../presentation';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const REQUEST_CHUNK = 65_536;
@@ -15,7 +15,7 @@ class LivePdfRanges extends PDFDataRangeTransport {
   private cancels: Array<() => void> = [];
   constructor(
     private readonly file: PdfManifest,
-    private readonly socket: RoomSocket,
+    private readonly socket: PdfRangeSource,
     private readonly onError: (reason: string) => void,
     private readonly onRequest: (bytes: number) => void,
   ) {
@@ -48,7 +48,7 @@ class LivePdfRanges extends PDFDataRangeTransport {
 }
 
 export function Viewer({ file, socket, close }: {
-  file: PdfManifest; socket: RoomSocket; close: () => void;
+  file: PdfManifest; socket: PdfRangeSource; close: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);

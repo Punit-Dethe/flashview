@@ -112,14 +112,20 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     });
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).waitFor();
     await host.locator('.document-row').getByRole('button', { name: 'Allow' }).click();
-    await host.locator('.document-row').getByRole('button', { name: /Open/ }).click();
-
-    await host.waitForFunction(() => {
+    const [presentation] = await Promise.all([
+      host.waitForEvent('popup'),
+      host.locator('.document-row').getByRole('button', { name: /Present/ }).click(),
+    ]);
+    // Teacher's queue remains available while the PDF is projected.
+    assert.equal(await host.locator('.document-row').count(), 1);
+    await presentation.waitForFunction(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
       return Boolean(canvas && canvas.width >= 500 && canvas.height >= 700 &&
         !document.querySelector('.page-overlay'));
     }, null, { timeout: 20000 });
-    assert.equal(await host.locator('.viewer-alert').count(), 0);
+    assert.equal(await presentation.locator('.viewer-alert').count(), 0);
+    await presentation.close();
+    assert.equal(await host.locator('.document-row').count(), 1);
 
     // Simulate exactly what happens when a mobile browser drops the connection.
     // No teacher reapproval or file reselection should be needed on recovery.
@@ -137,12 +143,18 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
         (document.querySelector('.sent-row')?.textContent ?? '').includes('approved');
     }, null, { timeout: 20000 });
     assert.match(await student.locator('.sent-row').innerText(), /smoke\.pdf/);
-    await host.getByRole('button', { name: 'Back to documents' }).click();
-    await host.locator('.document-row').getByRole('button', { name: /Open/ }).click();
-    await host.waitForFunction(() => {
+    const [secondPresentation] = await Promise.all([
+      host.waitForEvent('popup'),
+      host.locator('.document-row').getByRole('button', { name: /Present/ }).click(),
+    ]);
+    await secondPresentation.waitForFunction(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
       return Boolean(canvas && canvas.width >= 500 && !document.querySelector('.page-overlay'));
     }, null, { timeout: 20000 });
+    await secondPresentation.close();
+    // Closing the presentation must not close the classroom or remove the queue.
+    assert.equal(await host.locator('.document-row').count(), 1);
+    assert.equal(await host.locator('.connection.connected').count(), 1);
   } catch (e) {
     const hostState = await host.evaluate(() => ({
       alert: document.querySelector('.viewer-alert')?.textContent,

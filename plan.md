@@ -280,3 +280,14 @@ Official references: https://developers.cloudflare.com/durable-objects/platform/
 - [ ] Benchmark first-page latency, random page jump, unusual and larger PDFs, mobile tab suspension, abusive clients and room persistence after hibernation.
 
 **Tests passing is not the same as production readiness.** The browser smoke test uses one synthetic ~190KB single-page PDF in Chromium. PDF.js behavior on real scanned/large PDFs and multi-page jumps still needs measurement. Zero-cost is conditional on staying within Cloudflare Free limits.
+
+
+## Independent presentation tabs — classroom queue enhancement
+
+- [x] The main dashboard keeps the single authenticated host WebSocket and its full student/PDF queue.
+- [x] A teacher selects **Present ↗** to open a PDF in a new browser tab; close it to return to the unchanged submission queue.
+- [x] Presenter tab requests PDF byte ranges over a same-origin BroadcastChannel; the original dashboard forwards requests through its existing WebSocket. Presenter tabs never create another host socket.
+- [x] Each presenter tab is scoped to one approved PDF and uses a temporary per-tab random channel key in the URL fragment (not sent to the server).
+- [x] A browser integration test must open, render, close and reopen presentation tabs while verifying the host room and uploaded PDF remain present.
+
+Limitations: **The host's original classroom tab must remain open.** Other tabs may be opened concurrently, but browsers can throttle background pages; use a modern desktop browser for smartboard presentation. Sender devices must still stay connected for uncached PDF pages. This first version shares the existing PDF viewer and still handles PDFs only, not native PPTX.

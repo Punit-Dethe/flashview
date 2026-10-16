@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { MAX_PDF_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
-import { Viewer, formatBytes } from './pdf/Viewer';
+import { formatBytes } from './pdf/Viewer';
+import { PresentationHost } from './presentation';
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string };
@@ -32,6 +33,7 @@ function normalizedMessage(message: ServerMessage): string {
 
 export function App() {
   const socket = useRef(new RoomSocket()).current;
+  const presentation = useRef(new PresentationHost(socket)).current;
   const filesOnPhone = useRef(new Map<string, SharedFile>());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<Mode>(initialSession ? 'host' : initialJoin ? 'student' : 'welcome');
@@ -44,7 +46,6 @@ export function App() {
   const [students, setStudents] = useState<StudentInfo[]>([]);
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
-  const [activeFile, setActiveFile] = useState<PdfManifest | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -107,7 +108,7 @@ export function App() {
         setHostSession(null);
         sessionStorage.removeItem('flashview-host');
         setJoinState('idle');
-        setActiveFile(null);
+        presentation.closeAll();
       }
       if (type === 'error') setError(normalizedMessage(message));
     };
@@ -118,6 +119,7 @@ export function App() {
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('pageshow', online);
       window.removeEventListener('online', online);
+      presentation.closeAll();
       socket.close();
     };
   // The socket callback refers only to stable refs and state setters.
@@ -206,7 +208,7 @@ export function App() {
     socket.send({ type: 'room.end' });
     sessionStorage.removeItem('flashview-host');
     setHostSession(null);
-    setActiveFile(null);
+    presentation.closeAll();
     setMode('welcome');
     socket.close();
   }
@@ -216,7 +218,7 @@ export function App() {
     sessionStorage.removeItem('flashview-host');
     setHostSession(null);
     setJoinState('idle');
-    setActiveFile(null);
+    presentation.closeAll();
     setError('');
     setMode('welcome');
     window.history.replaceState({}, '', '/');
@@ -239,7 +241,7 @@ export function App() {
         </div>
       </header>
 
-      <main className={'app-content ' + (activeFile ? 'with-viewer' : '')}>
+      <main className="app-content">
         {mode === 'welcome' && (
           <div className="welcome">
             <div className="eyebrow"><span className="eyebrow-stroke"/> THE INSTANT CLASSROOM</div>
@@ -277,12 +279,10 @@ export function App() {
 
         {mode === 'host' && hostSession && (
           <div className="workspace">
-            {activeFile ? (
-              <Viewer file={activeFile} socket={socket} close={() => setActiveFile(null)}/>
-            ) : <>
+            <>
               <div className="workspace-topline"><div className="eyebrow">LIVE ROOM / {hostSession.code}</div><button className="subtle-link" onClick={endRoom}>End session ↗</button></div>
               <h1 className="section-heading">Your classroom,<br/><em>connected.</em></h1>
-              <p className="section-intro">Students join using the QR code, choose a PDF, and you decide what appears on screen.</p>
+              <p className="section-intro">Students join using the QR code and choose a PDF. Present each document in a separate tab while your classroom queue stays here.</p>
               <div className="host-grid">
                 <aside className="room-card">
                   <div className="card-index">YOUR ROOM <span className="room-live"><span className="status-dot"/> LIVE</span></div>
@@ -301,7 +301,7 @@ export function App() {
                   ))}
                 </aside>
                 <section className="document-column">
-                  <div className="list-heading"><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2><span>PDF ONLY</span></div>
+                  <div className="list-heading"><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2><span>PDF QUEUE · OPEN IN NEW TAB</span></div>
                   {documents.length === 0 && (
                     <div className="empty-list"><span className="empty-art">▤</span>
                       <h3>Nothing shared yet.</h3><p>Once a student selects a PDF, it'll show up here — no full upload required.</p></div>
@@ -315,7 +315,10 @@ export function App() {
                           <div className="row-actions"><button onClick={() => socket.send({ type: 'file.approve', fileId: file.fileId })}>Allow</button>
                             <button className="plain-action" onClick={() => socket.send({ type: 'file.reject', fileId: file.fileId })}>Decline</button></div>
                         ) : file.status === 'approved' ? (
-                          <button className="open-button" onClick={() => setActiveFile(file)}>Open ↗</button>
+                          <button className="open-button" onClick={() => {
+                            try { presentation.open(file); }
+                            catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
+                          }}>Present ↗</button>
                         ) : <span className="unavailable">{file.status === 'offline' ? 'Sender offline' : file.status}</span>}
                       </article>
                     ))}
@@ -323,7 +326,7 @@ export function App() {
                   {approvedStudents > 0 && <p className="participants">{students.filter(s => s.approved).map(s => s.name).join(' · ')} connected</p>}
                 </section>
               </div>
-            </>}
+            </>
           </div>
         )}
 

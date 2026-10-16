@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { mkdir } from 'node:fs/promises';
 
 async function unusedPort(): Promise<number> {
   const listener = createServer();
@@ -67,6 +68,11 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
   const host = await browser.newPage();
   const student = await browser.newPage();
   const root = 'http://127.0.0.1:' + port;
+  const browserLogs: string[] = [];
+  host.on('pageerror', error => browserLogs.push('host JS ERROR: ' + error.message));
+  student.on('pageerror', error => browserLogs.push('student JS ERROR: ' + error.message));
+  host.on('console', message => { if (message.type() === 'error') browserLogs.push('host CONSOLE: ' + message.text()); });
+  student.on('console', message => { if (message.type() === 'error') browserLogs.push('student CONSOLE: ' + message.text()); });
   try {
     await host.goto(root);
     await host.getByRole('button', { name: /Create a room/ }).click();
@@ -98,8 +104,22 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     }, null, { timeout: 20000 });
     assert.equal(await host.locator('.viewer-alert').count(), 0);
   } catch (e) {
-    await host.screenshot({ path: '/tmp/flashview-host-failure.png', fullPage: true }).catch(() => {});
-    await student.screenshot({ path: '/tmp/flashview-student-failure.png', fullPage: true }).catch(() => {});
+    const hostState = await host.evaluate(() => ({
+      alert: document.querySelector('.viewer-alert')?.textContent,
+      loading: document.querySelector('.page-loading')?.textContent,
+      overlay: document.querySelector('.page-overlay')?.textContent,
+      filename: document.querySelector('.viewer-filename')?.textContent,
+      canvasWidth: document.querySelector<HTMLCanvasElement>('canvas')?.width,
+      documentRow: document.querySelector('.document-row')?.textContent,
+      text: document.body.innerText.slice(0, 1600),
+    })).catch(reason => ({ error: String(reason) }));
+    const studentState = await student.evaluate(() => ({
+      text: document.body.innerText.slice(0, 1400),
+    })).catch(reason => ({ error: String(reason) }));
+    console.error('BROWSER_DIAGNOSTICS', JSON.stringify({ hostState, studentState, browserLogs }));
+    await mkdir('test-artifacts', { recursive: true });
+    await host.screenshot({ path: 'test-artifacts/host-failure.png', fullPage: true }).catch(() => {});
+    await student.screenshot({ path: 'test-artifacts/student-failure.png', fullPage: true }).catch(() => {});
     throw e;
   } finally {
     await browser.close();

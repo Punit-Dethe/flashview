@@ -39,6 +39,8 @@ export function App() {
   const filesOnPhone = useRef(new Map<string, SharedFile>());
   const firstPageImages = useRef(new Map<string, string>());
   const previewRendering = useRef(new Set<string>());
+  const previewDelivered = useRef(new Set<string>());
+  const previewFailed = useRef(new Set<string>());
   const incomingPreviews = useRef(new Map<string, { parts: string[]; received: number; created: number }>());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modeRef = useRef<Mode>(initialSession ? 'host' : initialJoin ? 'student' : 'welcome');
@@ -98,7 +100,8 @@ export function App() {
 
   function sendPreview(fileId: string, dataUrl: string): void {
     const base64 = dataUrl.split(',')[1];
-    if (!base64 || base64.length > 380000 || !socket.connected) return;
+    if (!base64 || base64.length > 380000 || !socket.connected ||
+        previewDelivered.current.has(fileId)) return;
     const size = 4900;
     const total = Math.ceil(base64.length / size);
     if (total > 80) return;
@@ -106,13 +109,15 @@ export function App() {
       if (!socket.send({
         type: 'preview.chunk', fileId, part, total,
         data: base64.slice(part * size, (part + 1) * size),
-      })) break;
+      })) return;
     }
+    previewDelivered.current.add(fileId);
   }
 
   function preparePreview(fileId: string): void {
     const shared = filesOnPhone.current.get(fileId);
-    if (!shared || shared.status !== 'approved') return;
+    if (!shared || shared.status !== 'approved' ||
+        previewFailed.current.has(fileId) || previewDelivered.current.has(fileId)) return;
     const saved = firstPageImages.current.get(fileId);
     if (saved) { sendPreview(fileId, saved); return; }
     if (previewRendering.current.has(fileId)) return;
@@ -122,7 +127,8 @@ export function App() {
       firstPageImages.current.set(fileId, url);
       sendPreview(fileId, url);
     }).catch(() => {
-      // A failed local preview should never prevent the original PDF transfer.
+      // Never repeatedly run an expensive failed decoder on every 20s sync.
+      previewFailed.current.add(fileId);
     }).finally(() => previewRendering.current.delete(fileId));
   }
 
@@ -130,6 +136,10 @@ export function App() {
     socket.onStatus = status => {
       setSocketStatus(status);
       if (status === 'connected') presentation.resume();
+      // Only after a genuine drop is a preview eligible for retransmission.
+      if (status === 'disconnected' && modeRef.current === 'student') {
+        previewDelivered.current.clear();
+      }
     };
     presentation.onProgress = progress =>
       setCacheProgress(existing => ({ ...existing, [progress.fileId]: progress }));
@@ -319,6 +329,8 @@ export function App() {
     filesOnPhone.current.clear();
     firstPageImages.current.clear();
     previewRendering.current.clear();
+    previewDelivered.current.clear();
+    previewFailed.current.clear();
     setSentFiles([]);
     modeRef.current = 'student';
     setMode('student');
@@ -354,6 +366,8 @@ export function App() {
   function revoke(fileId: string): void {
     filesOnPhone.current.delete(fileId);
     firstPageImages.current.delete(fileId);
+    previewDelivered.current.delete(fileId);
+    previewFailed.current.delete(fileId);
     socket.send({ type: 'file.revoke', fileId });
     setSentFiles(current => current.map(f => f.fileId === fileId ? { ...f, status: 'offline' } : f));
   }

@@ -31,13 +31,24 @@ export async function makeFirstPagePreview(file: File): Promise<string> {
     if (!context) throw new Error('Canvas unavailable');
     await page.render({ canvas, canvasContext: context, viewport }).promise;
     let quality = .78;
-    let url = canvas.toDataURL('image/jpeg', quality);
-    // 300 KB compressed JPEG limit so the WSS relay stays light.
-    while (url.length > 370000 && quality > .4) {
-      quality -= .12;
-      url = canvas.toDataURL('image/jpeg', quality);
+    let output = canvas;
+    let url = output.toDataURL('image/jpeg', quality);
+    // Compress first, then reduce dimensions if a dense photographic slide
+    // still exceeds the 300 KB relay budget. Exact PDF stays untouched.
+    for (let step = 0; url.length > 370000 && step < 8; step++) {
+      if (quality > .45) {
+        quality = Math.max(.43, quality - .12);
+      } else {
+        const smaller = document.createElement('canvas');
+        smaller.width = Math.max(320, Math.floor(output.width * .72));
+        smaller.height = Math.max(320, Math.floor(output.height * .72));
+        smaller.getContext('2d')?.drawImage(output, 0, 0, smaller.width, smaller.height);
+        output = smaller;
+        quality = .68;
+      }
+      url = output.toDataURL('image/jpeg', quality);
     }
-    if (url.length > 390000) throw Error('Preview image is too large');
+    if (url.length > 390000) throw Error('Preview image exceeds safe relay size');
     return url;
   } finally {
     await task.destroy().catch(() => {});

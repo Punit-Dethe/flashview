@@ -82,7 +82,7 @@ export function App() {
       // A socket can look OPEN while an earlier broadcast was missed.
       if (socket.connected) socket.send({ type: modeRef.current === 'host' ? 'room.sync' : 'file.sync' });
     };
-    const online = () => socket.wake();
+    const online = () => { socket.wake(); wake(); };
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('pageshow', online);
     window.addEventListener('online', online);

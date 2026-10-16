@@ -291,3 +291,18 @@ Official references: https://developers.cloudflare.com/durable-objects/platform/
 - [x] A browser integration test must open, render, close and reopen presentation tabs while verifying the host room and uploaded PDF remain present.
 
 Limitations: **The host's original classroom tab must remain open.** Other tabs may be opened concurrently, but browsers can throttle background pages; use a modern desktop browser for smartboard presentation. Sender devices must still stay connected for uncached PDF pages. This first version shares the existing PDF viewer and still handles PDFs only, not native PPTX.
+
+## Reliable document delivery — October 2026
+
+Root issue: the UI previously listed a picked `File` immediately and called it uploaded even when the `file.offer` WebSocket frame had not been acknowledged. Host-side one-off announcements could also be missed after a network interruption or backgrounding. An open socket alone does not prove delivery.
+
+- [x] Server responds with a `file.state` receipt and preserves approval when the same student retries `file.offer` (idempotent).
+- [x] Student reconciles local File objects against server `file.manifest` after reconnect and periodically while visible; unacknowledged offers are resent.
+- [x] Host `room.sync` restores the authoritative persisted document queue and current student list, on return to the tab or Refresh submissions.
+- [x] Distinguish announcement pending from server-confirmed pending from approved; never label local selection as a complete upload.
+- [x] PDF viewer shows a timeout/error and explicit retry rather than spinning forever when document bytes are unavailable.
+- [ ] Validate the above against real mobile sleep and actual classroom network, and perform a long (5-15 minute) suspended-phone trial.
+
+Comparison: `https://nologin.in/` (the service discoverable by research; `nologin.com` was not accessible) advertises full upload once, server-backed access from any device and default 48h expiry. No reliable open-source implementation link was found. This explains why sender closure does not affect NoLogin files. FlashView deliberately keeps byte-range PDFs on the sender for fast first-page delivery and zero object-storage costs. **It cannot load uncached pages while the sender browser is suspended or closed.** Future opt-in R2 staging, resumable uploads (tus.io protocol), and expiry policies need explicit cost/quota/privacy research, not promises.
+
+References: https://nologin.in/ ; https://tus.io/faq.html ; https://developers.cloudflare.com/durable-objects/best-practices/websockets/ .

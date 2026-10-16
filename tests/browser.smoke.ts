@@ -143,6 +143,41 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
         (document.querySelector('.sent-row')?.textContent ?? '').includes('approved');
     }, null, { timeout: 20000 });
     assert.match(await student.locator('.sent-row').innerText(), /smoke\.pdf/);
+
+    // Drop exactly ONE student announcement while the WebSocket still reports OPEN.
+    // The sender must not claim server acceptance; sync repairs the lost offer.
+    await student.evaluate(() => {
+      const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
+      const ws = record.__flashviewSockets?.at(-1);
+      if (!ws) throw Error('Missing student WebSocket');
+      const original = ws.send.bind(ws);
+      let dropOnce = true;
+      ws.send = ((data: string | ArrayBufferLike | Blob | ArrayBufferView) => {
+        if (dropOnce && typeof data === 'string') {
+          const message = JSON.parse(data) as { type?: string };
+          if (message.type === 'file.offer') {
+            dropOnce = false;
+            return;
+          }
+        }
+        original(data);
+      }) as WebSocket['send'];
+    });
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'lost-announcement.pdf', mimeType: 'application/pdf', buffer: makePdf(),
+    });
+    await student.locator('.sent-row').filter({ hasText: 'lost-announcement.pdf' })
+      .getByText('Sending announcement…').waitFor();
+    assert.equal(await host.locator('.document-row').count(), 1);
+    // A tab returning online asks the server for its authoritative manifest.
+    await student.evaluate(() => window.dispatchEvent(new Event('online')));
+    await host.locator('.document-row').filter({ hasText: 'lost-announcement.pdf' }).waitFor({ timeout: 15000 });
+    await student.locator('.sent-row').filter({ hasText: 'lost-announcement.pdf' })
+      .getByText('Received by server').waitFor();
+    // The host refreshes all server-persisted submissions after missed broadcasts.
+    await host.getByRole('button', { name: /Refresh submissions/ }).click();
+    assert.equal(await host.locator('.document-row').count(), 2);
+
     const [secondPresentation] = await Promise.all([
       host.waitForEvent('popup'),
       host.locator('.document-row').getByRole('button', { name: /Present/ }).click(),
@@ -153,7 +188,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     }, null, { timeout: 20000 });
     await secondPresentation.close();
     // Closing the presentation must not close the classroom or remove the queue.
-    assert.equal(await host.locator('.document-row').count(), 1);
+    assert.equal(await host.locator('.document-row').count(), 2);
     assert.equal(await host.locator('.connection.connected').count(), 1);
   } catch (e) {
     const hostState = await host.evaluate(() => ({

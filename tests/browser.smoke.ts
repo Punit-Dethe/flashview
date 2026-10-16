@@ -181,6 +181,54 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
       return ink;
     });
     assert.ok(renderedDarkPixels > 3, 'Page 1 should contain actually rendered pixels');
+    // Immersive UI: no permanent header, a true full-viewport slide stage and
+    // one pill in the lower-right corner. The PDF keeps its correct proportions.
+    const projectorLayout = await presentation.evaluate(() => {
+      const root = document.querySelector('.viewer')!.getBoundingClientRect();
+      const slide = document.querySelector('.page-shell canvas')!.getBoundingClientRect();
+      const dock = document.querySelector('.viewer-controls')!.getBoundingClientRect();
+      return {
+        windowHeight: innerHeight, windowWidth: innerWidth,
+        rootHeight: root.height, slideHeight: slide.height,
+        dockRight: dock.right, dockBottom: dock.bottom,
+        roundedDock: getComputedStyle(document.querySelector('.viewer-controls')!).borderRadius,
+        captionCount: document.querySelectorAll('.presentation-caption').length,
+      };
+    });
+    assert.equal(projectorLayout.captionCount, 0);
+    assert.ok(Math.abs(projectorLayout.rootHeight - projectorLayout.windowHeight) <= 2,
+      'Slide stage should occupy the whole display without top/bottom chrome');
+    assert.ok(projectorLayout.slideHeight > projectorLayout.windowHeight * .94,
+      'PDF should fit the full available height rather than the old toolbar-constrained area');
+    assert.ok(projectorLayout.dockRight > projectorLayout.windowWidth - 38 &&
+      projectorLayout.dockBottom > projectorLayout.windowHeight - 38,
+      'Presentation control pill must float in the lower-right corner');
+    assert.equal(projectorLayout.roundedDock, '999px');
+
+    // Zoom should enlarge the actual rendered PDF, then Reset must fit it again.
+    const normalHeight = await presentation.locator('.page-shell canvas')
+      .evaluate(el => el.getBoundingClientRect().height);
+    await presentation.getByRole('button', { name: 'Zoom in' }).click();
+    await presentation.waitForFunction(expected => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
+      return canvas?.dataset.renderedPage === '1' &&
+        canvas.getBoundingClientRect().height > expected * 1.18 &&
+        !document.querySelector('.page-overlay');
+    }, normalHeight, { timeout: 15000 });
+    await presentation.getByRole('button', { name: 'Reset zoom to fit' }).click();
+    await presentation.waitForFunction(expected => {
+      const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
+      return canvas?.dataset.renderedPage === '1' &&
+        Math.abs(canvas.getBoundingClientRect().height - expected) < 2 &&
+        !document.querySelector('.page-overlay');
+    }, normalHeight, { timeout: 15000 });
+    // Native Fullscreen API should engage from the dock and exit cleanly.
+    if (await presentation.evaluate(() => document.fullscreenEnabled)) {
+      await presentation.getByRole('button', { name: 'Fullscreen', exact: true }).click();
+      await presentation.waitForFunction(() => document.fullscreenElement !== null, null, { timeout: 10000 });
+      await presentation.getByRole('button', { name: 'Exit fullscreen' }).click();
+      await presentation.waitForFunction(() => document.fullscreenElement === null, null, { timeout: 10000 });
+    }
     if (!process.env.FLASHVIEW_BACKEND) {
       await presentation.screenshot({ path: 'test-artifacts/ui/presentation.png' });
     }

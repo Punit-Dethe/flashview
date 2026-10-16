@@ -200,3 +200,9 @@ html, body { background: var(--canvas); }
 @media (prefers-reduced-motion: reduce) {
   .premium-app button, .premium-app .file-progress-track > span { transition: none !important; animation: none !important; }
 }
+
+.premium-app .premium-onboarding { min-height: min(77vh,660px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 54px 20px; text-align: center; }
+.premium-app .premium-onboarding .spinner { width: 29px; height: 29px; border-color: #414354; border-top-color: #b6baf0; margin-bottom: 22px; }
+.premium-app .premium-onboarding h1 { color: #f5f5f8; font-weight: 580; font-size: clamp(26px,4vw,37px); letter-spacing: -.05em; margin-bottom: 10px; }
+.premium-app .premium-onboarding p { color: #989aa8; font-size: 13px; margin-bottom: 26px; }
+.premium-app .premium-onboarding button { opacity: .7; }

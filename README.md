@@ -163,3 +163,26 @@ GitHub Actions saves three-run Node and Cloudflare baseline JSON artifacts.
 These measure a synthetic file on local headless Chromium, not real campus
 Wi-Fi, cellular latency or phone CPU. Compare the same hardware and scenario,
 preferably with three or more runs, before implementing Stage 1.
+
+## Performance 2.0 — Stage 1 experimental adaptive transfer
+
+This stage changes network scheduling only, not PDF content, the 64 KiB chunk layout,
+Cloudflare relay protocol, room approval, or PDF.js.
+
+- Background PDF files begin with six requests each. The per-file window
+  grows cautiously to ten when responses stay fast, and falls toward two
+  when latency remains elevated or requests fail. Total background requests
+  remain capped at sixteen, and urgent page ranges remain independent.
+- Sender WebSocket backpressure: the phone can wait up to 6.5 seconds for
+  a temporarily full 4 MiB send buffer to drain instead of immediately
+  returning a PDF range error. Outbound frames are never sent across
+  closed or replaced connections.
+- To disable only the adaptive transfer window on the classroom computer,
+  append ?transfer=fixed to the URL (use &transfer=fixed with existing queries).
+  Omitting it keeps adaptive scheduling. This is a reversible A/B switch.
+- CI compares the same synthetic 4 MiB file and 40-ms simulated file-read
+  latency in fixed versus adaptive modes, three runs each.
+  The benchmark outputs live in the flashview-stage1-comparison artifact.
+  A localhost synthetic comparison is not a real-world phone benchmark.
+
+Stage 2 network packet-size changes are deliberately not included.

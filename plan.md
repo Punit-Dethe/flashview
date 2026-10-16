@@ -406,3 +406,14 @@ baseline review and separate user approval.
   screenshots.
 - [ ] Obtain real-device baseline measurements with actual slide decks,
   multiple phones and weaker networks; review before Stage 1.
+
+## Performance 2.0 — Stage 1 (authorized)
+
+- [x] Adaptive per-document 2–10 outstanding range window, starting at 6.
+- [x] Multiplicative backoff on slow/failing requests and cautious recovery.
+- [x] Maintain global 16 background slots and independent foreground reads.
+- [x] Bounded phone WebSocket sender pressure wait and no stale-socket sends.
+- [x] Fixed-mode A/B switch using teacher URL parameter transfer=fixed.
+- [x] Deterministic adaptive-controller unit tests and congested-sender browser test.
+- [x] Repeated CI A/B benchmark under matched synthetic conditions.
+- [ ] Review A/B and real-phone baseline before tuning further or starting Stage 2.

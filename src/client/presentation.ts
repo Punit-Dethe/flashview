@@ -1,5 +1,6 @@
 import type { PdfManifest } from '../shared/protocol';
 import { MAX_RANGE_BYTES } from '../shared/protocol';
+import { RoomPdfCache, type CacheProgress, cleanExpiredRoomCaches } from './pdf/roomCache';
 import type { RoomSocket } from './socket';
 
 const PREFIX = 'flashview-present-';
@@ -10,11 +11,45 @@ export type PdfRangeSource = Pick<RoomSocket, 'requestRange'>;
 
 /** The original room tab owns the only host WebSocket. */
 export class PresentationHost {
-  private tabs = new Map<string, { channel: BroadcastChannel; requests: Map<string, Pending>; timer: ReturnType<typeof setTimeout> }>();
+  private tabs = new Map<string, { file: PdfManifest; channel: BroadcastChannel; requests: Map<string, Pending>; timer: ReturnType<typeof setTimeout> }>();
+  private cache: RoomPdfCache | null = null;
+  onProgress: (status: CacheProgress) => void = () => {};
+  onWarning: (message: string) => void = () => {};
   constructor(private readonly socket: RoomSocket) {}
 
+  setRoom(roomId: string): void {
+    if (this.cache?.roomId === roomId) return;
+    this.closeAll();
+    this.cache?.dispose();
+    const cache = new RoomPdfCache(roomId, this.socket);
+    cache.onProgress = progress => {
+      this.onProgress(progress);
+      for (const entry of this.tabs.values()) {
+        if (entry.file.fileId === progress.fileId)
+          entry.channel.postMessage({ type: 'progress', progress });
+      }
+    };
+    cache.onStorageWarning = message => this.onWarning(message);
+    this.cache = cache;
+    void cleanExpiredRoomCaches(roomId);
+  }
+  async progress(file: PdfManifest): Promise<CacheProgress> {
+    return this.cache?.progress(file) ?? {
+      fileId: file.fileId, bytes: 0, size: file.size, complete: false,
+    };
+  }
+  async clearRoom(): Promise<void> {
+    this.closeAll();
+    const cache = this.cache;
+    this.cache = null;
+    if (cache) await cache.clear();
+  }
+  resume(): void { this.cache?.resume(); }
+  dispose(): void { this.closeAll(); this.cache?.dispose(); this.cache = null; }
+
   open(file: PdfManifest): void {
-    if (!this.socket.connected || file.status !== 'approved') throw Error('Classroom or PDF is offline.');
+    if (!this.cache) throw Error('Classroom cache is unavailable. Refresh the dashboard.');
+    if (!this.socket.connected && file.status !== 'offline') throw Error('Classroom connection interrupted.');
     if (typeof BroadcastChannel === 'undefined') throw Error('Presentation tabs are unsupported in this browser.');
     const key = crypto.randomUUID().replaceAll('-', '');
     const channel = new BroadcastChannel(PREFIX + key);
@@ -29,12 +64,16 @@ export class PresentationHost {
       this.tabs.delete(key);
     };
     const timer = setTimeout(close, 2 * 60 * 60 * 1000);
-    this.tabs.set(key, { channel, requests, timer });
+    this.tabs.set(key, { file, channel, requests, timer });
     channel.onmessage = (event: MessageEvent) => {
       const m = event.data;
       if (!m || typeof m !== 'object') return;
       if (m.type === 'ready') {
         channel.postMessage({ type: 'metadata', file });
+        void this.cache?.progress(file).then(progress =>
+          channel.postMessage({ type: 'progress', progress })).catch(() => {});
+      } else if (m.type === 'first-page') {
+        this.cache?.prefetch(file);
       } else if (m.type === 'cancel' && typeof m.id === 'string') {
         requests.get(m.id)?.cancel();
         requests.delete(m.id);
@@ -45,20 +84,19 @@ export class PresentationHost {
             !Number.isSafeInteger(m.begin) || !Number.isSafeInteger(m.end) ||
             m.begin < 0 || m.end <= m.begin || m.end > file.size ||
             m.end - m.begin > MAX_RANGE_BYTES || requests.has(m.id)) return;
-        if (!this.socket.connected) {
-          channel.postMessage({ type: 'error', id: m.id, message: 'Classroom connection interrupted.' });
-          return;
-        }
-        const cancel = this.socket.requestRange(file.fileId, m.begin, m.end,
-          (begin, bytes) => {
-            requests.delete(m.id);
-            channel.postMessage({ type: 'data', id: m.id, begin, bytes });
-          },
-          reason => {
-            requests.delete(m.id);
-            channel.postMessage({ type: 'error', id: m.id, message: reason });
+        // Cached bytes are available even after the student leaves.
+        // All misses use one shared room cache, not a fresh viewer transfer.
+        let cancelled = false;
+        requests.set(m.id, { cancel: () => { cancelled = true; } });
+        void this.cache!.range(file, m.begin, m.end).then(bytes => {
+          if (!cancelled && this.tabs.has(key)) channel.postMessage({
+            type: 'data', id: m.id, begin: m.begin, bytes,
           });
-        requests.set(m.id, { cancel });
+        }).catch(error => {
+          if (!cancelled && this.tabs.has(key)) channel.postMessage({
+            type: 'error', id: m.id, message: String(error instanceof Error ? error.message : error),
+          });
+        }).finally(() => requests.delete(m.id));
       }
     };
     const tab = window.open('/present#' + key, '_blank');
@@ -83,6 +121,7 @@ export class PresentationGuest implements PdfRangeSource {
   private pending = new Map<string, { resolve: Reply; reject: Failure; timer: ReturnType<typeof setTimeout> }>();
   onFile: (file: PdfManifest) => void = () => {};
   onClosed: () => void = () => {};
+  onProgress: (progress: CacheProgress) => void = () => {};
 
   constructor(key: string) {
     this.channel = new BroadcastChannel(PREFIX + key);
@@ -91,6 +130,7 @@ export class PresentationGuest implements PdfRangeSource {
       if (!m || typeof m !== 'object') return;
       if (m.type === 'metadata') this.onFile(m.file as PdfManifest);
       if (m.type === 'closed') this.onClosed();
+      if (m.type === 'progress' && m.progress) this.onProgress(m.progress as CacheProgress);
       if (m.type === 'data' || m.type === 'error') {
         const pending = this.pending.get(m.id);
         if (!pending) return;
@@ -103,6 +143,7 @@ export class PresentationGuest implements PdfRangeSource {
   }
 
   ready(): void { this.channel.postMessage({ type: 'ready' }); }
+  firstPageRendered(): void { this.channel.postMessage({ type: 'first-page' }); }
   requestRange(_fileId: string, begin: number, end: number, resolve: Reply, reject: Failure): () => void {
     const id = crypto.randomUUID().replaceAll('-', '');
     const timer = setTimeout(() => {

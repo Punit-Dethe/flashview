@@ -71,6 +71,40 @@ function makePdf(fillerLines = 1400): Buffer {
   return Buffer.from(pdf);
 }
 
+test('real browser: default homepage creates a QR room and can join another room', { timeout: 65000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const first = await browser.newPage();
+  const second = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  try {
+    await first.goto(root);
+    await first.locator('.room-code').waitFor();
+    const firstCode = (await first.locator('.room-code').textContent())?.trim();
+    assert.match(firstCode ?? '', /^\\d{6}$/);
+    assert.equal(await first.locator('.qr-plate svg').count(), 1);
+    await first.reload();
+    assert.equal((await first.locator('.room-code').textContent())?.trim(), firstCode,
+      'Refreshing a classroom must reuse its room rather than consume another room creation');
+
+    await second.goto(root);
+    await second.locator('.room-code').waitFor();
+    const secondCode = (await second.locator('.room-code').textContent())?.trim();
+    assert.match(secondCode ?? '', /^\\d{6}$/);
+    assert.notEqual(firstCode, secondCode);
+    await first.getByRole('button', { name: /Join another room/ }).click();
+    await first.locator('#switch-code').fill(secondCode!);
+    await first.getByRole('button', { name: /Join room/ }).click();
+    await second.locator('.approval').waitFor();
+    assert.ok(await first.getByText('Waiting for the teacher.').isVisible());
+    assert.equal(await first.evaluate(() => sessionStorage.getItem('flashview-host')), null,
+      'The former host credentials must be removed after room switching');
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});
+
 test('real browser: QR-equivalent room flow renders PDF.js page through WebSocket relay', { timeout: 90000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });

@@ -81,7 +81,7 @@ test('real browser: default homepage creates a QR room and can join another room
     await first.goto(root);
     await first.locator('.room-code').waitFor();
     const firstCode = (await first.locator('.room-code').textContent())?.trim();
-    assert.match(firstCode ?? '', /^\\d{6}$/);
+    assert.match(firstCode ?? '', /^\d{6}$/);
     assert.equal(await first.locator('.qr-plate svg').count(), 1);
     await first.reload();
     assert.equal((await first.locator('.room-code').textContent())?.trim(), firstCode,
@@ -91,7 +91,7 @@ test('real browser: default homepage creates a QR room and can join another room
     await second.goto(root);
     await second.locator('.room-code').waitFor();
     const secondCode = (await second.locator('.room-code').textContent())?.trim();
-    assert.match(secondCode ?? '', /^\\d{6}$/);
+    assert.match(secondCode ?? '', /^\d{6}$/);
     assert.notEqual(firstCode, secondCode);
     await second.locator('.connection.connected').waitFor();
     await first.getByRole('button', { name: /Join another room/ }).click();
@@ -716,11 +716,11 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
   });
   try {
     const url = 'http://127.0.0.1:' + port;
-    await host.goto(url + '/?perf=1');
+    await host.goto(url + '/?manual=1&perf=1');
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();
     await host.locator('.connection.connected').waitFor();
-    await student.goto(url + '/?perf=1');
+    await student.goto(url + '/?manual=1&perf=1');
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();

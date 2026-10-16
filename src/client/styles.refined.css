@@ -614,3 +614,24 @@ button { -webkit-tap-highlight-color: transparent; }
   .presentation-layout .viewer-control-pill .zoom-reset { width: 42px; min-width: 42px; }
   .presentation-layout .viewer-control-pill .toolbar-divider { margin: 0 2px; }
 }
+
+/* A trustworthy numeric progress readout alongside the per-file accent bar. */
+.cache-percent-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  width: min(100%, 330px);
+  margin-top: 7px;
+  color: #8992a3;
+  font-size: 10px;
+}
+.cache-percent-line strong {
+  flex: none;
+  color: var(--file-accent);
+  font-weight: 750;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.file-progress-track { margin-top: 5px; }
+.file-progress-track.is-complete > span { background: var(--file-accent); }

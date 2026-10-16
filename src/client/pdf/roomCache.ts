@@ -3,7 +3,7 @@ import type { RoomSocket } from '../socket';
 
 export const CHUNK_BYTES = 65_536;
 const DB_NAME = 'flashview-room-cache';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const MAX_MEMORY_BYTES = 48 * 1024 * 1024;
 type ChunkRecord = { key: string; room: string; document: string; index: number; data: ArrayBuffer };
 type RoomRecord = { id: string; expires: number };
@@ -22,6 +22,10 @@ function database(): Promise<IDBDatabase> {
           store.createIndex('document', 'document', { unique: false });
         }
         if (!db.objectStoreNames.contains('rooms')) db.createObjectStore('rooms', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('previews')) {
+          const store = db.createObjectStore('previews', { keyPath: 'key' });
+          store.createIndex('room', 'room', { unique: false });
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error('Local document storage unavailable'));
@@ -114,13 +118,21 @@ async function writeRoom(room: string): Promise<void> {
 export async function deleteRoomCache(room: string): Promise<void> {
   const db = await database();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(['chunks', 'rooms'], 'readwrite');
+    const tx = db.transaction(['chunks', 'rooms', 'previews'], 'readwrite');
     const index = tx.objectStore('chunks').index('room');
     const request = index.openKeyCursor(IDBKeyRange.only(room));
     request.onsuccess = () => {
       const cursor = request.result;
       if (!cursor) return;
       tx.objectStore('chunks').delete(cursor.primaryKey);
+      cursor.continue();
+    };
+    const previewCursor = tx.objectStore('previews').index('room')
+      .openKeyCursor(IDBKeyRange.only(room));
+    previewCursor.onsuccess = () => {
+      const cursor = previewCursor.result;
+      if (!cursor) return;
+      tx.objectStore('previews').delete(cursor.primaryKey);
       cursor.continue();
     };
     tx.objectStore('rooms').delete(room);
@@ -201,6 +213,35 @@ export class RoomPdfCache {
       this.memoryBytes -= this.memory.get(first)!.byteLength;
       this.memory.delete(first);
     }
+  }
+  async savePreview(fileId: string, dataUrl: string): Promise<void> {
+    if (this.stopped || !/^[a-zA-Z0-9_-]{6,80}$/.test(fileId) ||
+        !/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(dataUrl) ||
+        dataUrl.length > 390000) return;
+    try {
+      const db = await database();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('previews', 'readwrite');
+        tx.objectStore('previews').put({
+          key: this.roomId + '/' + fileId, room: this.roomId, dataUrl,
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+    } catch { this.warning(); }
+  }
+  async getPreview(fileId: string): Promise<string | null> {
+    try {
+      const db = await database();
+      const result = await new Promise<{ dataUrl: string } | undefined>((resolve, reject) => {
+        const request = db.transaction('previews', 'readonly').objectStore('previews')
+          .get(this.roomId + '/' + fileId);
+        request.onsuccess = () => resolve(request.result as { dataUrl: string } | undefined);
+        request.onerror = () => reject(request.error);
+      });
+      return result?.dataUrl ?? null;
+    } catch { return null; }
   }
   async progress(file: PdfManifest): Promise<CacheProgress> {
     const indices = await this.indexSet(file.fileId);

@@ -10,6 +10,7 @@ export function Presenter() {
   const [source, setSource] = useState<PresentationGuest | null>(null);
   const [file, setFile] = useState<PdfManifest | null>(null);
   const [cached, setCached] = useState<CacheProgress | null>(null);
+  const [roomId, setRoomId] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
@@ -19,7 +20,8 @@ export function Presenter() {
     }
     const guest = new PresentationGuest(key);
     let received = false;
-    guest.onFile = pdf => {
+    guest.onFile = (pdf, room) => {
+      setRoomId(room);
       // Host only opens offline PDFs when the room cache is complete.
       if (pdf.status === 'approved' || pdf.status === 'offline') {
         received = true;
@@ -65,7 +67,7 @@ export function Presenter() {
         <span>The classroom dashboard stays open in the original tab.</span>
       </div>
       {file && source && !unavailable
-        ? <Viewer file={file} socket={source} close={close} cached={cached} onFirstPageRendered={pageReady}/>
+        ? <Viewer file={file} socket={source} close={close} cached={cached} cachedRoomId={roomId} onFirstPageRendered={pageReady}/>
         : <div className="presentation-state" role="status">
           {!unavailable && <span className="spinner"/>}
           <h1>{unavailable ? 'Presentation unavailable.' : 'Opening your presentation.'}</h1>

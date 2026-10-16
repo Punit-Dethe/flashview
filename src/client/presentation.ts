@@ -73,7 +73,7 @@ export class PresentationHost {
       const m = event.data;
       if (!m || typeof m !== 'object') return;
       if (m.type === 'ready') {
-        channel.postMessage({ type: 'metadata', file });
+        channel.postMessage({ type: 'metadata', file, roomId: this.cache?.roomId });
         void this.cache?.progress(file).then(progress =>
           channel.postMessage({ type: 'progress', progress })).catch(() => {});
       } else if (m.type === 'first-page') {
@@ -123,7 +123,7 @@ export class PresentationHost {
 export class PresentationGuest implements PdfRangeSource {
   private channel: BroadcastChannel;
   private pending = new Map<string, { resolve: Reply; reject: Failure; timer: ReturnType<typeof setTimeout> }>();
-  onFile: (file: PdfManifest) => void = () => {};
+  onFile: (file: PdfManifest, roomId: string) => void = () => {};
   onClosed: () => void = () => {};
   onProgress: (progress: CacheProgress) => void = () => {};
 
@@ -132,7 +132,7 @@ export class PresentationGuest implements PdfRangeSource {
     this.channel.onmessage = (event: MessageEvent) => {
       const m = event.data;
       if (!m || typeof m !== 'object') return;
-      if (m.type === 'metadata') this.onFile(m.file as PdfManifest);
+      if (m.type === 'metadata' && typeof m.roomId === 'string') this.onFile(m.file as PdfManifest, m.roomId);
       if (m.type === 'closed') this.onClosed();
       if (m.type === 'progress' && m.progress) this.onProgress(m.progress as CacheProgress);
       if (m.type === 'data' || m.type === 'error') {

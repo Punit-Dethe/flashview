@@ -524,16 +524,38 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
   const host = await browser.newPage();
   const student = await browser.newPage();
   await student.addInitScript(() => {
-    const NativeWebSocket = window.WebSocket;
+    const Native = window.WebSocket;
+    const originalAmount = Object.getOwnPropertyDescriptor(Native.prototype, 'bufferedAmount')?.get;
+    if (!originalAmount) throw Error('WebSocket bufferedAmount getter not found');
     let heldUntil = 0;
-    class CongestedWebSocket extends NativeWebSocket {
-      override get bufferedAmount(): number {
-        return Date.now() < heldUntil ? 5 * 1024 * 1024 : super.bufferedAmount;
-      }
-    }
-    window.WebSocket = CongestedWebSocket;
-    (window as typeof window & { __holdSocketBuffer?: (ms: number) => void })
-      .__holdSocketBuffer = ms => { heldUntil = Date.now() + ms; };
+    let enforcedReads = 0;
+    const sockets: WebSocket[] = [];
+    window.WebSocket = new Proxy(Native, {
+      construct(Target, args) {
+        const ws = Reflect.construct(Target, args) as WebSocket;
+        Object.defineProperty(ws, 'bufferedAmount', {
+          configurable: true,
+          get: () => {
+            if (Date.now() < heldUntil) {
+              enforcedReads++;
+              return 5 * 1024 * 1024;
+            }
+            return originalAmount.call(ws);
+          },
+        });
+        sockets.push(ws);
+        return ws;
+      },
+    });
+    (window as typeof window & {
+      __holdSocketBuffer?: (ms: number) => void;
+      __testSocketReads?: () => number;
+      __testSocket?: () => WebSocket | undefined;
+    }).__holdSocketBuffer = ms => { heldUntil = Date.now() + ms; };
+    (window as typeof window & { __testSocketReads?: () => number })
+      .__testSocketReads = () => enforcedReads;
+    (window as typeof window & { __testSocket?: () => WebSocket | undefined })
+      .__testSocket = () => sockets.at(-1);
   });
   try {
     const url = 'http://127.0.0.1:' + port;
@@ -546,10 +568,15 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
     await student.getByText('Choose a PDF to share.').waitFor();
-    await student.evaluate(() => {
-      (window as typeof window & { __holdSocketBuffer?: (ms: number) => void })
-        .__holdSocketBuffer?.(3200);
+    const pressureApplied = await student.evaluate(() => {
+      const w = window as typeof window & {
+        __holdSocketBuffer?: (ms: number) => void;
+        __testSocket?: () => WebSocket | undefined;
+      };
+      w.__holdSocketBuffer?.(3200);
+      return (w.__testSocket?.()?.bufferedAmount ?? 0) >= 5 * 1024 * 1024;
     });
+    assert.equal(pressureApplied, true, 'Simulated backlog must affect the REAL student WebSocket');
     await student.locator('input[type=file]').setInputFiles({
       name: 'temporary-backpressure.pdf', mimeType: 'application/pdf',
       buffer: makePdf(16000),
@@ -560,6 +587,9 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
       (window as typeof window & {
         __flashviewPerf?: { snapshot: () => { summary: Array<{ metric: string; count: number }> } };
       }).__flashviewPerf?.snapshot().summary ?? []);
+    const forcedReads = await student.evaluate(() =>
+      (window as typeof window & { __testSocketReads?: () => number }).__testSocketReads?.() ?? 0);
+    assert.ok(forcedReads > 1, 'The real sender socket must read the simulated backlog');
     assert.ok(samples.some(s => s.metric === 'sender_backpressure_ms' && s.count > 0),
       'The sender should record that it waited for the simulated busy socket');
     assert.equal(await student.getByText(/Network sender is busy/).count(), 0);

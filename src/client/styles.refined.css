@@ -432,3 +432,185 @@ button { -webkit-tap-highlight-color: transparent; }
 @media (prefers-reduced-motion: reduce) {
   .document-row, .file-progress-track > span, .action-card, button { transition: none !important; }
 }
+
+
+/* Projector UX: slide fills the viewport, controls live in a quiet glass pill.
+   Do not reserve vertical space for the old caption/toolbar/footer. */
+.presentation-layout { height: 100dvh; min-height: 100dvh; overflow: hidden; }
+.presentation-layout > .viewer {
+  position: relative;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+}
+.presentation-layout .viewer-toolbar {
+  position: absolute;
+  z-index: 15;
+  top: 17px;
+  left: 19px;
+  border: 1px solid rgba(255,255,255,.095);
+  border-radius: 13px;
+  padding: 8px 12px 8px 8px;
+  background: rgba(20,21,29,.84);
+  box-shadow: 0 8px 30px rgba(0,0,0,.25);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  width: auto;
+  min-height: 0;
+  max-width: min(460px, calc(100vw - 38px));
+}
+.presentation-layout .viewer-filename::before { display: none; }
+.presentation-layout .viewer-file-mark { color: var(--file-accent); }
+.presentation-layout .viewer-toolbar .viewer-file-info { max-width: 300px; }
+.presentation-layout .viewer-footer { display: none; }
+.presentation-layout .page-stage {
+  min-height: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 14px;
+}
+.presentation-layout .viewer-control-pill {
+  position: absolute;
+  z-index: 30;
+  right: clamp(12px, 2.2vw, 32px);
+  bottom: clamp(13px, 2.4vh, 28px);
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  min-height: 54px;
+  gap: 4px;
+  padding: 7px 9px;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 16px;
+  color: #e8e9f2;
+  background: rgba(22,24,31,.86);
+  box-shadow: 0 10px 36px rgba(0,0,0,.47), 0 1px 0 rgba(255,255,255,.05) inset;
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+.presentation-layout .viewer-control-pill > button {
+  display: grid;
+  place-items: center;
+  width: 35px;
+  min-width: 35px;
+  height: 35px;
+  border: none;
+  background: transparent;
+  color: #e2e3ed;
+  border-radius: 10px;
+  font-size: 21px;
+  padding: 0;
+}
+.presentation-layout .viewer-control-pill > button:hover:not(:disabled) {
+  background: rgba(255,255,255,.125);
+  border: none;
+}
+.presentation-layout .viewer-control-pill > button:focus-visible {
+  outline: 2px solid #a3a5ff;
+  outline-offset: 2px;
+}
+.presentation-layout .viewer-control-pill > button:disabled { opacity: .28; cursor: default; }
+.presentation-layout .viewer-control-pill .zoom-reset {
+  width: 51px;
+  min-width: 51px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.presentation-layout .viewer-control-pill form { display: inline-flex; align-items: center; gap: 6px; color: #a5a9bc; }
+.presentation-layout .viewer-control-pill input {
+  width: 38px;
+  height: 33px;
+  padding: 0 3px;
+  text-align: center;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.09);
+  color: #f2f2fa;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.presentation-layout .viewer-control-pill .toolbar-divider {
+  height: 20px;
+  width: 1px;
+  background: rgba(255,255,255,.14);
+  margin: 0 5px;
+}
+.presentation-layout .quick-preview img {
+  max-height: calc(100dvh - 36px);
+  max-width: calc(100vw - 36px);
+}
+.presentation-layout > .viewer:fullscreen,
+.presentation-layout > .viewer.viewer-immersive {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  background: #000;
+  overflow: hidden;
+}
+.presentation-layout > .viewer:fullscreen .viewer-toolbar,
+.presentation-layout > .viewer.viewer-immersive .viewer-toolbar,
+.presentation-layout > .viewer:fullscreen .viewer-footer,
+.presentation-layout > .viewer.viewer-immersive .viewer-footer {
+  display: none !important;
+}
+.presentation-layout > .viewer:fullscreen .page-stage,
+.presentation-layout > .viewer.viewer-immersive .page-stage {
+  padding: 0;
+  height: 100dvh;
+  min-height: 100dvh;
+  background: #000;
+}
+.presentation-layout > .viewer:fullscreen .page-shell,
+.presentation-layout > .viewer.viewer-immersive .page-shell {
+  box-shadow: none;
+}
+.presentation-layout > .viewer:fullscreen .quick-preview img,
+.presentation-layout > .viewer.viewer-immersive .quick-preview img {
+  max-height: 100dvh;
+  max-width: 100vw;
+}
+.presentation-layout > .viewer:fullscreen .quick-preview span,
+.presentation-layout > .viewer.viewer-immersive .quick-preview span { display: none; }
+.viewer-fullscreen-notice {
+  position: absolute;
+  right: 20px;
+  bottom: 93px;
+  z-index: 35;
+  max-width: min(400px, calc(100vw - 40px));
+  padding: 10px 14px;
+  border: 1px solid #474554;
+  border-radius: 10px;
+  background: rgba(25,25,32,.94);
+  color: #dddbe7;
+  font-size: 12px;
+  line-height: 1.5;
+}
+@media (max-width: 640px) {
+  .presentation-layout > .viewer,
+  .presentation-layout > .viewer:fullscreen,
+  .presentation-layout > .viewer.viewer-immersive { height: 100dvh; min-height: 100dvh; max-height: 100dvh; }
+  .presentation-layout .viewer-toolbar { top: 9px; left: 9px; padding: 6px; }
+  .presentation-layout .viewer-file-info { max-width: 170px; }
+  .presentation-layout .viewer-control-pill {
+    bottom: max(12px, env(safe-area-inset-bottom));
+    right: 10px;
+    min-height: 48px;
+    padding: 5px;
+    border-radius: 13px;
+    gap: 1px;
+  }
+  .presentation-layout .viewer-control-pill > button { width: 29px; min-width: 29px; height: 32px; }
+  .presentation-layout .viewer-control-pill .zoom-reset { width: 42px; min-width: 42px; }
+  .presentation-layout .viewer-control-pill .toolbar-divider { margin: 0 2px; }
+}

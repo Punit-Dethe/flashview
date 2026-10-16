@@ -1,5 +1,6 @@
 import { MAX_RANGE_BYTES, ROOM_TTL_MS, type PdfManifest } from '../../shared/protocol';
 import type { RoomSocket } from '../socket';
+import { perf } from '../perf';
 
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
@@ -298,6 +299,7 @@ export class RoomPdfCache {
     }).then(async data => {
       if (this.stopped) throw Error('Classroom cache closed');
       this.putMemory(key, data);
+      const writingSince = perf.enabled ? performance.now() : 0;
       const saving = saveChunk({
         key, room: this.roomId, document: this.roomId + '/' + file.fileId,
         index, data: data.slice().buffer,
@@ -305,10 +307,13 @@ export class RoomPdfCache {
       this.pendingWrites.add(saving);
       try {
         await saving;
+        if (perf.enabled) perf.record('cache_write_ms', performance.now() - writingSince, { bytes: data.byteLength });
         if (this.stopped) return data;
         const set = await this.indexSet(file.fileId);
         set.add(index);
-        this.onProgress(completion(file, set));
+        const state = completion(file, set);
+        if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
+        this.onProgress(state);
       } catch {
         this.warning();
         this.storageFailedFiles.add(file.fileId);
@@ -345,6 +350,7 @@ export class RoomPdfCache {
   /** Queue a file as soon as it is offered, not when the viewer opens. */
   prefetch(file: PdfManifest): void {
     if (this.stopped || this.storageFailedFiles.has(file.fileId)) return;
+    if (!this.jobs.has(file.fileId)) perf.mark('cache:' + file.fileId);
     this.jobs.set(file.fileId, file);
     this.resume();
   }

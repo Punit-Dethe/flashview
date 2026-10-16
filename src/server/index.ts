@@ -181,6 +181,12 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
       const student = room.students.get(msg.studentId);
       if (student) {
         student.approved = true;
+        for (const file of room.files.values()) {
+          if (file.ownerId === student.id && file.status === 'pending') {
+            file.status = 'approved';
+            notifyHost(room, { type: 'file.updated', file });
+          }
+        }
         const session = [...room.sessions.values()].find(record => record.id === student.id);
         if (session) session.approved = true;
         send(student.ws, { type: 'join.accepted', roomCode: room.code, resumeToken: session?.token });
@@ -192,21 +198,6 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
         for (const [key, record] of room.sessions) if (record.id === student.id) room.sessions.delete(key);
         send(student.ws, { type: 'join.rejected' });
         student.ws.close(1008, 'Rejected');
-      }
-    } else if (msg.type === 'file.approve' && typeof msg.fileId === 'string') {
-      const file = room.files.get(msg.fileId);
-      const sender = file && room.students.get(file.ownerId);
-      if (file?.status === 'pending' && sender?.approved) {
-        file.status = 'approved';
-        send(sender.ws, { type: 'file.approved', fileId: file.fileId });
-        notifyHost(room, { type: 'file.updated', file });
-      }
-    } else if (msg.type === 'file.reject' && typeof msg.fileId === 'string') {
-      const file = room.files.get(msg.fileId);
-      if (file?.status === 'pending') {
-        file.status = 'rejected';
-        send(room.students.get(file.ownerId)?.ws, { type: 'file.rejected', fileId: file.fileId });
-        notifyHost(room, { type: 'file.updated', file });
       }
     } else if (msg.type === 'range.request') {
       const { requestId, fileId, begin, end } = msg;
@@ -246,17 +237,21 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     if (!name.toLowerCase().endsWith('.pdf')) return void sendError(ws, 'PDF files only');
     const existing = room.files.get(fileId);
     if (existing) {
+      if (existing.status === 'pending' && peer.approved) {
+        existing.status = 'approved';
+        notifyHost(room, { type: 'file.updated', file: existing });
+      }
       if (existing.ownerId !== peer.id || existing.size !== Number(size) || existing.name !== name) {
         return void sendError(ws, 'Conflicting document ID');
       }
       return void send(ws, { type: 'file.state', file: existing });
     }
     const file: PdfManifest = {
-      fileId, name, size: Number(size), ownerId: peer.id, ownerName: peer.name, status: 'pending',
+      fileId, name, size: Number(size), ownerId: peer.id, ownerName: peer.name, status: 'approved',
     };
     room.files.set(fileId, file);
     notifyHost(room, { type: 'file.announced', file });
-    send(ws, { type: 'file.pending', fileId });
+    send(ws, { type: 'file.approved', fileId });
     send(ws, { type: 'file.state', file });
   } else if (msg.type === 'range.error' && typeof msg.requestId === 'string') {
     const pending = room.outstanding.get(msg.requestId);

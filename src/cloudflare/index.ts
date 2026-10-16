@@ -254,6 +254,16 @@ export class ClassroomRoom extends DurableObject<Env> {
           if (msg.type === 'student.accept') {
             student.peer.approved = true;
             this.putPeer(student.ws, student.peer);
+            // Compatibility with pending documents created before automatic approval.
+            let restored = false;
+            for (const file of this.files.values()) {
+              if (file.ownerId === student.peer.id && file.status === 'pending') {
+                file.status = 'approved';
+                this.sendHost({ type: 'file.updated', file });
+                restored = true;
+              }
+            }
+            if (restored) await this.persist();
             const session = [...this.sessions.values()].find(record => record.id === student.peer.id);
             if (session) {
               session.approved = true;
@@ -272,15 +282,6 @@ export class ClassroomRoom extends DurableObject<Env> {
             send(student.ws, { type: 'join.rejected' });
             student.ws.close(1008, 'Rejected');
           }
-        }
-      } else if ((msg.type === 'file.approve' || msg.type === 'file.reject') && typeof msg.fileId === 'string') {
-        const file = this.files.get(msg.fileId);
-        const sender = file && this.student(file.ownerId);
-        if (file?.status === 'pending' && sender) {
-          file.status = msg.type === 'file.approve' ? 'approved' : 'rejected';
-          await this.persist();
-          send(sender.ws, { type: file.status === 'approved' ? 'file.approved' : 'file.rejected', fileId: file.fileId });
-          this.sendHost({ type: 'file.updated', file });
         }
       } else if (msg.type === 'range.request') {
         const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
@@ -324,6 +325,11 @@ export class ClassroomRoom extends DurableObject<Env> {
       if (!name.toLowerCase().endsWith('.pdf')) return void send(ws, { type: 'error', message: 'PDF files only' });
       const existing = this.files.get(msg.fileId);
       if (existing) {
+        if (existing.status === 'pending' && peer.approved) {
+          existing.status = 'approved';
+          await this.persist();
+          this.sendHost({ type: 'file.updated', file: existing });
+        }
         // Replaying an offer is safe: never downgrade teacher approval.
         if (existing.ownerId !== peer.id || existing.size !== Number(msg.size) || existing.name !== name) {
           return void send(ws, { type: 'error', message: 'Conflicting document ID' });
@@ -331,13 +337,13 @@ export class ClassroomRoom extends DurableObject<Env> {
         return void send(ws, { type: 'file.state', file: existing });
       }
       const file: PdfManifest = {
-        fileId: msg.fileId, name, size: Number(msg.size), status: 'pending',
+        fileId: msg.fileId, name, size: Number(msg.size), status: 'approved',
         ownerId: peer.id, ownerName: peer.name,
       };
       this.files.set(file.fileId, file);
       await this.persist();
       this.sendHost({ type: 'file.announced', file });
-      send(ws, { type: 'file.pending', fileId: file.fileId });
+      send(ws, { type: 'file.approved', fileId: file.fileId });
       send(ws, { type: 'file.state', file });
     } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
       const file = this.files.get(msg.fileId);

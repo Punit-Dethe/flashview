@@ -129,7 +129,9 @@ export function App() {
       const type = message.type;
       if (type === 'room.state') {
         setStudents(Array.isArray(message.students) ? message.students as StudentInfo[] : []);
-        setDocuments(Array.isArray(message.files) ? message.files as PdfManifest[] : []);
+        const files = Array.isArray(message.files) ? message.files as PdfManifest[] : [];
+        setDocuments(files);
+        for (const file of files) presentation.queue(file);
         setError('');
       }
       if (type === 'student.pending' || type === 'student.updated') {
@@ -142,6 +144,7 @@ export function App() {
         const file = message.file as PdfManifest;
         if (!file?.fileId) return;
         setDocuments(existing => [...existing.filter(f => f.fileId !== file.fileId), file]);
+        presentation.queue(file);
       }
       if (type === 'join.pending') setJoinState('pending');
       if (type === 'join.accepted' || type === 'join.resumed') {
@@ -415,10 +418,7 @@ export function App() {
                                 : 'Ready for progressive transfer'}
                           </span>
                         </div>
-                        {file.status === 'pending' ? (
-                          <div className="row-actions"><button onClick={() => socket.send({ type: 'file.approve', fileId: file.fileId })}>Allow</button>
-                            <button className="plain-action" onClick={() => socket.send({ type: 'file.reject', fileId: file.fileId })}>Decline</button></div>
-                        ) : file.status === 'approved' || cacheProgress[file.fileId]?.complete ? (
+                        {file.status === 'approved' || cacheProgress[file.fileId]?.complete ? (
                           <button className="open-button" onClick={() => {
                             try { presentation.open(file); }
                             catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
@@ -470,7 +470,7 @@ export function App() {
                 <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={addPdf}/>
                 {sentFiles.length > 0 && <div className="sent-list"><h3>Files you're sharing</h3>
                   {sentFiles.map(f => <div className="sent-row" key={f.fileId}>
-                    <span className="file-icon">PDF</span><div className="file-meta"><strong>{f.name}</strong><span>{formatBytes(f.size)} · {f.status === 'announcing' ? 'Sending announcement…' : f.status === 'pending' ? 'Received by server · awaiting teacher' : f.status === 'approved' ? 'Available while your phone stays online' : f.status}</span></div>
+                    <span className="file-icon">PDF</span><div className="file-meta"><strong>{f.name}</strong><span>{formatBytes(f.size)} · {f.status === 'announcing' ? 'Sending announcement…' : f.status === 'approved' ? 'Shared — caching on classroom computer' : f.status}</span></div>
                     {f.status !== 'offline' && <button className="plain-action" onClick={() => revoke(f.fileId)}>Stop sharing</button>}
                   </div>)}</div>}
                 <div className="stay-online">FlashView sends a document announcement first, not the complete PDF. A confirmation means your file is listed in the classroom. Keep this browser tab running for the teacher to view uncached pages.</div>

@@ -122,7 +122,12 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
       buffer: makePdf(),
     });
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).waitFor();
-    await host.locator('.document-row').getByRole('button', { name: 'Allow' }).click();
+    // Student approval also approves each new PDF automatically.
+    await student.locator('.sent-row').filter({ hasText: 'smoke.pdf' })
+      .getByText('Shared — caching on classroom computer').waitFor();
+    // Cache starts before any teacher presentation tab is opened.
+    await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
+      .getByText(/saved|cached on this computer/).waitFor({ timeout: 15000 });
     const [presentation] = await Promise.all([
       host.waitForEvent('popup'),
       host.locator('.document-row').getByRole('button', { name: /Present/ }).click(),
@@ -168,7 +173,7 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
       const sockets = record.__flashviewSockets ?? [];
       return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN &&
         document.querySelector('.connection.connected') !== null &&
-        (document.querySelector('.sent-row')?.textContent ?? '').includes('Available while your phone stays online');
+        (document.querySelector('.sent-row')?.textContent ?? '').includes('Shared — caching on classroom computer');
     }, null, { timeout: 20000 });
     assert.match(await student.locator('.sent-row').innerText(), /smoke\.pdf/);
 

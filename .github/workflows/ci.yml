@@ -36,6 +36,29 @@ jobs:
           BENCH_MIB: 2
           BENCH_RUNS: 3
           FLASHVIEW_BACKEND: cloudflare
+      - name: Stage 1 A/B — fixed concurrency (synthetic slow sender)
+        run: npm run bench:baseline
+        env:
+          BENCH_MIB: 4
+          BENCH_RUNS: 3
+          BENCH_STUDENTS: 1
+          BENCH_FILE_READ_DELAY_MS: 40
+          BENCH_TRANSFER_MODE: fixed
+      - name: Stage 1 A/B — adaptive concurrency (same synthetic slow sender)
+        run: npm run bench:baseline
+        env:
+          BENCH_MIB: 4
+          BENCH_RUNS: 3
+          BENCH_STUDENTS: 1
+          BENCH_FILE_READ_DELAY_MS: 40
+          BENCH_TRANSFER_MODE: adaptive
+      - name: Upload Stage 1 A/B reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flashview-stage1-comparison
+          path: test-artifacts/stage0-node-4mib-1students-40ms-*.json
+          if-no-files-found: warn
       - name: Upload Stage 0 baselines
         uses: actions/upload-artifact@v4
         if: always()

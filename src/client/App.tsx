@@ -7,7 +7,7 @@ import { PresentationHost } from './presentation';
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string };
-type ShareStatus = 'pending' | 'approved' | 'rejected' | 'offline';
+type ShareStatus = 'announcing' | 'pending' | 'approved' | 'rejected' | 'offline';
 type SharedFile = { file: File; status: ShareStatus };
 
 function savedSession(): HostSession | null {
@@ -36,6 +36,7 @@ export function App() {
   const presentation = useRef(new PresentationHost(socket)).current;
   const filesOnPhone = useRef(new Map<string, SharedFile>());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modeRef = useRef<Mode>(initialSession ? 'host' : initialJoin ? 'student' : 'welcome');
   const [mode, setMode] = useState<Mode>(initialSession ? 'host' : initialJoin ? 'student' : 'welcome');
   const [hostSession, setHostSession] = useState<HostSession | null>(initialSession);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('disconnected');
@@ -48,15 +49,56 @@ export function App() {
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
 
+  function offerLocalFile(id: string, entry: SharedFile): void {
+    if (entry.status === 'rejected' || entry.status === 'offline') return;
+    socket.send({ type: 'file.offer', fileId: id, name: entry.file.name, size: entry.file.size });
+  }
+
+  /** Server manifest is the source of truth; recover any lost file.offer messages. */
+  function reconcileFiles(serverFiles: PdfManifest[]): void {
+    const known = new Map(serverFiles.map(file => [file.fileId, file]));
+    for (const [id, entry] of filesOnPhone.current) {
+      if (entry.status === 'offline' || entry.status === 'rejected') continue;
+      const serverFile = known.get(id);
+      if (serverFile) entry.status = serverFile.status;
+      else {
+        entry.status = 'announcing';
+        offerLocalFile(id, entry);
+      }
+    }
+    setSentFiles(existing => existing.map(item => {
+      const local = filesOnPhone.current.get(item.fileId);
+      return local ? { ...item, status: local.status } : item;
+    }));
+  }
+
   useEffect(() => {
     socket.onStatus = setSocketStatus;
     // On mobile, background tabs may have their timers and connections suspended.
     // Returning to the tab checks the socket and resumes it if necessary.
-    const wake = () => { if (document.visibilityState === 'visible') socket.wake(); };
+    const wake = () => {
+      if (document.visibilityState !== 'visible') return;
+      socket.wake();
+      // A socket can look OPEN while an earlier broadcast was missed.
+      if (socket.connected) socket.send({ type: modeRef.current === 'host' ? 'room.sync' : 'file.sync' });
+    };
     const online = () => socket.wake();
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('pageshow', online);
     window.addEventListener('online', online);
+    // Repair missed WebSocket notifications while the page is actually in use.
+    // This is lightweight metadata, NOT a full PDF transfer.
+    const syncTimer = setInterval(() => {
+      if (!socket.connected || document.visibilityState !== 'visible') return;
+      if (modeRef.current === 'host') socket.send({ type: 'room.sync' });
+      else if (modeRef.current === 'student') {
+        socket.send({ type: 'file.sync' });
+        // Retry only file announcements for which no server receipt arrived.
+        for (const [id, entry] of filesOnPhone.current) {
+          if (entry.status === 'announcing') offerLocalFile(id, entry);
+        }
+      }
+    }, 20_000);
     socket.onMessage = message => {
       const type = message.type;
       if (type === 'room.state') {
@@ -79,16 +121,19 @@ export function App() {
       if (type === 'join.accepted' || type === 'join.resumed') {
         setJoinState('accepted');
         setError('');
-        if (type === 'join.resumed' && Array.isArray(message.files)) {
-          const serverFiles = message.files as PdfManifest[];
-          for (const file of serverFiles) {
-            const local = filesOnPhone.current.get(file.fileId);
-            if (local) local.status = file.status;
-          }
-          setSentFiles(existing => existing.map(item => {
-            const server = serverFiles.find(file => file.fileId === item.fileId);
-            return server ? { ...item, status: server.status } : item;
-          }));
+        if (Array.isArray(message.files)) reconcileFiles(message.files as PdfManifest[]);
+        else socket.send({ type: 'file.sync' });
+      }
+      if (type === 'file.manifest' && Array.isArray(message.files)) {
+        reconcileFiles(message.files as PdfManifest[]);
+      }
+      if (type === 'file.state') {
+        const file = message.file as PdfManifest | undefined;
+        if (file && typeof file.fileId === 'string') {
+          const local = filesOnPhone.current.get(file.fileId);
+          if (local) local.status = file.status;
+          setSentFiles(existing => existing.map(item =>
+            item.fileId === file.fileId ? { ...item, status: file.status } : item));
         }
       }
       if (type === 'join.rejected') { setJoinState('rejected'); setError('The teacher declined this connection.'); }
@@ -119,6 +164,7 @@ export function App() {
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('pageshow', online);
       window.removeEventListener('online', online);
+      clearInterval(syncTimer);
       presentation.closeAll();
       socket.close();
     };
@@ -154,6 +200,7 @@ export function App() {
       const newSession = await response.json() as HostSession;
       sessionStorage.setItem('flashview-host', JSON.stringify(newSession));
       setHostSession(newSession);
+      modeRef.current = 'host';
       setMode('host');
       setStudents([]);
       setDocuments([]);
@@ -169,6 +216,7 @@ export function App() {
     setJoinState('idle');
     filesOnPhone.current.clear();
     setSentFiles([]);
+    modeRef.current = 'student';
     setMode('student');
     const key = joinCode.trim();
     const identifier = /^\d{6}$/.test(key) ? { code: key } : { joinToken: key };
@@ -190,11 +238,12 @@ export function App() {
         continue;
       }
       const fileId = crypto.randomUUID().replaceAll('-', '');
-      filesOnPhone.current.set(fileId, { file, status: 'pending' });
-      setSentFiles(current => [...current, { fileId, name: file.name, size: file.size, status: 'pending' }]);
-      if (!socket.send({ type: 'file.offer', fileId, name: file.name, size: file.size })) {
-        setError('Connection lost. Reconnect and select the file again.');
-      }
+      const entry: SharedFile = { file, status: 'announcing' };
+      filesOnPhone.current.set(fileId, entry);
+      setSentFiles(current => [...current, { fileId, name: file.name, size: file.size, status: 'announcing' }]);
+      if (!socket.connected) {
+        setError('You are offline. The PDF is saved in this tab and will be announced when the connection returns.');
+      } else offerLocalFile(fileId, entry);
     }
   }
 
@@ -209,6 +258,7 @@ export function App() {
     sessionStorage.removeItem('flashview-host');
     setHostSession(null);
     presentation.closeAll();
+    modeRef.current = 'welcome';
     setMode('welcome');
     socket.close();
   }
@@ -220,6 +270,7 @@ export function App() {
     setJoinState('idle');
     presentation.closeAll();
     setError('');
+    modeRef.current = 'welcome';
     setMode('welcome');
     window.history.replaceState({}, '', '/');
   }
@@ -301,7 +352,7 @@ export function App() {
                   ))}
                 </aside>
                 <section className="document-column">
-                  <div className="list-heading"><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2><span>PDF QUEUE · OPEN IN NEW TAB</span></div>
+                  <div className="list-heading"><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2><button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>Refresh submissions ↻</button></div>
                   {documents.length === 0 && (
                     <div className="empty-list"><span className="empty-art">▤</span>
                       <h3>Nothing shared yet.</h3><p>Once a student selects a PDF, it'll show up here — no full upload required.</p></div>
@@ -366,10 +417,10 @@ export function App() {
                 <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={addPdf}/>
                 {sentFiles.length > 0 && <div className="sent-list"><h3>Files you're sharing</h3>
                   {sentFiles.map(f => <div className="sent-row" key={f.fileId}>
-                    <span className="file-icon">PDF</span><div className="file-meta"><strong>{f.name}</strong><span>{formatBytes(f.size)} · {f.status}</span></div>
+                    <span className="file-icon">PDF</span><div className="file-meta"><strong>{f.name}</strong><span>{formatBytes(f.size)} · {f.status === 'announcing' ? 'Sending announcement…' : f.status === 'pending' ? 'Received by server · awaiting teacher' : f.status === 'approved' ? 'Available while your phone stays online' : f.status}</span></div>
                     {f.status !== 'offline' && <button className="plain-action" onClick={() => revoke(f.fileId)}>Stop sharing</button>}
                   </div>)}</div>}
-                <div className="stay-online">Keep this tab open and your phone awake while your teacher is presenting. Unloaded pages need your connection.</div>
+                <div className="stay-online">FlashView sends a document announcement first, not the complete PDF. A confirmation means your file is listed in the classroom. Keep this browser tab running for the teacher to view uncached pages.</div>
               </div>
             )}
             {joinState === 'rejected' && <button className="outline-button" onClick={startFresh}>Return home →</button>}

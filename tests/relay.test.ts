@@ -133,7 +133,9 @@ test('different devices exchange metadata, approvals and byte-range PDF data via
       type: 'range.data', requestId, fileId, begin: 0,
     }, pdf), { binary: true });
     const result = await host.waitBinary();
-    const data = decodeRangePacket(result.buffer.slice(result.byteOffset, result.byteOffset + result.byteLength));
+    const packet = new ArrayBuffer(result.byteLength);
+    new Uint8Array(packet).set(result);
+    const data = decodeRangePacket(packet);
     assert.equal(data.header.requestId, requestId);
     assert.deepEqual(Buffer.from(data.bytes), pdf);
 

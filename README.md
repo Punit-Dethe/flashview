@@ -6,9 +6,9 @@
 
 ## Architecture
 
-- One TypeScript/Node server with \`ws\`: ephemeral classroom rooms, join approval, PDF metadata announcements, and binary WebSocket byte-range relay.
+- One TypeScript/Node server with `ws`: ephemeral classroom rooms, join approval, PDF metadata announcements, and binary WebSocket byte-range relay.
 - React + Vite browser UI: QR pairing, host document review, mobile file selection, and presentation controls.
-- Mozilla PDF.js \`PDFDataRangeTransport\`: requests PDF byte ranges from the student's browser via the server, not a full-file upload before opening.
+- Mozilla PDF.js `PDFDataRangeTransport`: requests PDF byte ranges from the student's browser via the server, not a full-file upload before opening.
 - No permanent cloud file storage or database. The sender **must remain online**; the server **can access relayed document bytes** (not end-to-end encrypted).
 - Direct P2P and upload-to-storage are deliberately out of scope for the first release.
 
@@ -16,10 +16,10 @@
 
 Requires Node.js 22+.
 
-\`\`\`bash
+```bash
 npm install
 npm run dev
-\`\`\`
+```
 
 Open **http://localhost:5173**. Create a room in the host tab. Join with a separate private browser window using the six-digit room code, allow the student, and choose a PDF. The teacher must approve the file before opening it.
 
@@ -27,19 +27,19 @@ The QR produced by a localhost development server will not be reachable from a s
 
 To build and launch as one process:
 
-\`\`\`bash
+```bash
 npm run build
 npm start
-\`\`\`
+```
 
-The production app listens on \`PORT\` (default 3000), serves \`dist\`, and handles \`/ws\` WebSockets. Behind a reverse proxy, enable WebSocket upgrades and TLS. Set \`PUBLIC_ORIGIN\` to the deployed HTTPS origin.
+The production app listens on `PORT` (default 3000), serves `dist`, and handles `/ws` WebSockets. Behind a reverse proxy, enable WebSocket upgrades and TLS. Set `PUBLIC_ORIGIN` to the deployed HTTPS origin.
 
 ## Testing
 
-\`\`\`bash
+```bash
 npm test
 npm run build
-\`\`\`
+```
 
 For a meaningful connectivity test, place host and student on **different internet connections**; campus Wi-Fi should be tested independently. The initial MVP requires WebSocket upgrade access via port 443. Ordinary HTTPS fallback and live-device benchmarking are planned but **not yet implemented**.
 
@@ -60,3 +60,15 @@ PairDrop's complete WebRTC/TURN infrastructure is unnecessary for our firewall-f
 ## License
 
 Project license has not yet been chosen. External dependencies retain their respective licenses.
+
+## Production deployment
+
+A public HTTPS deployment is required for students on mobile data and college smartboards to share a room. The repository includes a multi-stage `Dockerfile` and `railway.json` for Railway or an equivalent always-on container host.
+
+1. Connect this GitHub repository to the hosting provider (Railway is one reasonable option).
+2. Deploy the Dockerfile as a web service and obtain its public HTTPS domain.
+3. Set the service environment variable `PUBLIC_ORIGIN` to that exact HTTPS origin (without a trailing path), e.g. `https://flashview.example.app`. The service honors the provider's `PORT`.
+4. Check `/health`, then open the website on the smartboard and scan its QR code from a phone on **mobile data**.
+
+**Security boundary:** The hosted server has no end-to-end PDF encryption and should not be used with sensitive documents. Enable the campus firewall's outbound HTTPS access to the domain and verify WebSocket upgrades. If WSS is blocked, an ordinary HTTP fallback is still a future milestone.
+

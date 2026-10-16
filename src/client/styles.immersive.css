@@ -1,0 +1,278 @@
+/* FlashView projector — full-bleed stage with a small floating control dock.
+   Loaded after workspace styles; no network, PDF caching, or rendering changes. */
+.presentation-layout {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  background: #000;
+}
+.presentation-layout > .viewer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: #000;
+  border: none;
+}
+.presentation-layout .presentation-caption,
+.presentation-layout .viewer-footer { display: none; }
+.presentation-layout .viewer-toolbar {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: block;
+  padding: 0;
+  margin: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+.presentation-layout .page-stage {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 6px 12px;
+  margin: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: safe center;
+  align-items: safe center;
+  background: #000;
+}
+.presentation-layout .page-shell {
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  margin: auto;
+  background: white;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.075);
+}
+.presentation-layout .page-shell canvas { display: block; }
+.presentation-layout .viewer-filename {
+  position: absolute;
+  top: max(17px, env(safe-area-inset-top));
+  left: max(18px, env(safe-area-inset-left));
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  max-width: min(390px, calc(100vw - 36px));
+  padding: 6px 14px 6px 6px;
+  color: #f6f6f8;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px;
+  background: rgba(20,21,27,.88);
+  box-shadow: 0 7px 23px rgba(0,0,0,.25);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  pointer-events: auto;
+}
+.presentation-layout .viewer-filename::before { display: none; }
+.presentation-layout .viewer-filename > div { min-width: 0; gap: 3px; }
+.presentation-layout .viewer-filename strong {
+  display: block;
+  max-width: 295px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f8f8fa;
+  font-size: 12px;
+  letter-spacing: -.012em;
+}
+.presentation-layout .viewer-filename small {
+  display: block;
+  max-width: 295px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #9a9daa;
+  font-size: 10px;
+}
+.presentation-layout .close-viewer {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  font-size: 19px;
+  color: #ececf1;
+  background: #30313c;
+  border: none;
+  border-radius: 8px;
+}
+.presentation-layout .close-viewer:hover { background: #414253; }
+
+/* A single Linear-like, unobtrusive floating pill. */
+.presentation-layout .viewer-controls {
+  position: absolute;
+  z-index: 3;
+  right: max(22px, env(safe-area-inset-right));
+  bottom: max(22px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 3px;
+  width: max-content;
+  max-width: calc(100vw - 22px);
+  padding: 7px;
+  min-height: 52px;
+  color: #e7e8ef;
+  background: rgba(22,23,29,.92);
+  border: 1px solid rgba(238,240,250,.13);
+  border-radius: 999px;
+  box-shadow: 0 14px 42px rgba(0,0,0,.48), 0 0 0 1px rgba(0,0,0,.15);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  pointer-events: auto;
+}
+.presentation-layout .viewer-controls > button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 37px;
+  height: 37px;
+  margin: 0;
+  padding: 0;
+  color: #e8e9f1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 22px;
+  line-height: 1;
+  transition: color .16s, background .16s;
+}
+.presentation-layout .viewer-controls > button:hover:not(:disabled) {
+  color: white;
+  background: rgba(255,255,255,.12);
+  border-color: transparent;
+}
+.presentation-layout .viewer-controls > button:disabled {
+  color: #666977;
+  opacity: .48;
+  cursor: not-allowed;
+}
+.presentation-layout .viewer-controls form {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  margin: 0;
+  color: #9da1b0;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.presentation-layout .viewer-controls input {
+  width: 31px;
+  height: 31px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: #fff;
+  background: #32333d;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.presentation-layout .viewer-controls input:focus {
+  outline: 2px solid #a5a6f5;
+  outline-offset: 1px;
+}
+.presentation-layout .viewer-controls input::-webkit-outer-spin-button,
+.presentation-layout .viewer-controls input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.presentation-layout .viewer-controls form span { padding-right: 5px; }
+.presentation-layout .viewer-controls .toolbar-divider {
+  flex: none;
+  width: 1px;
+  height: 23px;
+  margin: 0 5px;
+  background: #484955;
+}
+.presentation-layout .viewer-controls > .zoom-reset {
+  width: 48px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: -.015em;
+  color: #bfc3d0;
+}
+.presentation-layout .viewer-controls > .zoom-reset:disabled {
+  color: #bfc3d0;
+  opacity: 1;
+  cursor: default;
+}
+.presentation-layout .viewer-alert {
+  position: absolute;
+  top: 77px;
+  left: 50%;
+  z-index: 20;
+  width: max-content;
+  max-width: min(600px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  border: 1px solid #774a52;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px #0007;
+}
+.presentation-layout .quick-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  overflow: visible;
+}
+.presentation-layout .quick-preview img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 12px);
+  object-fit: contain;
+  transform-origin: center;
+}
+.presentation-layout .quick-preview span { display: none; }
+.presentation-layout .page-loading { align-self: center; }
+.presentation-layout .page-overlay { background: rgba(0,0,0,.78); }
+.presentation-layout .presentation-state { margin: auto; }
+.presentation-layout:fullscreen,
+.presentation-layout .viewer:fullscreen { width: 100%; height: 100%; background: #000; }
+.presentation-layout .viewer:fullscreen .page-stage { background: #000; }
+@media (max-width: 580px) {
+  .presentation-layout .viewer-filename {
+    top: max(11px, env(safe-area-inset-top));
+    left: max(11px, env(safe-area-inset-left));
+    max-width: calc(100vw - 22px);
+  }
+  .presentation-layout .viewer-filename strong,
+  .presentation-layout .viewer-filename small { max-width: min(250px, 56vw); }
+  .presentation-layout .viewer-controls {
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    gap: 1px;
+    padding: 5px;
+    min-height: 47px;
+    max-width: calc(100vw - 20px);
+  }
+  .presentation-layout .viewer-controls > button { width: 31px; height: 34px; font-size: 20px; }
+  .presentation-layout .viewer-controls > .zoom-reset { width: 42px; font-size: 10px; }
+  .presentation-layout .viewer-controls .toolbar-divider { margin: 0 2px; }
+  .presentation-layout .viewer-controls form span { padding-right: 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .presentation-layout .viewer-controls > button { transition: none; }
+}

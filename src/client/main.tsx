@@ -4,6 +4,7 @@ import { App } from './App';
 import { Presenter } from './Presenter';
 import './styles.css';
 import './styles.refined.css';
+import './styles.immersive.css';
 
 createRoot(document.getElementById('root')!).render(
   window.location.pathname === '/present' ? <Presenter/> : <React.StrictMode><App/></React.StrictMode>,

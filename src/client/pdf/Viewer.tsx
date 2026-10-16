@@ -7,6 +7,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PdfManifest } from '../../shared/protocol';
 import type { PdfRangeSource } from '../presentation';
 import { readCompletedPdf, type CacheProgress } from './roomCache';
+import { fileAccentStyle } from '../fileAccent';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const REQUEST_CHUNK = 65_536;
@@ -317,7 +318,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       formatBytes(cached.bytes) + ' / ' + formatBytes(cached.size) + ' cached · streaming preview')
     : 'Checking local cache…';
   return (
-    <section ref={wrapper} className="viewer" aria-label="PDF presenter">
+    <section ref={wrapper} className="viewer" style={fileAccentStyle(file.fileId)} aria-label="PDF presenter">
       <header className="viewer-toolbar">
         <div className="viewer-filename">
           <button type="button" className="icon-button close-viewer" onClick={close} aria-label="Back to documents">←</button>

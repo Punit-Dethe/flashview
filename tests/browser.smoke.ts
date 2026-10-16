@@ -122,6 +122,16 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
       buffer: makePdf(),
     });
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).waitFor();
+    // Visual regression: every PDF carries a palette-based file identity.
+    const swatch = await host.locator('.document-row').first().evaluate(element => {
+      const icon = element.querySelector('.file-icon');
+      return icon ? {
+        accent: getComputedStyle(element).getPropertyValue('--file-accent').trim(),
+        background: getComputedStyle(icon).backgroundColor,
+      } : null;
+    });
+    assert.match(swatch?.accent ?? '', /^#[0-9A-Fa-f]{6}$/);
+    assert.notEqual(swatch?.background, 'rgba(0, 0, 0, 0)');
     // Student approval also approves each new PDF automatically.
     await student.locator('.sent-row').filter({ hasText: 'smoke.pdf' })
       .getByText('Shared — caching on classroom computer').waitFor();
@@ -134,6 +144,10 @@ test('real Chromium: QR-equivalent room flow renders PDF.js page through WebSock
     ]);
     // Teacher's queue remains available while the PDF is projected.
     assert.equal(await host.locator('.document-row').count(), 1);
+    // Projector view must be truly black around the actual PDF.
+    const stageColor = await presentation.locator('.page-stage')
+      .evaluate(element => getComputedStyle(element).backgroundColor);
+    assert.equal(stageColor, 'rgb(0, 0, 0)');
     await presentation.waitForFunction(() => {
       const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
       return Boolean(canvas && canvas.width >= 500 && canvas.height >= 700 &&

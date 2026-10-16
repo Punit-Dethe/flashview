@@ -523,7 +523,7 @@ export function App() {
                   ))}
                 </aside>
                 <section className="document-column">
-                  <div className="list-heading"><div className="list-heading-title"><span className="list-kicker">YOUR PRESENTATION QUEUE</span><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2></div><button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>Refresh <span aria-hidden="true">↻</span></button></div>
+                  <div className="list-heading"><div className="list-heading-title"><span className="list-kicker">YOUR PRESENTATION QUEUE</span><h2>Shared documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2></div><button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>Refresh submissions <span aria-hidden="true">↻</span></button></div>
                   {documents.length === 0 && (
                     <div className="empty-list"><span className="empty-art">▤</span>
                       <h3>Nothing shared yet.</h3><p>Once a student selects a PDF, it'll show up here — no full upload required.</p></div>

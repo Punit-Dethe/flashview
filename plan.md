@@ -321,3 +321,15 @@ References: https://nologin.in/ ; https://tus.io/faq.html ; https://developers.c
 - [ ] Evaluate further JPEG2000/CMap decoder compatibility and per-file quality issues using failing document fixtures.
 
 Privacy caveat: deletion removes browser-accessible IndexedDB records but does not guarantee forensic secure erasure. No promise of byte caching if browser storage is denied or full.
+
+
+## 16 October 2026 — Automatic PDF preloading and direct cached rendering
+
+- [x] Authorize the **student once**; all their subsequent files are automatically approved. Removed per-file Allow/Decline controls and matching server actions in both Node and Cloudflare.
+- [x] Begin caching immediately on server-acknowledged PDF announcement (and reconcile outstanding files on host reconnection). Presentation no longer starts the transfer.
+- [x] Reconstruct the complete original PDF from room-scoped IndexedDB, validate all chunk lengths and offsets, and open via `getDocument({ data: Uint8Array })` once 100% is cached. This avoids custom-range deadlocks for completed files.
+- [x] Bundle PDF.js CMaps, standard fonts, ICC profiles where supplied, and decoder WebAssembly files as local Worker assets. Missing WASM can make scanned PDF pages appear empty.
+- [x] Properly serialize/cancel active canvas rendering on rapid navigation; mark a page rendered only after PDF.js's render promise resolves. Add a bounded page timeout.
+- [x] Fair background queue: don't let one 50MB PDF or an offline sender block the others. Foreground page requests retain priority.
+- [x] Browser regression tests now assert *actual drawn pixels* and 100% background caching before the first presentation, rather than just canvas dimensions.
+- [ ] Test the exact image-heavy PDF reported by the user, which hasn't been uploaded, and real mobile Firefox/Android/iOS browsers.

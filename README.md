@@ -48,7 +48,10 @@ For a meaningful connectivity test, place host and student on **different intern
 - The teacher can open/close individual presentation tabs without losing the classroom queue.
 - FlashView saves received original PDF bytes in **IndexedDB on the teacher's computer**, not Cloudflare.
 - The dashboard shows each PDF's saved bytes; a fully cached document remains presentable after the sender disconnects.
-- After the first page renders, FlashView downloads missing chunks in the background (three chunks in flight); page requests take priority.
+- As soon as an approved student shares a PDF, FlashView starts a room-owned background download before any presentation is opened. The teacher approves students only; there is **no separate file approval**.
+- The downloader rotates fairly across students and uses up to three chunks per file batch; current-page requests take priority.
+- Once complete, the presenter reconstructs the PDF from IndexedDB and gives PDF.js the entire Uint8Array directly, avoiding the custom byte-range transport during rendering.
+- PDF.js's additional CMap, standard-font and WASM decoder resources are bundled locally for scanned/image-heavy and international PDFs.
 - **End session** opens a confirmation dialogue. Only after checking the warning does FlashView close presentation tabs and delete the room's cached PDFs, without touching original student files. Refreshing/closing a tab doesn't delete the room cache.
 - Abandoned rooms get cleaned on a later website visit after the room's expiry. Browser storage quotas or private mode may limit persistent caching; FlashView displays a warning when local storage fails.
 - Deleting browser data is not forensic disk erasure.

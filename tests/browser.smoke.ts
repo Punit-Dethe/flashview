@@ -548,7 +548,7 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
     await student.getByText('Choose a PDF to share.').waitFor();
     await student.evaluate(() => {
       (window as typeof window & { __holdSocketBuffer?: (ms: number) => void })
-        .__holdSocketBuffer?.(1100);
+        .__holdSocketBuffer?.(3200);
     });
     await student.locator('input[type=file]').setInputFiles({
       name: 'temporary-backpressure.pdf', mimeType: 'application/pdf',

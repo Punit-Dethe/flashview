@@ -486,7 +486,7 @@ button { -webkit-tap-highlight-color: transparent; }
   gap: 4px;
   padding: 7px 9px;
   border: 1px solid rgba(255,255,255,.15);
-  border-radius: 16px;
+  border-radius: 999px;
   color: #e8e9f2;
   background: rgba(22,24,31,.86);
   box-shadow: 0 10px 36px rgba(0,0,0,.47), 0 1px 0 rgba(255,255,255,.05) inset;
@@ -607,7 +607,7 @@ button { -webkit-tap-highlight-color: transparent; }
     right: 10px;
     min-height: 48px;
     padding: 5px;
-    border-radius: 13px;
+    border-radius: 999px;
     gap: 1px;
   }
   .presentation-layout .viewer-control-pill > button { width: 29px; min-width: 29px; height: 32px; }

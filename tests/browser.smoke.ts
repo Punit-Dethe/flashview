@@ -263,6 +263,13 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
         }
         return ink >= 3 && paper > 200;
       }, null, { timeout: 25000 });
+      const immersiveChrome = await presentation.evaluate(() => ({
+        toolbarHidden: getComputedStyle(document.querySelector('.viewer-toolbar')!).display === 'none',
+        footerHidden: getComputedStyle(document.querySelector('.viewer-footer')!).display === 'none',
+        pillVisible: getComputedStyle(document.querySelector('.viewer-control-pill')!).display !== 'none',
+      }));
+      assert.deepEqual(immersiveChrome, { toolbarHidden: true, footerHidden: true, pillVisible: true },
+        'Fullscreen must hide the top-left info and footer, leaving only the control pill');
       if (!process.env.FLASHVIEW_BACKEND) {
         await presentation.screenshot({ path: 'test-artifacts/ui/presentation-fullscreen.png' });
       }
@@ -531,8 +538,19 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     const before = await cachedChunks();
     await delay(2400);
     const after = await cachedChunks();
-    assert.ok(after > before, 
+    assert.ok(after > before,
       'Background cache must keep advancing while a foreground range remains pending: ' + before + ' -> ' + after);
+    // A real partial cache must show a visible numeric percentage, not 0%
+    // until 100% or a progress bar with no text label.
+    await host.waitForFunction(() => {
+      const row = Array.from(document.querySelectorAll('.document-row'))
+        .find(el => el.textContent?.includes('progressive.pdf'));
+      const label = row?.querySelector('.cache-percent')?.textContent?.trim() ?? '';
+      const value = Number.parseFloat(label);
+      return value > 0 && value < 100;
+    }, null, { timeout: 15000 });
+    const partialPercent = await row.locator('.cache-percent').innerText();
+    assert.ok(Number.parseFloat(partialPercent) > 0 && Number.parseFloat(partialPercent) < 100);
 
     // Either real ranged PDF.js rendering or the phone-produced first-slide
     // preview can win the race. Both must visibly show the correct first page
@@ -581,6 +599,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
       (window as typeof window & { __releaseHeldTail?: () => void }).__releaseHeldTail?.();
     });
     await row.getByText('Fully cached on this computer').waitFor({ timeout: 45000 });
+    assert.equal(await row.locator('.cache-percent').innerText(), '100%');
     await presentation.locator('canvas[data-rendered-page="1"]').waitFor({ timeout: 20000 });
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
   } catch (error) {

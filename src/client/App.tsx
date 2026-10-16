@@ -4,6 +4,7 @@ import { MAX_PDF_BYTES, type PdfManifest, type StudentInfo } from '../shared/pro
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
 import { formatBytes } from './pdf/Viewer';
 import { PresentationHost } from './presentation';
+import type { CacheProgress } from './pdf/roomCache';
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string };
@@ -48,6 +49,19 @@ export function App() {
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
+  const [cacheProgress, setCacheProgress] = useState<Record<string, CacheProgress>>({});
+  const [endConfirm, setEndConfirm] = useState(false);
+  const [endAcknowledged, setEndAcknowledged] = useState(false);
+  const [ending, setEnding] = useState(false);
+
+  useEffect(() => {
+    if (!hostSession) return;
+    for (const file of documents) {
+      void presentation.progress(file).then(progress => {
+        setCacheProgress(existing => ({ ...existing, [file.fileId]: progress }));
+      }).catch(() => {});
+    }
+  }, [hostSession?.code, documents, presentation]);
 
   function offerLocalFile(id: string, entry: SharedFile): void {
     if (entry.status === 'rejected' || entry.status === 'offline') return;
@@ -73,7 +87,13 @@ export function App() {
   }
 
   useEffect(() => {
-    socket.onStatus = setSocketStatus;
+    socket.onStatus = status => {
+      setSocketStatus(status);
+      if (status === 'connected') presentation.resume();
+    };
+    presentation.onProgress = progress =>
+      setCacheProgress(existing => ({ ...existing, [progress.fileId]: progress }));
+    presentation.onWarning = message => setError(message);
     // On mobile, background tabs may have their timers and connections suspended.
     // Returning to the tab checks the socket and resumes it if necessary.
     const wake = () => {
@@ -149,6 +169,7 @@ export function App() {
         void respondToRange(message);
       }
       if (type === 'room.closed') {
+        if (modeRef.current === 'host') void presentation.clearRoom().catch(() => {});
         setError('This classroom session has ended.');
         setHostSession(null);
         sessionStorage.removeItem('flashview-host');
@@ -158,14 +179,17 @@ export function App() {
       if (type === 'error') setError(normalizedMessage(message));
     };
 
-    if (initialSession) socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
+    if (initialSession) {
+      presentation.setRoom(initialSession.code);
+      socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
+    }
     else if (initialJoin) socket.connect({ role: 'student', name: 'Student', joinToken: initialJoin });
     return () => {
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('pageshow', online);
       window.removeEventListener('online', online);
       clearInterval(syncTimer);
-      presentation.closeAll();
+      presentation.dispose();
       socket.close();
     };
   // The socket callback refers only to stable refs and state setters.
@@ -204,6 +228,8 @@ export function App() {
       setMode('host');
       setStudents([]);
       setDocuments([]);
+      setCacheProgress({});
+      presentation.setRoom(newSession.code);
       socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Cannot reach server');
@@ -253,17 +279,29 @@ export function App() {
     setSentFiles(current => current.map(f => f.fileId === fileId ? { ...f, status: 'offline' } : f));
   }
 
-  function endRoom(): void {
-    socket.send({ type: 'room.end' });
-    sessionStorage.removeItem('flashview-host');
-    setHostSession(null);
-    presentation.closeAll();
-    modeRef.current = 'welcome';
-    setMode('welcome');
-    socket.close();
+  async function endRoom(): Promise<void> {
+    if (!hostSession || !endAcknowledged || ending) return;
+    setEnding(true);
+    try {
+      // Do not delete students' original files or browser data belonging to other rooms.
+      // If deletion fails, keep the room open instead of falsely claiming it was erased.
+      await presentation.clearRoom();
+      socket.send({ type: 'room.end' });
+      sessionStorage.removeItem('flashview-host');
+      setHostSession(null);
+      setCacheProgress({});
+      setEndConfirm(false);
+      setEndAcknowledged(false);
+      modeRef.current = 'welcome';
+      setMode('welcome');
+      socket.close();
+    } catch {
+      setError('Could not clear this room’s local PDF cache. Please retry before ending the room.');
+    } finally { setEnding(false); }
   }
 
   function startFresh(): void {
+    if (modeRef.current === 'host') { setEndConfirm(true); return; }
     socket.close();
     sessionStorage.removeItem('flashview-host');
     setHostSession(null);
@@ -331,7 +369,7 @@ export function App() {
         {mode === 'host' && hostSession && (
           <div className="workspace">
             <>
-              <div className="workspace-topline"><div className="eyebrow">LIVE ROOM / {hostSession.code}</div><button className="subtle-link" onClick={endRoom}>End session ↗</button></div>
+              <div className="workspace-topline"><div className="eyebrow">LIVE ROOM / {hostSession.code}</div><button className="subtle-link" onClick={() => setEndConfirm(true)}>End session ↗</button></div>
               <h1 className="section-heading">Your classroom,<br/><em>connected.</em></h1>
               <p className="section-intro">Students join using the QR code and choose a PDF. Present each document in a separate tab while your classroom queue stays here.</p>
               <div className="host-grid">
@@ -361,11 +399,20 @@ export function App() {
                     {documents.filter(f => f.status !== 'rejected').map(file => (
                       <article className="document-row" key={file.fileId}>
                         <div className="file-icon">PDF</div>
-                        <div className="file-meta"><strong title={file.name}>{file.name}</strong><span>{file.ownerName} · {formatBytes(file.size)}</span></div>
+                        <div className="file-meta"><strong title={file.name}>{file.name}</strong>
+                          <span>{file.ownerName} · {formatBytes(file.size)}</span>
+                          <span className="cache-status" data-testid={'cache-' + file.fileId}>
+                            {cacheProgress[file.fileId]?.complete
+                              ? '✓ Fully cached on this computer'
+                              : cacheProgress[file.fileId]
+                                ? '↓ ' + formatBytes(cacheProgress[file.fileId].bytes) + ' / ' + formatBytes(file.size) + ' saved'
+                                : 'Ready for progressive transfer'}
+                          </span>
+                        </div>
                         {file.status === 'pending' ? (
                           <div className="row-actions"><button onClick={() => socket.send({ type: 'file.approve', fileId: file.fileId })}>Allow</button>
                             <button className="plain-action" onClick={() => socket.send({ type: 'file.reject', fileId: file.fileId })}>Decline</button></div>
-                        ) : file.status === 'approved' ? (
+                        ) : file.status === 'approved' || cacheProgress[file.fileId]?.complete ? (
                           <button className="open-button" onClick={() => {
                             try { presentation.open(file); }
                             catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
@@ -431,6 +478,29 @@ export function App() {
                 <small>Keep this tab open. Previously selected PDFs remain available when the connection returns.</small>
               </div>}
             <button className="subtle-link return-home" onClick={startFresh}>← Back to home</button>
+          </div>
+        )}
+        {endConfirm && mode === 'host' && hostSession && (
+          <div className="dialog-backdrop">
+            <section className="end-dialog" role="dialog" aria-modal="true" aria-labelledby="end-title">
+              <div className="eyebrow">END SESSION / {hostSession.code}</div>
+              <h2 id="end-title">End this classroom?</h2>
+              <p>This will close all presentation tabs, disconnect students, and delete the PDFs
+                and previews FlashView has cached on <strong>this computer</strong> for this room.</p>
+              <p>Original PDFs on students' devices won't be touched. This action cannot be undone.</p>
+              <label className="end-check">
+                <input type="checkbox" checked={endAcknowledged}
+                  onChange={event => setEndAcknowledged(event.target.checked)}/>
+                I understand that cached room files will be deleted.
+              </label>
+              <div className="end-dialog-actions">
+                <button className="outline-button" disabled={ending} onClick={() => {
+                  setEndConfirm(false); setEndAcknowledged(false);
+                }}>Keep room open</button>
+                <button className="end-danger" disabled={!endAcknowledged || ending}
+                  onClick={() => void endRoom()}>{ending ? 'Clearing…' : 'End & clear cache'}</button>
+              </div>
+            </section>
           </div>
         )}
         {error && <div className="global-error" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss">×</button></div>}

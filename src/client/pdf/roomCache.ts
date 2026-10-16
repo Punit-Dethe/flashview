@@ -2,6 +2,9 @@ import { MAX_RANGE_BYTES, ROOM_TTL_MS, type PdfManifest } from '../../shared/pro
 import type { RoomSocket } from '../socket';
 
 export const CHUNK_BYTES = 65_536;
+// Keep a bounded background pipeline regardless of whether a viewer is open.
+// Foreground page reads use separate requests and can join in-flight chunks.
+const BACKGROUND_WINDOW = 6;
 const DB_NAME = 'flashview-room-cache';
 const DB_VERSION = 2;
 const MAX_MEMORY_BYTES = 48 * 1024 * 1024;
@@ -172,8 +175,8 @@ export class RoomPdfCache {
   private indices = new Map<string, Promise<Set<number>>>();
   private jobs = new Map<string, PdfManifest>();
   private working = false;
-  private foreground = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private storageFailedFiles = new Set<string>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
   private warned = false;
@@ -252,6 +255,9 @@ export class RoomPdfCache {
     const key = this.key(file.fileId, index);
     const cached = this.memory.get(key);
     if (cached) return cached;
+    // Attach to an already-requested chunk before querying IndexedDB.
+    const running = this.inFlight.get(key);
+    if (running) return running;
     try {
       const stored = await readChunk(key);
       if (stored) {
@@ -260,8 +266,10 @@ export class RoomPdfCache {
         return bytes;
       }
     } catch { this.warning(); }
-    const running = this.inFlight.get(key);
-    if (running) return running;
+    // Another caller may have started fetching the same chunk during the
+    // awaited IndexedDB lookup; do not duplicate a phone round trip.
+    const afterRead = this.inFlight.get(key);
+    if (afterRead) return afterRead;
     const begin = index * CHUNK_BYTES;
     const end = Math.min(file.size, begin + CHUNK_BYTES);
     const promise = new Promise<Uint8Array>((resolve, reject) => {
@@ -287,7 +295,11 @@ export class RoomPdfCache {
         const set = await this.indexSet(file.fileId);
         set.add(index);
         this.onProgress(completion(file, set));
-      } catch { this.warning(); }
+      } catch {
+        this.warning();
+        this.storageFailedFiles.add(file.fileId);
+        this.jobs.delete(file.fileId);
+      }
       finally { this.pendingWrites.delete(saving); }
       return data;
     }).finally(() => this.inFlight.delete(key));
@@ -299,77 +311,90 @@ export class RoomPdfCache {
       begin < 0 || end <= begin || end > file.size || end - begin > MAX_RANGE_BYTES) {
       throw Error('Invalid PDF byte request');
     }
-    this.foreground++;
-    try {
-      const first = Math.floor(begin / CHUNK_BYTES);
-      const last = Math.floor((end - 1) / CHUNK_BYTES);
-      const pieces: Uint8Array[] = [];
-      for (let i = first; i <= last; i++) pieces.push(await this.chunk(file, i));
-      const combined = new Uint8Array(end - begin);
-      let position = begin;
-      for (let i = first; i <= last; i++) {
-        const chunkStart = i * CHUNK_BYTES;
-        const takeStart = Math.max(position, chunkStart);
-        const takeEnd = Math.min(end, chunkStart + pieces[i-first].length);
-        combined.set(pieces[i-first].subarray(takeStart - chunkStart, takeEnd - chunkStart), takeStart - begin);
-        position = takeEnd;
-      }
-      return combined;
-    } finally {
-      this.foreground--;
+    const first = Math.floor(begin / CHUNK_BYTES);
+    const last = Math.floor((end - 1) / CHUNK_BYTES);
+    // An on-demand page may span several chunks. Fetch them concurrently
+    // instead of paying a separate round-trip latency for every 64 KiB.
+    const pieces = await Promise.all(
+      Array.from({ length: last - first + 1 },
+        (_, index) => this.chunk(file, first + index)),
+    );
+    const combined = new Uint8Array(end - begin);
+    for (let i = first; i <= last; i++) {
+      const chunkStart = i * CHUNK_BYTES;
+      const takeStart = Math.max(begin, chunkStart);
+      const takeEnd = Math.min(end, chunkStart + pieces[i - first].length);
+      combined.set(pieces[i - first].subarray(takeStart - chunkStart, takeEnd - chunkStart), takeStart - begin);
     }
+    return combined;
   }
-  /** Queue a PDF immediately when an approved student's file is announced. */
+  /** Queue a PDF on the initial offer, regardless of viewer state. */
   prefetch(file: PdfManifest): void {
-    if (this.stopped || this.jobs.has(file.fileId)) return;
+    if (this.stopped || this.jobs.has(file.fileId) || this.storageFailedFiles.has(file.fileId)) return;
     this.jobs.set(file.fileId, file);
+    this.resume();
+  }
+  /** Restart an interrupted transfer immediately on socket reconnection. */
+  resume(): void {
+    if (this.stopped) return;
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     void this.work();
   }
-  /** Resume pending transfers on socket reconnection. */
-  resume(): void { if (!this.stopped) void this.work(); }
   private async work(): Promise<void> {
     if (this.working || this.stopped || this.jobs.size === 0) return;
     this.working = true;
-    let progressed = false;
+    let retryNeeded = false;
     try {
-      // Fair round-robin: a 50 MB file or an offline student must not block
-      // the next 14 students' PDFs from caching.
-      for (const [fileId, file] of this.jobs) {
-        if (this.stopped) return;
-        if (!this.socket.connected) break;
-        const cached = await this.indexSet(fileId);
-        const total = Math.ceil(file.size / CHUNK_BYTES);
-        const next: number[] = [];
-        for (let i = 0; i < total && next.length < 3; i++) {
-          if (!cached.has(i)) next.push(i);
+      // Keep ONE continuous async transfer pump. Timers in a backgrounded
+      // classroom tab can be throttled to >= 1 second per iteration when a
+      // teacher focuses the separate presentation tab. Never use a 75-ms
+      // setTimeout between successful download batches.
+      while (!this.stopped && this.jobs.size > 0) {
+        if (!this.socket.connected) { retryNeeded = true; break; }
+        let progressed = false;
+        // A small, fair round-robin window per student avoids monopolizing
+        // a room with 15 PDFs. The bounded background window leaves room for
+        // foreground page reads without ever PAUSING background downloading.
+        for (const [fileId, file] of this.jobs) {
+          if (this.stopped) return;
+          if (!this.socket.connected) { retryNeeded = true; break; }
+          const cached = await this.indexSet(fileId);
+          const total = Math.ceil(file.size / CHUNK_BYTES);
+          const missing: number[] = [];
+          for (let index = 0; index < total && missing.length < BACKGROUND_WINDOW; index++) {
+            if (!cached.has(index)) missing.push(index);
+          }
+          if (missing.length === 0) {
+            this.jobs.delete(fileId);
+            this.onProgress(completion(file, cached));
+            continue;
+          }
+          try {
+            // Foreground requests can run concurrently and reuse these same
+            // in-flight chunk promises. A slow PDF page never freezes the pump.
+            await Promise.all(missing.map(index => this.chunk(file, index)));
+            progressed = true;
+            if (cached.size >= total) this.jobs.delete(fileId);
+          } catch {
+            // Other students' PDFs can still make progress on this pass.
+          }
+          if (this.storageFailedFiles.has(fileId)) this.jobs.delete(fileId);
         }
-        if (next.length === 0) {
-          this.jobs.delete(fileId);
-          this.onProgress(completion(file, cached));
-          continue;
-        }
-        // Interactive PDF.js pages outrank background copies.
-        while (this.foreground > 0 && !this.stopped) {
-          await new Promise(resolve => setTimeout(resolve, 60));
-        }
-        if (this.stopped) return;
-        try {
-          await Promise.all(next.map(index => this.chunk(file, index)));
-          progressed = true;
-          if (cached.size >= total) this.jobs.delete(fileId);
-        } catch {
-          // Sender may be temporarily offline. Keep this file queued, but
-          // continue to other students rather than blocking the classroom.
-        }
+        // No progress means the phone is absent, storage failed, or requests
+        // were rejected. Back off rather than spinning on already-cached RAM.
+        if (!progressed) { retryNeeded = this.jobs.size > 0; break; }
+        // Successful network/IndexedDB awaits above already yield the JS event
+        // loop. Loop immediately, without background-tab timer throttling.
       }
     } finally {
       this.working = false;
-      if (!this.stopped && this.jobs.size) {
+      if (!this.stopped && retryNeeded && this.jobs.size) {
         if (this.retryTimer !== null) clearTimeout(this.retryTimer);
         this.retryTimer = setTimeout(() => {
           this.retryTimer = null;
           void this.work();
-        }, progressed ? 75 : 4500);
+        }, 4500);
       }
     }
   }
@@ -380,6 +405,7 @@ export class RoomPdfCache {
     this.memory.clear();
     this.memoryBytes = 0;
     this.indices.clear();
+    this.storageFailedFiles.clear();
   }
   async clear(): Promise<void> {
     this.dispose();

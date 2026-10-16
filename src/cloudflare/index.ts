@@ -232,6 +232,20 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
     if (!peer.role) return void send(ws, { type: 'error', message: 'Authentication required' });
     if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
+    // The database-backed manifest is authoritative, not best-effort live notifications.
+    if (msg.type === 'room.sync' && peer.role === 'host') {
+      return void send(ws, {
+        type: 'room.state', id: this.config?.code, code: this.config?.code,
+        joinToken: this.config?.joinToken, students: this.students(),
+        files: [...this.files.values()],
+      });
+    }
+    if (msg.type === 'file.sync' && peer.role === 'student' && peer.approved) {
+      return void send(ws, {
+        type: 'file.manifest',
+        files: [...this.files.values()].filter(file => file.ownerId === peer.id),
+      });
+    }
 
     if (peer.role === 'host') {
       if ((msg.type === 'student.accept' || msg.type === 'student.reject') && typeof msg.studentId === 'string') {
@@ -302,12 +316,20 @@ export class ClassroomRoom extends DurableObject<Env> {
     if (msg.type === 'file.offer') {
       if (!validId(msg.fileId) || !Number.isSafeInteger(msg.size) ||
           Number(msg.size) < 1 || Number(msg.size) > MAX_PDF_BYTES ||
-          this.files.has(msg.fileId) ||
-          [...this.files.values()].filter(f => f.ownerId === peer.id).length >= 10) {
+          [...this.files.values()].filter(f => f.ownerId === peer.id).length >= 10 &&
+            !this.files.has(msg.fileId)) {
         return void send(ws, { type: 'error', message: 'Invalid PDF or file limit reached' });
       }
       const name = cleanText(msg.name, 130);
       if (!name.toLowerCase().endsWith('.pdf')) return void send(ws, { type: 'error', message: 'PDF files only' });
+      const existing = this.files.get(msg.fileId);
+      if (existing) {
+        // Replaying an offer is safe: never downgrade teacher approval.
+        if (existing.ownerId !== peer.id || existing.size !== Number(msg.size) || existing.name !== name) {
+          return void send(ws, { type: 'error', message: 'Conflicting document ID' });
+        }
+        return void send(ws, { type: 'file.state', file: existing });
+      }
       const file: PdfManifest = {
         fileId: msg.fileId, name, size: Number(msg.size), status: 'pending',
         ownerId: peer.id, ownerName: peer.name,
@@ -316,6 +338,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       await this.persist();
       this.sendHost({ type: 'file.announced', file });
       send(ws, { type: 'file.pending', fileId: file.fileId });
+      send(ws, { type: 'file.state', file });
     } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
       const file = this.files.get(msg.fileId);
       if (file?.ownerId === peer.id) {

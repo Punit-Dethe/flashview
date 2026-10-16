@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { MAX_PDF_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
 import { formatBytes } from './pdf/Viewer';
+import { makeFirstPagePreview } from './pdf/firstPagePreview';
 import { PresentationHost } from './presentation';
 import { cleanExpiredRoomCaches, type CacheProgress } from './pdf/roomCache';
 
@@ -36,6 +37,9 @@ export function App() {
   const socket = useRef(new RoomSocket()).current;
   const presentation = useRef(new PresentationHost(socket)).current;
   const filesOnPhone = useRef(new Map<string, SharedFile>());
+  const firstPageImages = useRef(new Map<string, string>());
+  const previewRendering = useRef(new Set<string>());
+  const incomingPreviews = useRef(new Map<string, { parts: string[]; received: number; created: number }>());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modeRef = useRef<Mode>(initialSession ? 'host' : initialJoin ? 'student' : 'welcome');
   const [mode, setMode] = useState<Mode>(initialSession ? 'host' : initialJoin ? 'student' : 'welcome');
@@ -90,6 +94,36 @@ export function App() {
       const local = filesOnPhone.current.get(item.fileId);
       return local ? { ...item, status: local.status } : item;
     }));
+  }
+
+  function sendPreview(fileId: string, dataUrl: string): void {
+    const base64 = dataUrl.split(',')[1];
+    if (!base64 || base64.length > 380000 || !socket.connected) return;
+    const size = 4900;
+    const total = Math.ceil(base64.length / size);
+    if (total > 80) return;
+    for (let part = 0; part < total; part++) {
+      if (!socket.send({
+        type: 'preview.chunk', fileId, part, total,
+        data: base64.slice(part * size, (part + 1) * size),
+      })) break;
+    }
+  }
+
+  function preparePreview(fileId: string): void {
+    const shared = filesOnPhone.current.get(fileId);
+    if (!shared || shared.status !== 'approved') return;
+    const saved = firstPageImages.current.get(fileId);
+    if (saved) { sendPreview(fileId, saved); return; }
+    if (previewRendering.current.has(fileId)) return;
+    previewRendering.current.add(fileId);
+    void makeFirstPagePreview(shared.file).then(url => {
+      if (!filesOnPhone.current.has(fileId)) return;
+      firstPageImages.current.set(fileId, url);
+      sendPreview(fileId, url);
+    }).catch(() => {
+      // A failed local preview should never prevent the original PDF transfer.
+    }).finally(() => previewRendering.current.delete(fileId));
   }
 
   useEffect(() => {
@@ -155,12 +189,42 @@ export function App() {
       }
       if (type === 'file.manifest' && Array.isArray(message.files)) {
         reconcileFiles(message.files as PdfManifest[]);
+        for (const file of message.files as PdfManifest[]) {
+          if (file.status === 'approved') preparePreview(file.fileId);
+        }
+      }
+      if (type === 'preview.chunk') {
+        const id = message.fileId;
+        const part = message.part;
+        const total = message.total;
+        const data = message.data;
+        if (typeof id !== 'string' || !Number.isSafeInteger(part) ||
+            !Number.isSafeInteger(total) || typeof data !== 'string' ||
+            Number(part) < 0 || Number(total) < 1 || Number(total) > 80 ||
+            Number(part) >= Number(total) || data.length > 5000) return;
+        let current = incomingPreviews.current.get(id);
+        if (!current || current.parts.length !== total || Date.now() - current.created > 90_000) {
+          current = { parts: new Array<string>(Number(total)), received: 0, created: Date.now() };
+          incomingPreviews.current.set(id, current);
+        }
+        if (current.parts[Number(part)] === undefined) {
+          current.parts[Number(part)] = data;
+          current.received++;
+        }
+        if (current.received === total) {
+          incomingPreviews.current.delete(id);
+          const url = 'data:image/jpeg;base64,' + current.parts.join('');
+          if (url.length <= 390000) void presentation.savePreview(id, url);
+        }
       }
       if (type === 'file.state') {
         const file = message.file as PdfManifest | undefined;
         if (file && typeof file.fileId === 'string') {
           const local = filesOnPhone.current.get(file.fileId);
-          if (local) local.status = file.status;
+          if (local) {
+            local.status = file.status;
+            if (file.status === 'approved') preparePreview(file.fileId);
+          }
           setSentFiles(existing => existing.map(item =>
             item.fileId === file.fileId ? { ...item, status: file.status } : item));
         }
@@ -171,7 +235,10 @@ export function App() {
         const status = type === 'file.pending' ? 'pending' : type === 'file.approved' ? 'approved' : 'rejected';
         const id = String(message.fileId);
         const current = filesOnPhone.current.get(id);
-        if (current) current.status = status;
+        if (current) {
+          current.status = status;
+          if (status === 'approved') preparePreview(id);
+        }
         setSentFiles(existing => existing.map(f => f.fileId === id ? { ...f, status } : f));
       }
       if (type === 'range.request') {
@@ -250,6 +317,8 @@ export function App() {
     setError('');
     setJoinState('idle');
     filesOnPhone.current.clear();
+    firstPageImages.current.clear();
+    previewRendering.current.clear();
     setSentFiles([]);
     modeRef.current = 'student';
     setMode('student');
@@ -284,6 +353,7 @@ export function App() {
 
   function revoke(fileId: string): void {
     filesOnPhone.current.delete(fileId);
+    firstPageImages.current.delete(fileId);
     socket.send({ type: 'file.revoke', fileId });
     setSentFiles(current => current.map(f => f.fileId === fileId ? { ...f, status: 'offline' } : f));
   }

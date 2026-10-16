@@ -9,7 +9,8 @@ export type PerfName =
   | 'socket_connect_ms' | 'heartbeat_rtt_ms' | 'file_receipt_ms'
   | 'preview_generate_ms' | 'preview_receive_ms' | 'sender_read_ms'
   | 'range_roundtrip_ms' | 'cache_write_ms' | 'cache_complete_ms'
-  | 'pdf_open_ms' | 'page_render_ms' | 'first_slide_after_present_ms';
+  | 'pdf_open_ms' | 'page_render_ms' | 'first_slide_after_present_ms'
+  | 'sender_backpressure_ms';
 
 export type PerfRecord = {
   metric: PerfName;

@@ -115,6 +115,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   const [renderedPage, setRenderedPage] = useState<number | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [pageAttempt, setPageAttempt] = useState(0);
+  const consecutiveRecoveries = useRef(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [immersiveFallback, setImmersiveFallback] = useState(false);
   const [fullscreenNotice, setFullscreenNotice] = useState('');
@@ -224,8 +225,13 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
         }
         task = loadingTask;
         watchdog = setTimeout(() => {
-          fail('The document is taking too long to open. Try again after it is fully cached.');
-        }, 30_000);
+          if (disposed) return;
+          // A suspended phone or lost BroadcastChannel request can leave PDF.js
+          // waiting indefinitely. Re-create the range reader automatically,
+          // reusing all saved chunks rather than requiring a manual Retry.
+          setError('Reconnecting to the PDF source…');
+          setAttempt(value => value + 1);
+        }, 40_000);
         loadingTask.onPassword = () => {
           fail('This PDF is password protected; password entry is not supported yet.');
         };
@@ -265,10 +271,12 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     setError('');
     const timer = setTimeout(() => {
       if (!cancelled && renderSequence.current === generation) {
-        setRendering(false);
-        setError('This page is taking too long to render. Try Retry page, or wait for caching to finish.');
+        // On a new uncached page, restart the page operation automatically.
+        // The viewer keeps the previously painted slide on screen.
+        setError('Waiting for missing page data; retrying automatically…');
+        setPageAttempt(value => value + 1);
       }
-    }, 25_000);
+    }, 30_000);
 
     const run = async () => {
       try {
@@ -386,6 +394,23 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       setFullscreenNotice('The browser blocked native fullscreen. Using the full-window view; try F11 on desktop.');
     }
   };
+
+  // Recover transient PDF.js errors too (not only predictable timeouts).
+  // Corrupt/password-protected PDFs are not recoverable by retrying.
+  useEffect(() => {
+    if (!error) {
+      consecutiveRecoveries.current = 0;
+      return;
+    }
+    if (/password|invalid pdf structure|invalid pdf byte|unsupported|corrupt/i.test(error)) return;
+    const delay = Math.min(2_000 * 2 ** Math.min(consecutiveRecoveries.current++, 3), 12_000);
+    const timer = setTimeout(() => {
+      if (completeAvailable && sourceMode === 'partial') setSourceMode('full');
+      else if (pdfDocument) setPageAttempt(value => value + 1);
+      else setAttempt(value => value + 1);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [error, completeAvailable, sourceMode, pdfDocument]);
 
   const retry = () => {
     if (completeAvailable && sourceMode === 'partial') {

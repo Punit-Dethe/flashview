@@ -138,6 +138,16 @@ test('different devices exchange metadata, approvals and byte-range PDF data via
     assert.equal(data.header.requestId, requestId);
     assert.deepEqual(Buffer.from(data.bytes), pdf);
 
+    // Only teacher-reported cached bytes are forwarded to this file's student.
+    host.send({ type: 'cache.progress', fileId, bytes: pdf.length });
+    const ack = await student.wait('cache.progress');
+    assert.equal(ack.fileId, fileId);
+    assert.equal(ack.bytes, pdf.length);
+    assert.equal(ack.complete, true);
+    student.send({ type: 'file.sync' });
+    await student.wait('file.manifest');
+    await host.wait('cache.progress.request');
+
     // Students cannot request ranges: this belongs exclusively to the teacher.
     student.send({ type: 'range.request', requestId: 'badstudent123', fileId, begin: 0, end: 4 });
     await assert.rejects(student.wait('range.request'));

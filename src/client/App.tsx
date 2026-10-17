@@ -579,6 +579,9 @@ export function App() {
           <div className="workspace premium-workspace">
             <div className="workspace-split">
               <aside className="workspace-left" aria-label="Room invitation and participants">
+                <div className="sidebar-brand" aria-label="FlashView">
+                  flashview<span className="sidebar-brand-dot" aria-hidden="true">.</span>
+                </div>
                 <section className="room-card premium-invite" aria-label="Live room QR code">
                   <div className="qr-side">
                     <div className="qr-plate">

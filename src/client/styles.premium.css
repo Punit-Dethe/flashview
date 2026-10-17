@@ -603,3 +603,10 @@ html, body { background: var(--canvas); }
   box-shadow: none;
 }
 .premium-app .sidebar-participants-heading .sidebar-connection .status-dot { width: 7px; height: 7px; }
+
+.premium-app .sidebar-approval .participant-avatar {
+  display: grid;
+  place-items: center;
+  color: #dadcec;
+  font-size: 12px;
+}

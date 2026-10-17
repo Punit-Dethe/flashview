@@ -7,6 +7,7 @@ import { PixelIcon, pixelKindForName } from './PixelIcon';
 
 type Props = {
   file: PdfManifest;
+  participantColor?: string;
   previewUrl?: string;
   progress?: CacheProgress;
   bytesPerSecond?: number;
@@ -19,7 +20,7 @@ const CIRCUMFERENCE = 2 * Math.PI * 16;
 
 /** Layout mirrors the reference HTML: square white card, shallow tile,
  * filename row and a full-width round action underneath. */
-export function DocumentCard({file,previewUrl,progress,bytesPerSecond=0,onPresent,onDownload,saving=false}:Props) {
+export function DocumentCard({file,participantColor,previewUrl,progress,bytesPerSecond=0,onPresent,onDownload,saving=false}:Props) {
   const [imageState,setImageState]=useState({url:'',ready:false,failed:false});
   const [fallbackTimeout,setFallbackTimeout]=useState(false);
   const pdf=isPdfName(file.name);
@@ -37,7 +38,7 @@ export function DocumentCard({file,previewUrl,progress,bytesPerSecond=0,onPresen
   const showIcon=!pdf||imageFailed||(!previewUrl&&(fallbackTimeout||file.status==='offline'));
   const progressLabel=cached?'Fully cached':Math.round(percent)+'% cached'+
     (bytesPerSecond>0?' · '+formatBytes(bytesPerSecond)+'/s':'');
-  return <article className="document-row document-card">
+  return <article className="document-row document-card" data-owner-id={file.ownerId}>
     <div className="document-card-visual">
       <div className="document-thumb" aria-hidden="true">
         {pdf&&previewUrl&&!imageFailed&&
@@ -46,14 +47,18 @@ export function DocumentCard({file,previewUrl,progress,bytesPerSecond=0,onPresen
             onLoad={()=>setImageState({url:previewUrl,ready:true,failed:false})}
             onError={()=>setImageState({url:previewUrl,ready:false,failed:true})}/>}
         {!showingImage&&<div className="document-thumb-placeholder">
-          {showIcon?<span className="document-pdf-symbol"><PixelIcon kind={pixelKindForName(file.name)}/></span>
+          {showIcon?<span className="document-pdf-symbol"><PixelIcon kind={pixelKindForName(file.name)} color={participantColor}/></span>
             :<span className="document-thumb-spinner"/>}
         </div>}
       </div>
     </div>
     <div className="document-card-info">
       <h3 title={file.name}>{file.name}</h3>
-      <p><span title={file.ownerName}>{file.ownerName}</span><span aria-hidden="true">·</span>{formatBytes(file.size)}</p>
+      <p><span className="document-file-owner" title={file.ownerName}>
+        <span className="document-owner-dot" aria-hidden="true"
+          style={participantColor?{backgroundColor:participantColor}:undefined}/>
+        {file.ownerName}
+      </span><span aria-hidden="true">·</span>{formatBytes(file.size)}</p>
     </div>
     <div className={'cache-ring'+(cached?' is-complete':'')} role="progressbar"
       aria-label={'Cached progress for '+file.name}

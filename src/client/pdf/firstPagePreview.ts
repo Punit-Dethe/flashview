@@ -116,7 +116,10 @@ export async function makeFirstPagePreview(file: File): Promise<string> {
       // without copying the whole file into memory just to paint a thumbnail.
       return await renderFirstPage(file, true);
     } catch {
-      // Keep the known-compatible path for difficult PDFs and browsers.
+      // A corrupt/non-linearized huge PDF can otherwise trigger a second,
+      // synchronous 12-50 MB full-file copy just for an optional thumbnail.
+      // Protect the main file-transfer lane: show the PDF icon instead.
+      if (file.size >= 12 * 1024 * 1024) throw Error('Thumbnail unavailable');
     }
   }
   return renderFirstPage(file, false);

@@ -420,7 +420,14 @@ export function App() {
         setJoinState('idle');
         presentation.closeAll();
       }
-      if (type === 'error') setError(normalizedMessage(message));
+      if (type === 'error') {
+        const text = normalizedMessage(message);
+        if (modeRef.current === 'student' && /host is offline|classroom connection interrupted|temporarily unavailable/i.test(text)) {
+          // The teacher can briefly leave or reconnect; this is an expected
+          // recoverable state and belongs in the bottom status pill.
+          setHostAvailable(false);
+        } else setError(text);
+      }
     };
 
     if (initialSession) {

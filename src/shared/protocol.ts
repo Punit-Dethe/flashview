@@ -2,7 +2,7 @@ export const MAX_PDF_BYTES = 50 * 1024 * 1024;
 export const MAX_RANGE_BYTES = 256 * 1024;
 export const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
 export const RANGE_TIMEOUT_MS = 20_000;
-export const STREAM_CREDITS = 4;
+export const STREAM_CREDITS = 8;
 export const STREAM_IDLE_MS = 30_000;
 
 export interface PdfManifest {

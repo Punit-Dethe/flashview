@@ -65,6 +65,14 @@ A pending PDF page range now retries transient sender-disconnect, relay-error an
 
 **Browser limitation:** A mobile OS can still freeze, kill or unload a background browser page. Its previously selected `File` objects are then no longer available, and client-side heartbeats cannot override that restriction. A complete 50 MB PDF already cached at the teacher is independent of the phone. For guaranteed delivery after the phone is fully closed, FlashView would need an optional resumable cloud-upload mode with server-side storage, quota controls and clear privacy tradeoffs; that is intentionally not part of this peer-sourced reliability pass.
 
+## Student progress and connection dock
+
+The phone shows individual square document tiles with circular cache progress based on **bytes already saved to the classroom computer**, not bytes queued on the phone. The teacher sends small, authenticated progress acknowledgements through the existing relay to the correct student; they are validated against the file's owner and size. On reconnect, the student requests a fresh progress snapshot so that the UI doesn't regress to zero. A green tick means the classroom IndexedDB has saved all chunks of that particular PDF.
+
+The student's floating bottom pill communicates **Connecting**, **Uploading**, and **Done**. For multiple simultaneous or successive PDFs, the ring is byte-weighted across **all active shares** and displays a separate *X of N ready* count; a completed small file never makes an unfinished large file seem done. New files reopen the dock, stopped shares are excluded from the active batch, and Done appears only after every remaining file has been verified fully cached. The pill then gently disappears. Routine disconnections and recoveries are shown as Connecting with a reconnect action, not as a red error alert.
+
+The fullscreen PDF view also disables an inherited backdrop-filter on its invisible full-viewport toolbar. It previously blurred the presentation pixels underneath the overlay, most conspicuously on the left side.
+
 ## Room cache and cleanup
 
 - The teacher can open/close individual presentation tabs without losing the classroom queue.

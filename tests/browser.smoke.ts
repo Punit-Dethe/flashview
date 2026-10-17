@@ -253,8 +253,8 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       await student.screenshot({ path: 'test-artifacts/ui/student.png', fullPage: true });
     }
     // Student approval also approves each new PDF automatically.
-    await student.locator('.sent-row').filter({ hasText: 'smoke.pdf' })
-      .getByText('Shared — caching on classroom computer').waitFor();
+    await student.locator('.student-file-card').filter({ hasText: 'smoke.pdf' })
+      .locator('.transfer-ring').waitFor();
     // Cache starts before presenting and its ring is readable to assistive technology.
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
       .locator('.cache-ring[role="progressbar"]').waitFor({ timeout: 15000 });
@@ -265,6 +265,10 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     // Teacher's queue remains available while the PDF is projected.
     assert.equal(await host.locator('.document-row').count(), 1);
     // Projector view must be truly black around the actual PDF.
+    const toolbarBlur = await presentation.locator('.viewer-toolbar')
+      .evaluate(element => getComputedStyle(element).backdropFilter);
+    assert.equal(toolbarBlur, 'none',
+      'Full-screen overlay header must not blur PDF pixels on the left side');
     const stageColor = await presentation.locator('.page-stage')
       .evaluate(element => getComputedStyle(element).backgroundColor);
     assert.equal(stageColor, 'rgb(0, 0, 0)');
@@ -426,9 +430,9 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       const sockets = record.__flashviewSockets ?? [];
       return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN &&
         document.querySelector('.connection.connected') !== null &&
-        (document.querySelector('.sent-row')?.textContent ?? '').includes('Shared — caching on classroom computer');
+        (document.querySelector('.student-file-card')?.textContent ?? '').includes('smoke.pdf');
     }, null, { timeout: 20000 });
-    assert.match(await student.locator('.sent-row').innerText(), /smoke\.pdf/);
+    assert.match(await student.locator('.student-file-card').first().innerText(), /smoke\.pdf/);
 
     // Drop exactly ONE student announcement while the WebSocket still reports OPEN.
     // The sender must not claim server acceptance; sync repairs the lost offer.
@@ -452,14 +456,14 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await student.locator('input[type=file]').setInputFiles({
       name: 'lost-announcement.pdf', mimeType: 'application/pdf', buffer: makePdf(),
     });
-    await student.locator('.sent-row').filter({ hasText: 'lost-announcement.pdf' })
-      .getByText('Sending announcement…').waitFor();
+    await student.locator('.student-file-card').filter({ hasText: 'lost-announcement.pdf' })
+      .getByText('Preparing to share…').waitFor();
     assert.equal(await host.locator('.document-row').count(), 1);
     // A tab returning online asks the server for its authoritative manifest.
     await student.evaluate(() => window.dispatchEvent(new Event('online')));
     await host.locator('.document-row').filter({ hasText: 'lost-announcement.pdf' }).waitFor({ timeout: 15000 });
-    await student.locator('.sent-row').filter({ hasText: 'lost-announcement.pdf' })
-      .getByText('Shared — caching on classroom computer').waitFor();
+    await student.locator('.student-file-card').filter({ hasText: 'lost-announcement.pdf' })
+      .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
     // The host refreshes all server-persisted submissions after missed broadcasts.
     await host.getByRole('button', { name: /Refresh submissions/ }).click();
     assert.equal(await host.locator('.document-row').count(), 2);
@@ -836,6 +840,62 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
     assert.ok(samples.some(s => s.metric === 'sender_backpressure_ms' && s.count > 0),
       'The sender should record that it waited for the simulated busy socket');
     assert.equal(await student.getByText(/Network sender is busy/).count(), 0);
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});
+
+
+test('student receives real classroom cache completion for multiple PDFs and sees a single aggregate pill', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const origin = 'http://127.0.0.1:' + port;
+  try {
+    await host.goto(origin);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const code = await host.locator('.room-code').textContent();
+
+    await student.goto(origin);
+    await student.locator('#code').fill(code!);
+    await student.locator('#student-name').fill('Multiple Files');
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await host.locator('.approval').filter({ hasText: 'Multiple Files' }).getByRole('button', { name: 'Allow' }).click();
+    await student.getByText('Choose a PDF to share.').waitFor();
+
+    // Both files are offered together; one completion cannot hide the other.
+    await student.locator('input[type=file]').setInputFiles([
+      { name: 'small.pdf', mimeType: 'application/pdf', buffer: makePdf(120) },
+      { name: 'larger.pdf', mimeType: 'application/pdf', buffer: makePdf(1400) },
+    ]);
+    await student.locator('.student-file-card').first().waitFor();
+    assert.equal(await student.locator('.student-file-card').count(), 2);
+    await student.locator('.transfer-pill').waitFor();
+    await host.locator('.document-row').filter({ hasText: 'small.pdf' }).waitFor();
+    await host.locator('.document-row').filter({ hasText: 'larger.pdf' }).waitFor();
+    await student.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').first()
+      .waitFor({ timeout: 25000 });
+    await student.waitForFunction(() =>
+      Array.from(document.querySelectorAll('.student-file-card .transfer-ring'))
+        .filter(el => el.getAttribute('aria-valuenow') === '100').length === 2,
+      null, { timeout: 25000 });
+    await student.getByText('All files are saved on the classroom computer. You can leave this page.').waitFor();
+    await student.locator('.student-transfer-heading').getByText('2 of 2 ready').waitFor();
+    await student.locator('.transfer-pill.is-done').waitFor({ timeout: 5000 });
+    await student.locator('.transfer-pill').waitFor({ state: 'detached', timeout: 7500 });
+
+    // A late third file must reopen the dock; previous completion alone is not
+    // a reason to tell the student that the new file was transferred.
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'late.pdf', mimeType: 'application/pdf', buffer: makePdf(400),
+    });
+    await student.locator('.student-file-card').filter({ hasText: 'late.pdf' }).waitFor();
+    await student.locator('.transfer-pill').waitFor();
+    await student.locator('.student-transfer-heading').getByText('3 of 3 ready').waitFor({ timeout: 25000 });
+    await student.locator('.transfer-pill.is-done').waitFor({ timeout: 5000 });
   } finally {
     await browser.close();
     child.kill('SIGTERM');

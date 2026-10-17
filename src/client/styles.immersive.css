@@ -36,6 +36,10 @@
   background: transparent;
   border: 0;
   box-shadow: none;
+  /* The older toolbar style applied blur(20px). This header spans the
+     ENTIRE projector, so the inherited filter blurred the PDF beneath it. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   pointer-events: none;
 }
 .presentation-layout .page-stage {

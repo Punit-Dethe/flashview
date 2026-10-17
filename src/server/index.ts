@@ -4,7 +4,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
-  decodeRangePacket, MAX_PDF_BYTES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
+  decodeRangePacket, MAX_PDF_BYTES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS, STREAM_CREDITS, STREAM_IDLE_MS,
   type PdfManifest, type StudentInfo,
 } from '../shared/protocol.js';
 
@@ -12,12 +12,13 @@ type Role = 'host' | 'student';
 type Peer = { ws: WebSocket; id: string; role: Role; room: Room; approved: boolean; name: string };
 type ResumeSession = { id: string; name: string; approved: boolean; token: string };
 type Outstanding = { fileId: string; senderId: string; begin: number; end: number; created: number };
+type StreamSession = { fileId: string; senderId: string; next: number; end: number; credits: number; updated: number };
 type Room = {
   id: string; code: string; joinToken: string; hostToken: string;
   autoApprove: boolean;
   created: number; host: Peer | null; students: Map<string, Peer>;
   sessions: Map<string, ResumeSession>;
-  files: Map<string, PdfManifest>; outstanding: Map<string, Outstanding>;
+  files: Map<string, PdfManifest>; outstanding: Map<string, Outstanding>; streams: Map<string, StreamSession>;
 };
 const rooms = new Map<string, Room>();
 const connections = new WeakMap<WebSocket, Peer>();
@@ -66,6 +67,12 @@ function removeStudent(peer: Peer): void {
       notifyHost(room, { type: 'file.updated', file });
     }
   }
+  for (const [id, stream] of room.streams) {
+    if (stream.senderId === peer.id) {
+      room.streams.delete(id);
+      notifyHost(room, { type: 'stream.error', streamId: id, message: 'Sender disconnected' });
+    }
+  }
   for (const [id, pending] of room.outstanding) {
     if (pending.senderId === peer.id) {
       room.outstanding.delete(id);
@@ -84,6 +91,7 @@ function closeRoom(room: Room): void {
   room.sessions.clear();
   room.files.clear();
   room.outstanding.clear();
+  room.streams.clear();
   rooms.delete(room.id);
 }
 
@@ -226,6 +234,41 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
         send(student.ws, { type: 'join.rejected' });
         student.ws.close(1008, 'Rejected');
       }
+    } else if (msg.type === 'stream.open') {
+      const file = typeof msg.fileId === 'string' ? room.files.get(msg.fileId) : undefined;
+      const {streamId,begin,end} = msg;
+      if (!validId(streamId) || !file || file.status !== 'approved' ||
+          !Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
+          Number(begin) < 0 || Number(end) <= Number(begin) || Number(end) > file.size ||
+          Number(begin) % 65536 !== 0 ||
+          (Number(end) !== file.size && Number(end) % 65536 !== 0) ||
+          room.streams.size >= 16 || room.streams.has(streamId)) {
+        return void send(ws, { type: 'stream.error', streamId, message: 'Invalid PDF stream' });
+      }
+      const sender = room.students.get(file.ownerId);
+      if (!sender || !sender.approved ||
+          [...room.streams.values()].filter(x => x.senderId === sender.id).length >= 4) {
+        return void send(ws, { type: 'stream.error', streamId, message: 'Sender unavailable or busy' });
+      }
+      room.streams.set(streamId, {
+        fileId: file.fileId, senderId: sender.id,
+        next: Number(begin), end: Number(end), credits: STREAM_CREDITS, updated: Date.now(),
+      });
+      send(sender.ws, {type:'stream.open', streamId, fileId: file.fileId, begin, end, credits: STREAM_CREDITS});
+    } else if (msg.type === 'stream.credit') {
+      const stream = typeof msg.streamId === 'string' ? room.streams.get(msg.streamId) : undefined;
+      if (!stream || stream.credits + 4 > STREAM_CREDITS || stream.next >= stream.end || msg.credits !== 4) return;
+      stream.credits += 4;
+      stream.updated = Date.now();
+      const sender = room.students.get(stream.senderId);
+      if (sender?.approved)
+        send(sender.ws, { type: 'stream.credit', streamId: msg.streamId, credits: 4 });
+    } else if (msg.type === 'stream.stop') {
+      const stream = typeof msg.streamId === 'string' ? room.streams.get(msg.streamId) : undefined;
+      if (!stream) return;
+      room.streams.delete(msg.streamId as string);
+      const sender = room.students.get(stream.senderId);
+      if (sender) send(sender.ws, { type: 'stream.stop', streamId: msg.streamId });
     } else if (msg.type === 'range.request') {
       const { requestId, fileId, begin, end } = msg;
       const file = typeof fileId === 'string' ? room.files.get(fileId) : undefined;
@@ -294,6 +337,13 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     notifyHost(room, { type: 'file.announced', file });
     send(ws, { type: 'file.approved', fileId });
     send(ws, { type: 'file.state', file });
+  } else if (msg.type === 'stream.error' && typeof msg.streamId === 'string') {
+    const stream = room.streams.get(msg.streamId);
+    if (stream?.senderId === peer.id) {
+      room.streams.delete(msg.streamId);
+      notifyHost(room, { type: 'stream.error', streamId: msg.streamId,
+        message: acceptableText(msg.message, 120) || 'Sender stream failed' });
+    }
   } else if (msg.type === 'range.error' && typeof msg.requestId === 'string') {
     const pending = room.outstanding.get(msg.requestId);
     if (pending?.senderId === peer.id) {
@@ -307,6 +357,13 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     const file = room.files.get(msg.fileId);
     if (file?.ownerId === peer.id) {
       file.status = 'offline';
+      for (const [id, stream] of room.streams) {
+        if (stream.fileId === file.fileId) {
+          room.streams.delete(id);
+          send(ws, { type: 'stream.stop', streamId: id });
+          notifyHost(room, { type: 'stream.error', streamId: id, message: 'File sharing stopped' });
+        }
+      }
       for (const [id, pending] of room.outstanding) {
         if (pending.fileId === msg.fileId) {
           room.outstanding.delete(id);
@@ -326,6 +383,25 @@ function handleBinary(ws: WebSocket, raw: RawData): void {
     const { header, bytes } = decodeRangePacket(buffer.buffer.slice(
       buffer.byteOffset, buffer.byteOffset + buffer.byteLength,
     ) as ArrayBuffer);
+    if (header.type === 'stream.data') {
+      const stream = room.streams.get(header.requestId);
+      if (!stream || stream.senderId !== sender.id || stream.fileId !== header.fileId ||
+          stream.next !== header.begin || stream.credits < 1 ||
+          bytes.byteLength !== Math.min(MAX_RANGE_BYTES, stream.end - stream.next)) return;
+      const host = room.host?.ws;
+      if (!host || host.readyState !== WebSocket.OPEN || host.bufferedAmount >= 4 * 1024 * 1024) {
+        room.streams.delete(header.requestId);
+        send(sender.ws, { type: 'stream.stop', streamId: header.requestId });
+        notifyHost(room, { type: 'stream.error', streamId: header.requestId, message: 'Receiver overloaded' });
+        return;
+      }
+      stream.next += bytes.byteLength;
+      stream.credits--;
+      stream.updated = Date.now();
+      host.send(buffer, { binary: true });
+      if (stream.next === stream.end) room.streams.delete(header.requestId);
+      return;
+    }
     const pending = room.outstanding.get(header.requestId);
     if (!pending || pending.senderId !== sender.id || pending.fileId !== header.fileId ||
         pending.begin !== header.begin || bytes.byteLength !== pending.end - pending.begin ||
@@ -383,7 +459,7 @@ const http = createServer((req, res) => {
     const room: Room = {
       id: randomUUID(), code, joinToken: randomToken(20),
       hostToken: randomToken(32), created: now, autoApprove,
-      host: null, students: new Map(), sessions: new Map(), files: new Map(), outstanding: new Map(),
+      host: null, students: new Map(), sessions: new Map(), files: new Map(), outstanding: new Map(), streams: new Map(),
     };
     rooms.set(room.id, room);
     res.writeHead(201, {
@@ -427,6 +503,11 @@ wss.on('connection', ws => {
     if (peer.role === 'host') {
       if (peer.room.host === peer) {
         peer.room.host = null;
+        for (const [id, stream] of peer.room.streams) {
+          const sender = peer.room.students.get(stream.senderId);
+          if (sender) send(sender.ws, { type: 'stream.stop', streamId: id });
+        }
+        peer.room.streams.clear();
         for (const student of peer.room.students.values()) send(student.ws, { type: 'host.offline' });
       }
     } else removeStudent(peer);
@@ -437,6 +518,14 @@ const housekeeping = setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     if (now - room.created > ROOM_TTL_MS) { closeRoom(room); continue; }
+    for (const [id, stream] of room.streams) {
+      if (now - stream.updated > STREAM_IDLE_MS) {
+        room.streams.delete(id);
+        const sender = room.students.get(stream.senderId);
+        if (sender) send(sender.ws, { type: 'stream.stop', streamId: id });
+        notifyHost(room, { type: 'stream.error', streamId: id, message: 'Stream stalled' });
+      }
+    }
     for (const [id, pending] of room.outstanding) {
       if (now - pending.created > RANGE_TIMEOUT_MS) {
         room.outstanding.delete(id);

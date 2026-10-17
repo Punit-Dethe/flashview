@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-  MAX_PDF_BYTES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
+  MAX_PDF_BYTES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS, STREAM_CREDITS, STREAM_IDLE_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
 } from '../shared/protocol';
 
@@ -13,6 +13,10 @@ interface Peer { id: string; role: Role; name: string; approved: boolean }
 interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; autoApprove?: boolean }
 interface ResumeSession { id: string; name: string; approved: boolean; token: string }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
+interface StreamSession {
+  fileId: string; senderId: string; next: number; end: number;
+  credits: number; updated: number;
+}
 const MAX_STUDENTS = 30;
 const OPEN = 1;
 function token(size = 24): string {
@@ -46,6 +50,7 @@ export class ClassroomRoom extends DurableObject<Env> {
   private sessions = new Map<string, ResumeSession>();
   // Deliberately volatile: a hibernation race is retried by the client's range timeout.
   private ranges = new Map<string, RangeRequest>();
+  private streams = new Map<string, StreamSession>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -97,6 +102,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     this.files.clear();
     this.sessions.clear();
     this.ranges.clear();
+    this.streams.clear();
     this.config = null;
     await this.ctx.storage.deleteAll();
   }
@@ -219,6 +225,25 @@ export class ClassroomRoom extends DurableObject<Env> {
           message.byteLength > MAX_RANGE_BYTES + 2048) return;
       try {
         const { header, bytes } = decodeRangePacket(message);
+        if (header.type === 'stream.data') {
+          const stream = this.streams.get(header.requestId);
+          if (!stream || stream.senderId !== peer.id || stream.fileId !== header.fileId ||
+              stream.next !== header.begin || stream.credits < 1 ||
+              bytes.byteLength !== Math.min(MAX_RANGE_BYTES, stream.end - stream.next)) return;
+          const host = this.host;
+          if (!host || host.readyState !== OPEN || host.bufferedAmount > 4 * 1024 * 1024) {
+            this.streams.delete(header.requestId);
+            send(ws, { type: 'stream.stop', streamId: header.requestId });
+            this.sendHost({ type: 'stream.error', streamId: header.requestId, message: 'Receiver overloaded' });
+            return;
+          }
+          stream.next += bytes.byteLength;
+          stream.credits--;
+          stream.updated = Date.now();
+          host.send(message);
+          if (stream.next === stream.end) this.streams.delete(header.requestId);
+          return;
+        }
         const range = this.ranges.get(header.requestId);
         if (!range || range.senderId !== peer.id || range.fileId !== header.fileId ||
             range.begin !== header.begin || range.end - range.begin !== bytes.byteLength) return;
@@ -314,6 +339,49 @@ export class ClassroomRoom extends DurableObject<Env> {
             student.ws.close(1008, 'Rejected');
           }
         }
+      } else if (msg.type === 'stream.open') {
+        const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
+        const { streamId, begin, end } = msg;
+        if (!validId(streamId) || !file || file.status !== 'approved' ||
+            !Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
+            Number(begin) < 0 || Number(end) <= Number(begin) || Number(end) > file.size ||
+            Number(begin) % 65536 !== 0 ||
+            (Number(end) !== file.size && Number(end) % 65536 !== 0) ||
+            this.streams.size >= 16 || this.streams.has(streamId)) {
+          return void send(ws, { type: 'stream.error', streamId, message: 'Invalid PDF stream' });
+        }
+        const student = this.student(file.ownerId);
+        if (!student || !student.peer.approved ||
+            [...this.streams.values()].filter(s => s.senderId === student.peer.id).length >= 4) {
+          return void send(ws, { type: 'stream.error', streamId, message: 'Sender unavailable or busy' });
+        }
+        for (const [id, stream] of this.streams) {
+          if (Date.now() - stream.updated > STREAM_IDLE_MS) {
+            this.streams.delete(id);
+            this.sendHost({ type: 'stream.error', streamId: id, message: 'Stream stalled' });
+          }
+        }
+        this.streams.set(streamId, {
+          fileId: file.fileId, senderId: student.peer.id,
+          next: Number(begin), end: Number(end), credits: STREAM_CREDITS, updated: Date.now(),
+        });
+        send(student.ws, { type: 'stream.open', streamId, fileId: file.fileId,
+          begin, end, credits: STREAM_CREDITS });
+      } else if (msg.type === 'stream.credit') {
+        const stream = typeof msg.streamId === 'string' ? this.streams.get(msg.streamId) : undefined;
+        if (!stream || stream.credits + 4 > STREAM_CREDITS || stream.next >= stream.end ||
+            msg.credits !== 4) return;
+        stream.credits += 4;
+        stream.updated = Date.now();
+        const student = this.student(stream.senderId);
+        if (student && student.peer.approved)
+          send(student.ws, { type: 'stream.credit', streamId: msg.streamId, credits: 4 });
+      } else if (msg.type === 'stream.stop') {
+        const stream = typeof msg.streamId === 'string' ? this.streams.get(msg.streamId) : undefined;
+        if (!stream) return;
+        this.streams.delete(msg.streamId as string);
+        const student = this.student(stream.senderId);
+        if (student) send(student.ws, { type: 'stream.stop', streamId: msg.streamId });
       } else if (msg.type === 'range.request') {
         const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
         const begin = msg.begin, end = msg.end, requestId = msg.requestId;
@@ -394,8 +462,22 @@ export class ClassroomRoom extends DurableObject<Env> {
       const file = this.files.get(msg.fileId);
       if (file?.ownerId === peer.id) {
         file.status = 'offline';
+        for (const [id, stream] of this.streams) {
+          if (stream.fileId === file.fileId) {
+            this.streams.delete(id);
+            send(ws, { type: 'stream.stop', streamId: id });
+            this.sendHost({ type: 'stream.error', streamId: id, message: 'File sharing stopped' });
+          }
+        }
         await this.persist();
         this.sendHost({ type: 'file.updated', file });
+      }
+    } else if (msg.type === 'stream.error' && typeof msg.streamId === 'string') {
+      const stream = this.streams.get(msg.streamId);
+      if (stream?.senderId === peer.id) {
+        this.streams.delete(msg.streamId);
+        this.sendHost({ type: 'stream.error', streamId: msg.streamId,
+          message: cleanText(msg.message, 120) || 'Sender stream failed' });
       }
     } else if (msg.type === 'range.error' && typeof msg.requestId === 'string') {
       const pending = this.ranges.get(msg.requestId);
@@ -415,6 +497,11 @@ export class ClassroomRoom extends DurableObject<Env> {
       return;
     }
     if (peer.role === 'host') {
+      for (const [id, stream] of this.streams) {
+        const student = this.student(stream.senderId);
+        if (student) send(student.ws, { type: 'stream.stop', streamId: id });
+      }
+      this.streams.clear();
       for (const [other, student] of this.peers) if (student.role === 'student') send(other, { type: 'host.offline' });
     } else if (peer.role === 'student') {
       for (const file of this.files.values()) {
@@ -424,6 +511,12 @@ export class ClassroomRoom extends DurableObject<Env> {
         }
       }
       await this.persist();
+      for (const [id, stream] of this.streams) {
+        if (stream.senderId === peer.id) {
+          this.streams.delete(id);
+          this.sendHost({ type: 'stream.error', streamId: id, message: 'Sender disconnected' });
+        }
+      }
       for (const [id, req] of this.ranges) {
         if (req.senderId === peer.id) {
           this.ranges.delete(id);

@@ -195,6 +195,11 @@ export class RoomPdfCache {
   // Keep a fixed scheduler available for identical-file A/B tests.
   private readonly fixedTransfer = new URLSearchParams(location.search).get('transfer') === 'fixed';
   private readonly networkChunks = packetChunksFromQuery(location.search);
+  // Phase 3: opt-in sender-driven transfer. Default stays the proven
+  // 256 KiB range pipeline until real-device A/B validates this path.
+  private readonly senderDriven = new URLSearchParams(location.search).get('transfer') === 'stream';
+  private streamPlanning = false;
+  private streamTransfers = new Map<string, {cancel: () => void}>();
   private storageFailedFiles = new Set<string>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
@@ -406,6 +411,98 @@ export class RoomPdfCache {
     }));
   }
 
+  /**
+   * A stream frame is at most 256 KiB, but all persisted records remain
+   * exactly 64 KiB. Credits are replenished ONLY after every associated
+   * IndexedDB transaction commits. The viewer consumes these saved records
+   * without affecting sender bandwidth or network scheduling.
+   */
+  private async storeStreamFrame(file: PdfManifest, begin: number, data: Uint8Array): Promise<void> {
+    if (this.stopped || !this.jobs.has(file.fileId) ||
+        begin % CHUNK_BYTES !== 0 || begin < 0 || begin + data.byteLength > file.size ||
+        data.byteLength <= 0 || data.byteLength > MAX_RANGE_BYTES ||
+        (begin + data.byteLength < file.size && data.byteLength % CHUNK_BYTES !== 0))
+      throw Error('Invalid PDF stream frame');
+    const count = Math.ceil(data.byteLength / CHUNK_BYTES);
+    await Promise.all(Array.from({length:count}, async (_, i) => {
+      const index = begin / CHUNK_BYTES + i;
+      const bytes = data.slice(i * CHUNK_BYTES, Math.min((i + 1) * CHUNK_BYTES, data.byteLength));
+      const key = this.key(file.fileId,index);
+      this.putMemory(key,bytes);
+      const started = perf.enabled ? performance.now() : 0;
+      const saving = saveChunk({
+        key, room:this.roomId, document:this.roomId + '/' + file.fileId,
+        index, data:bytes.slice().buffer,
+      });
+      this.pendingWrites.add(saving);
+      try {
+        await saving;
+        if (perf.enabled) perf.record('cache_write_ms', performance.now()-started, {bytes:bytes.byteLength});
+        if (this.stopped) return;
+        const set = await this.indexSet(file.fileId);
+        set.add(index);
+        const state = completion(file,set);
+        if (state.complete) perf.elapsed('cache_complete_ms','cache:'+file.fileId,file.size);
+        this.onProgress(state);
+        this.notifyCacheWaiters(key);
+      } catch (error) {
+        this.warning();
+        this.storageFailedFiles.add(file.fileId);
+        this.jobs.delete(file.fileId);
+        this.notifyCacheWaiters(key);
+        throw error;
+      } finally {
+        this.pendingWrites.delete(saving);
+      }
+    }));
+  }
+
+  private async workStreams(): Promise<void> {
+    if (this.streamPlanning || this.stopped || !this.socket.connected) return;
+    this.streamPlanning = true;
+    try {
+      for (const [fileId,file] of [...this.jobs]) {
+        if (this.stopped || !this.socket.connected || this.streamTransfers.size >= 8) break;
+        if (this.streamTransfers.has(fileId) || this.storageFailedFiles.has(fileId) ||
+            Date.now() < (this.cooldown.get(fileId) ?? 0)) continue;
+        const cached = await this.indexSet(fileId);
+        if (this.stopped || !this.jobs.has(fileId) || this.streamTransfers.has(fileId)) continue;
+        const total = Math.ceil(file.size / CHUNK_BYTES);
+        if (cached.size === total) {
+          this.jobs.delete(fileId);
+          this.cooldown.delete(fileId);
+          this.onProgress(completion(file,cached));
+          continue;
+        }
+        let first=0;
+        while (first<total && cached.has(first)) first++;
+        if (first === total) continue;
+        let last=first+1;
+        while (last<total && !cached.has(last)) last++;
+        const begin=first*CHUNK_BYTES, end=Math.min(file.size,last*CHUNK_BYTES);
+        const task=this.socket.openStream(fileId,begin,end,
+          (offset,bytes)=>this.storeStreamFrame(file,offset,bytes));
+        this.streamTransfers.set(fileId,{cancel:task.cancel});
+        void task.done.then(() => {
+          this.cooldown.delete(fileId);
+        }).catch(() => {
+          if (this.jobs.has(fileId) && !this.stopped) {
+            this.cooldown.set(fileId,Date.now()+4500);
+            if (this.retryTimer === null) this.retryTimer=setTimeout(() => {
+              this.retryTimer=null;
+              this.resume();
+            },4500);
+          }
+        }).finally(() => {
+          this.streamTransfers.delete(fileId);
+          if (!this.stopped) void this.workStreams();
+        });
+      }
+    } finally {
+      this.streamPlanning=false;
+    }
+  }
+
   private notifyCacheWaiters(key: string): void {
     const waiting = this.cacheWaiters.get(key);
     if (!waiting) return;
@@ -490,6 +587,7 @@ export class RoomPdfCache {
   }
   /** A disconnected student must not consume the background scheduler. */
   pause(fileId: string): void {
+    this.streamTransfers.get(fileId)?.cancel();
     this.jobs.delete(fileId);
     this.nextIndex.delete(fileId);
     this.cooldown.delete(fileId);
@@ -499,7 +597,8 @@ export class RoomPdfCache {
     if (this.stopped) return;
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
-    void this.work();
+    if (this.senderDriven) void this.workStreams();
+    else void this.work();
   }
 
   private tuner(fileId: string): AdaptiveTransferWindow {
@@ -615,6 +714,8 @@ export class RoomPdfCache {
   }
   dispose(): void {
     this.stopped = true;
+    for (const task of this.streamTransfers.values()) task.cancel();
+    this.streamTransfers.clear();
     this.jobs.clear();
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.memory.clear();

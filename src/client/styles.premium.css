@@ -296,6 +296,8 @@ html, body { background: var(--canvas); }
 .premium-app .premium-invite {
   display: flex;
   flex-direction: column;
+  align-self: stretch;
+  width: 100%;
   flex: 0 0 auto;
   min-height: 0;
   margin-top: 23px;
@@ -479,7 +481,7 @@ html, body { background: var(--canvas); }
   .premium-app .invite-content { padding: 14px 18px 15px; }
   .premium-app .room-code { font-size: 42px; margin-bottom: 11px; }
   .premium-app .workspace-invite-footer { margin-top: 12px; }
-  .premium-app .workspace-invite-footer p { line-height: 1.4; }
+  .premium-app .workspace-invite-footer p { display: none; }
 }
 @media (max-height: 620px) and (min-width: 761px) {
   .premium-app .workspace-invite-heading p { display: none; }

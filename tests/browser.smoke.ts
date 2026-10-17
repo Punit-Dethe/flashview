@@ -847,55 +847,103 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
 });
 
 
-test('student receives real classroom cache completion for multiple PDFs and sees a single aggregate pill', { timeout: 70000 }, async () => {
+test('mobile progress recovers missed events from the relay manifest and pill is connection-only', { timeout: 95000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
   const host = await browser.newPage();
   const student = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const origin = 'http://127.0.0.1:' + port;
   try {
+    await student.addInitScript(() => {
+      const Original = window.WebSocket;
+      const scoped = window as typeof window & { __flashviewSockets?: WebSocket[] };
+      scoped.__flashviewSockets = [];
+      window.WebSocket = new Proxy(Original, {
+        construct(target, args) {
+          const ws = new target(...(args as [string]));
+          scoped.__flashviewSockets!.push(ws);
+          return ws;
+        },
+      });
+    });
     await host.goto(origin);
     await host.getByRole('button', { name: /Create a room/ }).click();
     await host.locator('.connection.connected').waitFor();
     const code = await host.locator('.room-code').textContent();
-
     await student.goto(origin);
     await student.locator('#code').fill(code!);
-    await student.locator('#student-name').fill('Multiple Files');
+    await student.locator('#student-name').fill('Missing Updates');
     await student.getByRole('button', { name: /Join room/ }).click();
-    await host.locator('.approval').filter({ hasText: 'Multiple Files' }).getByRole('button', { name: 'Allow' }).click();
+    await host.locator('.approval').filter({ hasText: 'Missing Updates' })
+      .getByRole('button', { name: 'Allow' }).click();
     await student.getByText('Choose a PDF to share.').waitFor();
+    await student.locator('.transfer-pill').waitFor({ state: 'detached' });
 
-    // Both files are offered together; one completion cannot hide the other.
+    // Deliberately lose BOTH forms of progress delivery. The teacher must
+    // still finish caching the exact original PDFs, and a subsequent sync
+    // must recover the real counts without depending on host tab timers.
+    await student.evaluate(() => {
+      const scoped = window as typeof window & {
+        __flashviewSockets?: WebSocket[]; __dropManifest?: boolean;
+      };
+      const ws = scoped.__flashviewSockets?.at(-1);
+      if (!ws?.onmessage) throw Error('Student connection not ready');
+      scoped.__dropManifest = true;
+      const original = ws.onmessage;
+      ws.onmessage = event => {
+        if (typeof event.data === 'string') {
+          const type = (JSON.parse(event.data) as { type?: string }).type;
+          if (type === 'cache.progress' || (scoped.__dropManifest && type === 'file.manifest')) return;
+        }
+        original.call(ws, event);
+      };
+    });
     await student.locator('input[type=file]').setInputFiles([
       { name: 'small.pdf', mimeType: 'application/pdf', buffer: makePdf(120) },
       { name: 'larger.pdf', mimeType: 'application/pdf', buffer: makePdf(1400) },
     ]);
-    await student.locator('.student-file-card').first().waitFor();
-    assert.equal(await student.locator('.student-file-card').count(), 2);
-    await student.locator('.transfer-pill').waitFor();
-    await host.locator('.document-row').filter({ hasText: 'small.pdf' }).waitFor();
-    await host.locator('.document-row').filter({ hasText: 'larger.pdf' }).waitFor();
-    await student.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').first()
-      .waitFor({ timeout: 25000 });
-    await student.waitForFunction(() =>
-      Array.from(document.querySelectorAll('.student-file-card .transfer-ring'))
-        .filter(el => el.getAttribute('aria-valuenow') === '100').length === 2,
-      null, { timeout: 25000 });
-    await student.getByText('All files are saved on the classroom computer. You can leave this page.').waitFor();
-    await student.locator('.student-transfer-heading').getByText('2 of 2 ready').waitFor();
-    await student.locator('.transfer-pill.is-done').waitFor({ timeout: 5000 });
-    await student.locator('.transfer-pill').waitFor({ state: 'detached', timeout: 7500 });
+    const cards = student.locator('.student-file-card');
+    await cards.first().waitFor();
+    assert.equal(await cards.count(), 2, 'Both selected files must appear immediately on the phone');
+    await student.locator('.transfer-pill').waitFor({ state: 'detached' });
+    await host.locator('.document-row').filter({ hasText: 'small.pdf' })
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
+    await host.locator('.document-row').filter({ hasText: 'larger.pdf' })
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
+    assert.equal(await cards.locator('.transfer-ring[aria-valuenow="100"]').count(), 0,
+      'Lost notifications should be reproducible in this test');
 
-    // A late third file must reopen the dock; previous completion alone is not
-    // a reason to tell the student that the new file was transferred.
+    await student.evaluate(() => {
+      const scoped = window as typeof window & {
+        __flashviewSockets?: WebSocket[]; __dropManifest?: boolean;
+      };
+      scoped.__dropManifest = false;
+      scoped.__flashviewSockets?.at(-1)?.send(JSON.stringify({ v: 1, type: 'file.sync' }));
+    });
+    await student.waitForFunction(() =>
+      document.querySelectorAll('.student-file-card .transfer-ring[aria-valuenow="100"]').length === 2,
+      null, { timeout: 20000 });
+    await student.locator('.student-transfer-heading').getByText('2 of 2 ready').waitFor();
+    await student.getByText('All files are saved on the classroom computer. You can leave this page.').waitFor();
+    assert.equal(await student.locator('.transfer-pill').count(), 0,
+      'Done and Uploading should never produce a status pill');
+
+    // Disconnection is the ONLY case where the small Connecting pill appears.
+    await student.evaluate(() => {
+      const sockets = (window as typeof window & { __flashviewSockets?: WebSocket[] }).__flashviewSockets;
+      sockets?.at(-1)?.close(4100, 'Simulated phone connection interruption');
+    });
+    await student.locator('.transfer-pill').waitFor({ timeout: 7000 });
+    assert.match(await student.locator('.transfer-pill').innerText(), /Connecting/);
+    await student.locator('.transfer-pill').waitFor({ state: 'detached', timeout: 18000 });
+
+    // Adding one more file changes only the per-file cards, not the dock.
     await student.locator('input[type=file]').setInputFiles({
       name: 'late.pdf', mimeType: 'application/pdf', buffer: makePdf(400),
     });
     await student.locator('.student-file-card').filter({ hasText: 'late.pdf' }).waitFor();
-    await student.locator('.transfer-pill').waitFor();
     await student.locator('.student-transfer-heading').getByText('3 of 3 ready').waitFor({ timeout: 25000 });
-    await student.locator('.transfer-pill.is-done').waitFor({ timeout: 5000 });
+    assert.equal(await student.locator('.transfer-pill').count(), 0);
   } finally {
     await browser.close();
     child.kill('SIGTERM');

@@ -526,7 +526,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       name: 'lost-announcement.pdf', mimeType: 'application/pdf', buffer: makePdf(),
     });
     await student.locator('.student-file-card').filter({ hasText: 'lost-announcement.pdf' })
-      .getByText('Preparing to share…').waitFor();
+      .getByText('Preparing…').waitFor();
     assert.equal(await host.locator('.document-row').count(), 1);
     // A tab returning online asks the server for its authoritative manifest.
     await student.evaluate(() => window.dispatchEvent(new Event('online')));

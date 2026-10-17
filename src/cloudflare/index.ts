@@ -254,7 +254,6 @@ export class ClassroomRoom extends DurableObject<Env> {
         type: 'file.manifest',
         files: [...this.files.values()].filter(file => file.ownerId === peer.id),
       });
-      this.sendHost({ type: 'cache.progress.request' });
       return;
     }
 

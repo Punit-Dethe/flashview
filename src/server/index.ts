@@ -172,11 +172,25 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     });
   }
   if (msg.type === 'file.sync' && peer.role === 'student' && peer.approved) {
-    return void send(ws, {
+    send(ws, {
       type: 'file.manifest', files: [...room.files.values()].filter(file => file.ownerId === peer.id),
     });
+    notifyHost(room, { type: 'cache.progress.request' });
+    return;
   }
   if (peer.role === 'host') {
+    if (msg.type === 'cache.progress') {
+      const file = typeof msg.fileId === 'string' ? room.files.get(msg.fileId) : undefined;
+      const bytes = msg.bytes;
+      if (file && Number.isSafeInteger(bytes) && Number(bytes) >= 0 && Number(bytes) <= file.size) {
+        const student = room.students.get(file.ownerId);
+        if (student && student.approved) send(student.ws, {
+          type: 'cache.progress', fileId: file.fileId, bytes: Number(bytes),
+          size: file.size, complete: Number(bytes) === file.size,
+        });
+      }
+      return;
+    }
     if (msg.type === 'student.accept' && typeof msg.studentId === 'string') {
       const student = room.students.get(msg.studentId);
       if (student) {

@@ -992,8 +992,8 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     await student.waitForFunction(() =>
       document.querySelectorAll('.student-file-card .transfer-ring[aria-valuenow="100"]').length === 2,
       null, { timeout: 20000 });
-    await student.locator('.student-transfer-heading').getByText('2 of 2 ready').waitFor();
-    await student.getByText('All files are saved on the classroom computer. You can leave this page.').waitFor();
+    await student.locator('.student-file-count').getByText('2 files').waitFor();
+    await student.getByText('All your PDFs are saved on the host computer.').waitFor();
     assert.equal(await student.locator('.transfer-pill').count(), 0,
       'Done and Uploading should never produce a status pill');
 
@@ -1025,7 +1025,9 @@ test('mobile progress recovers missed events from the relay manifest and pill is
       name: 'late.pdf', mimeType: 'application/pdf', buffer: makePdf(400),
     });
     await student.locator('.student-file-card').filter({ hasText: 'late.pdf' }).waitFor();
-    await student.locator('.student-transfer-heading').getByText('3 of 3 ready').waitFor({ timeout: 25000 });
+    await student.locator('.student-file-count').getByText('3 files').waitFor({ timeout: 25000 });
+    await student.locator('.student-file-card').filter({ hasText: 'late.pdf' })
+      .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
     assert.equal(await student.locator('.transfer-pill').count(), 0);
   } finally {
     await browser.close();

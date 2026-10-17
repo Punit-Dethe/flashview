@@ -4,7 +4,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
-  decodeRangePacket, MAX_PDF_BYTES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
+  decodeRangePacket, MAX_FILE_BYTES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
   type PdfManifest, type StudentInfo,
 } from '../shared/protocol.js';
 
@@ -234,7 +234,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
           Number(begin) < 0 || Number(end) <= Number(begin) ||
           Number(end) > file.size || Number(end) - Number(begin) > MAX_RANGE_BYTES ||
           room.outstanding.size >= 48) {
-        return void send(ws, { type: 'range.error', requestId, message: 'Invalid/unavailable PDF range' });
+        return void send(ws, { type: 'range.error', requestId, message: 'Invalid/unavailable file range' });
       }
       const sender = room.students.get(file.ownerId);
       if (!sender || !sender.approved || room.outstanding.has(requestId)) {
@@ -270,12 +270,12 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     const fileId = msg.fileId;
     const size = msg.size;
     if (!validId(fileId) || !Number.isSafeInteger(size) ||
-        Number(size) <= 0 || Number(size) > MAX_PDF_BYTES ||
+        Number(size) <= 0 || Number(size) > MAX_FILE_BYTES ||
         (!room.files.has(fileId) && [...room.files.values()].filter(f => f.ownerId === peer.id).length >= 10)) {
-      return void sendError(ws, 'Invalid PDF file or room file limit reached');
+      return void sendError(ws, 'Invalid file size or room file limit reached');
     }
-    const name = acceptableText(msg.name, 130) || 'Document.pdf';
-    if (!name.toLowerCase().endsWith('.pdf')) return void sendError(ws, 'PDF files only');
+    const name = acceptableText(msg.name, 130);
+    if (!name || name === '.' || name === '..') return void sendError(ws, 'File name required');
     const existing = room.files.get(fileId);
     if (existing) {
       if (existing.status === 'pending' && peer.approved) {

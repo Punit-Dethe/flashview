@@ -1135,3 +1135,75 @@ test('network packet sizes 128/256 KiB preserve exact original PDF bytes in 64 K
   }
 });
 
+
+
+test('Phase 3: two students continuously stream independent PDFs into byte-perfect 64 KiB cache blocks', { timeout: 100000 }, async () => {
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage();
+  const senders=[await browser.newPage(),await browser.newPage()];
+  const pdfs=[makePdf(9800),makePdf(12200)];
+  const digests=pdfs.map(buf=>createHash('sha256').update(buf).digest('hex')).sort();
+  try {
+    const root='http://127.0.0.1:'+port;
+    await host.goto(root+'/?transfer=stream&packet=256&perf=1');
+    await host.getByLabel('Require approval').check();
+    await host.getByRole('button',{name:/Create a room/}).click();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    await host.locator('.connection.connected').waitFor();
+    for(let i=0;i<senders.length;i++){
+      const sender=senders[i];
+      await sender.goto(root);
+      await sender.locator('#code').fill(code);
+      await sender.locator('#student-name').fill('Stream '+(i+1));
+      await sender.getByRole('button',{name:/Join room/}).click();
+      const approval=host.locator('.approval').filter({hasText:'Stream '+(i+1)});
+      await approval.waitFor({timeout:15000});
+      await approval.getByRole('button',{name:'Allow'}).click();
+      await sender.locator('.student-drive').waitFor();
+    }
+    await Promise.all(senders.map((sender,i)=>sender.locator('input[type=file]').setInputFiles({
+      name:'stream-'+(i+1)+'.pdf',mimeType:'application/pdf',buffer:pdfs[i],
+    })));
+    await host.waitForFunction(()=>{
+      const rows=[...document.querySelectorAll('.document-row')];
+      return rows.length===2 && rows.every(row=>row.querySelector('.cache-ring[aria-valuenow="100"]'));
+    },null,{timeout:60000});
+    const files=await host.evaluate(async room=>{
+      const open=indexedDB.open('flashview-room-cache');
+      const db=await new Promise<IDBDatabase>((resolve,reject)=>{
+        open.onsuccess=()=>resolve(open.result);
+        open.onerror=()=>reject(open.error);
+      });
+      const all=await new Promise<Array<{room:string;document:string;index:number;data:ArrayBuffer}>>((resolve,reject)=>{
+        const request=db.transaction('chunks','readonly').objectStore('chunks').getAll();
+        request.onsuccess=()=>resolve(request.result);
+        request.onerror=()=>reject(request.error);
+      });
+      db.close();
+      const groups=new Map<string,Array<{index:number;data:ArrayBuffer}>>();
+      for(const item of all.filter(x=>x.room===room)){
+        const group=groups.get(item.document)??[];
+        group.push(item);
+        groups.set(item.document,group);
+      }
+      const hashes:string[]=[];
+      for(const [,chunks] of groups){
+        chunks.sort((a,b)=>a.index-b.index);
+        if(chunks.some((x,i)=>x.index!==i)) throw Error('Missing or duplicate chunk indices');
+        const bytes=new Uint8Array(chunks.reduce((sum,x)=>sum+x.data.byteLength,0));
+        let offset=0;
+        for(const part of chunks){bytes.set(new Uint8Array(part.data),offset);offset+=part.data.byteLength;}
+        const digest=await crypto.subtle.digest('SHA-256',bytes);
+        hashes.push(Array.from(new Uint8Array(digest)).map(x=>x.toString(16).padStart(2,'0')).join(''));
+      }
+      return hashes.sort();
+    },code);
+    assert.deepEqual(files,digests,'Streamed original PDFs must exactly match the two student files');
+  } finally {
+    await host.close();
+    for(const sender of senders) await sender.close();
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

@@ -928,13 +928,17 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     assert.equal(await student.locator('.transfer-pill').count(), 0,
       'Done and Uploading should never produce a status pill');
 
-    // Disconnection is the ONLY case where the small Connecting pill appears.
+    // Hold the phone offline so ultra-fast Cloudflare reconnects do not hide
+    // the transient dock before Playwright can observe it.
+    await student.context().setOffline(true);
     await student.evaluate(() => {
       const sockets = (window as typeof window & { __flashviewSockets?: WebSocket[] }).__flashviewSockets;
       sockets?.at(-1)?.close(4100, 'Simulated phone connection interruption');
     });
     await student.locator('.transfer-pill').waitFor({ timeout: 7000 });
     assert.match(await student.locator('.transfer-pill').innerText(), /Connecting/);
+    await student.context().setOffline(false);
+    await student.evaluate(() => window.dispatchEvent(new Event('online')));
     await student.locator('.transfer-pill').waitFor({ state: 'detached', timeout: 18000 });
 
     // Adding one more file changes only the per-file cards, not the dock.

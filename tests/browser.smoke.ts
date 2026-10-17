@@ -928,18 +928,28 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     assert.equal(await student.locator('.transfer-pill').count(), 0,
       'Done and Uploading should never produce a status pill');
 
-    // Hold the phone offline so ultra-fast Cloudflare reconnects do not hide
-    // the transient dock before Playwright can observe it.
-    await student.context().setOffline(true);
+    // Verify the dock from explicit connection-state notifications. Real
+    // reconnect is exercised by the other browser tests; WebSocket close
+    // handshakes in the local Cloudflare emulator are not deterministic.
     await student.evaluate(() => {
       const sockets = (window as typeof window & { __flashviewSockets?: WebSocket[] }).__flashviewSockets;
-      sockets?.at(-1)?.close(4100, 'Simulated phone connection interruption');
+      const ws = sockets?.at(-1);
+      if (!ws?.onmessage) throw Error('Expected active student socket');
+      ws.onmessage.call(ws, new MessageEvent('message', {
+        data: JSON.stringify({ v: 1, type: 'host.offline' }),
+      }));
     });
     await student.locator('.transfer-pill').waitFor({ timeout: 7000 });
     assert.match(await student.locator('.transfer-pill').innerText(), /Connecting/);
-    await student.context().setOffline(false);
-    await student.evaluate(() => window.dispatchEvent(new Event('online')));
-    await student.locator('.transfer-pill').waitFor({ state: 'detached', timeout: 18000 });
+    await student.evaluate(() => {
+      const sockets = (window as typeof window & { __flashviewSockets?: WebSocket[] }).__flashviewSockets;
+      const ws = sockets?.at(-1);
+      if (!ws?.onmessage) throw Error('Expected active student socket');
+      ws.onmessage.call(ws, new MessageEvent('message', {
+        data: JSON.stringify({ v: 1, type: 'host.online' }),
+      }));
+    });
+    await student.locator('.transfer-pill').waitFor({ state: 'detached', timeout: 7000 });
 
     // Adding one more file changes only the per-file cards, not the dock.
     await student.locator('input[type=file]').setInputFiles({

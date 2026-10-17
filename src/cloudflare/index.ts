@@ -462,6 +462,13 @@ export class ClassroomRoom extends DurableObject<Env> {
       const file = this.files.get(msg.fileId);
       if (file?.ownerId === peer.id) {
         file.status = 'offline';
+        for (const [id, stream] of this.streams) {
+          if (stream.fileId === file.fileId) {
+            this.streams.delete(id);
+            send(ws, { type: 'stream.stop', streamId: id });
+            this.sendHost({ type: 'stream.error', streamId: id, message: 'File sharing stopped' });
+          }
+        }
         await this.persist();
         this.sendHost({ type: 'file.updated', file });
       }

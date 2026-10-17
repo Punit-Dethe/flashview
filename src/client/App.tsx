@@ -250,8 +250,10 @@ export function App() {
     const shared = filesOnPhone.current.get(fileId);
     if (!shared || shared.status !== 'approved' || previewDelivered.current.has(fileId)) return;
     const saved = firstPageImages.current.get(fileId);
-    if (saved) { sendPreview(fileId, saved); return; }
-    prepareLocalPreview(fileId);
+    if (saved) sendPreview(fileId, saved);
+    // Never start expensive PDF.js work synchronously on a file approval:
+    // the selection handler already schedules the independent local preview
+    // at an idle opportunity after the transfer has been announced.
   }
 
   useEffect(() => {

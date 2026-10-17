@@ -51,6 +51,12 @@ npm run build
 
 For a meaningful connectivity test, place host and student on **different internet connections**; campus Wi-Fi should be tested independently. The initial MVP requires WebSocket upgrade access via port 443. Ordinary HTTPS fallback and live-device benchmarking are planned but **not yet implemented**.
 
+## Document thumbnails and cache rings
+
+The teacher's document list uses a responsive grid of square cards. A card has a stable first-page area, followed by the PDF name, sender, and file size. The sending phone already makes a first-page JPEG for the fullscreen presenter; FlashView reuses that same image in the grid without requesting extra PDF bytes. A small spinner holds the preview's space until the JPEG has decoded, then the image fades in. If the preview fails or doesn't arrive promptly, the card falls back to a PDF icon. Clicking a presentable card's image opens the same streaming presenter as before.
+
+A circular ring in the top-right of each image shows background PDF cache progress and becomes a checkmark at 100%. Details remain accessible as a progressbar/tooltip but are intentionally not repeated as percentage, throughput, or cache-status text in the card. Presentation can start before the entire PDF has cached; the preview state and cache status are independent.
+
 ## Room cache and cleanup
 
 - The teacher can open/close individual presentation tabs without losing the classroom queue.

@@ -16,7 +16,7 @@
 
 FlashView opens to the original **Create a room / Join a room** choices. Room creation happens only after clicking Create a room. Refreshing an existing host room restores the current session in that tab; a student's `?join=` invitation opens the student flow directly.
 
-After creating a room, the teacher sees a full-height dark workspace **without the top header**. The entire left side is a fixed sidebar with a large QR code, six-digit room code, side-by-side Copy link and End session actions, Join another room below, and a participant list with approval controls. Participant entries scroll within the sidebar when needed, leaving the QR accessible. The **right document pane scrolls independently** and contains the presentations queue without extra introductory labels. On smaller screens the sections stack and use normal page scrolling.
+After creating a room, the teacher sees a full-height dark workspace **without the top header**. The left side is a fixed dark-slate sidebar with a large QR code, six-digit room code, side-by-side Copy link and End room actions, and participants/optional approval controls. Participant entries scroll within the sidebar when needed, leaving the QR accessible. The **right document pane scrolls independently** and contains the presentations queue without extra introductory labels. On smaller screens the sections stack and use normal page scrolling.
 
 Joining another room ends the current room and removes its cached PDF bytes from that computer after the teacher submits the new code. Ending a session continues to require confirmation and cleanup. The PDF transfer protocol, background caching, and fullscreen presenter are unchanged.
 
@@ -29,7 +29,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173** and click **Create a room** to show the teacher's QR code. Open a separate private browser window, choose **Join a session**, enter the six-digit room code, and allow the student from the teacher's right-hand document panel. The student can then choose a PDF. Student approval also allows their documents to be shared; there is no separate file-approval step.
+Open **http://localhost:5173** and click **Create a room** to show the teacher's QR code. Open a separate private browser window, choose **Join a room**, and enter the six-digit room code. Rooms are open to link holders by default; enable **Require approval** before creation when you need a waiting room. The student can then choose a PDF. Student approval also allows their documents to be shared; there is no separate file-approval step.
 
 The QR produced by a localhost development server will not be reachable from a separate phone. Use a public HTTPS deployment or an HTTPS tunnel exposing the Vite frontend for cross-device testing.
 
@@ -75,7 +75,7 @@ The teacher still sees the locally computed cache-progress ring. The sender only
 
 FlashView uses a familiar light, document-first room interface: the **host** keeps a compact dark QR/participants utility sidebar and a light, larger-file-tile gallery; joined **sharers** see only the PDFs they selected, in a two-column phone grid with a floating **+ New** file-picker button. Text truncates at a comfortable right inset instead of spilling across cards. Other students never receive one another's file manifests, previews or range access; only the room host sees everyone's submissions.
 
-At room creation the host can choose **Let people join without approval**. This defaults **off**, preserving the existing waiting-room workflow. When enabled the Node or Cloudflare relay creates an already-approved session for anyone possessing the room code or link. This preference is stored with the room (Cloudflare persists it in the Durable Object) and applies to new joins, not just the UI. Share only with the intended participants when an open room is enabled. This is not an account-authenticated or confidential document-sharing service.
+At room creation the host can toggle **Require approval** beside **Create a room**. Approval defaults **off**: people who know the room code or link join immediately. Toggle it on for a waiting room. When enabled the Node or Cloudflare relay creates an already-approved session for anyone possessing the room code or link. This preference is stored with the room (Cloudflare persists it in the Durable Object) and applies to new joins, not just the UI. Share only with the intended participants when an open room is enabled. This is not an account-authenticated or confidential document-sharing service.
 
 Sharing remains PDF-only (up to 50 MB). Images, slides, archives, video and other files are deliberately not accepted by this redesign; general-file transfer and host download require a separately tested protocol/UX phase. The phone's completed rings report bytes cached on the teacher's computer, not merely the filename appearing on the host.
 
@@ -134,17 +134,17 @@ Cloudflare references: https://developers.cloudflare.com/durable-objects/platfor
 
 Some PDFs are not arranged for early byte-range rendering, so even an otherwise correct PDF.js viewer can wait for more data before displaying page 1. FlashView now uses a complementary preview:
 
-- On selecting a PDF, the student's browser generates a compressed JPEG of page 1 and sends it to the classroom using the authenticated WebSocket relay.
+- When a student selects a PDF, its phone creates a small page-one JPEG directly from its own File object and immediately displays it on the phone. Only the host needs a transmitted copy, sent across the authenticated WebSocket relay in a few larger frames.
 - That image appears in presentation tabs **while the original PDF continues downloading**. It is a temporary visual preview, not a replacement for the PDF document.
 - The classroom caches the exact original PDF, not just the preview. Once the PDF becomes renderable it replaces the image; after 100% caching every page can open from the original PDF offline.
-- Both original PDF bytes and the preview are stored only in IndexedDB on the classroom computer. Confirming **End session** deletes both, never the student originals.
+- Both original PDF bytes and the preview are stored only in IndexedDB on the classroom computer. Confirming **End room** deletes both, never the student originals.
 - The range-only PDF.js transport now uses a single complete response per requested range, with explicit range-stream completion.
 
 Preview generation is best effort on low-powered phones and unusually large or password-protected PDFs. The compressed image may look less sharp than the final document.
 
 ## Transfer throughput while a presentation tab is open
 
-The classroom tab owns the WebSocket and downloads PDFs continuously after student approval. Opening a presentation no longer pauses the background queue. The downloader retains up to **six concurrent 64 KiB background requests** per round, and immediate PDF.js page-range requests can run concurrently and share already-pending chunk downloads.
+The classroom tab owns the WebSocket and downloads PDFs continuously as soon as an admitted student offers one. **The transfer engine is the only code that requests PDF bytes from the phone.** A presentation is strictly a passive reader of locally cached byte ranges: if a page needs missing bytes, it waits for the independent background transfer to reach those chunks. Opening a presentation does not compete for phone bandwidth, create extra range requests, or tune transfer priorities. A partly cached PDF is viewable when PDF.js's specific structure/page chunks are present; an arbitrary percentage alone does not guarantee a page can render.
 
 Importantly, successful batches are processed by a **continuous asynchronous pump**, not a repeating short timer: browsers throttle short timers when the original classroom dashboard becomes a background tab after the teacher opens Present. The dashboard now shows an approximate **KB/s or MB/s transfer rate** alongside the saved-byte counter for real-world comparison.
 
@@ -153,14 +153,14 @@ The speed is limited by the sending phone's upload link and the available WebSoc
 
 ## Performance audit optimizations
 
-- **Less IndexedDB overhead:** an indexed cache manifest distinguishes stored chunks from missing chunks, so known missing chunks are fetched directly from the sender, without unnecessary IDB reads. Present-page requests still reuse inflight transfers.
+- **Less IndexedDB overhead:** an indexed cache manifest distinguishes stored chunks from missing chunks. Network downloads happen solely in the background transfer engine; presenter reads only cached IndexedDB/memory chunks and passively awaits missing ones.
 - **Throttled UI work, not transfers:** chunk bytes persist immediately; the teacher and viewer only receive visible progress broadcasts roughly every 350 ms, with immediate completion events.
-- **Independent student scheduling:** a bounded global window of 16 background chunk requests, up to 6 per file, runs round-robin across all queued PDFs. One slow student's request does not block other students' available slots. Page reads use independent requests. Disconnected senders are paused until they return.
-- **Lower phone memory for large previews:** for PDFs of at least 12 MB, PDF.js reads local byte ranges from the phone instead of first allocating the whole file as an ArrayBuffer. On unusual PDFs where the local range reader cannot finish promptly, the established full-file preview method is retained as a fallback. JPEG compression is asynchronous.
+- **Independent student scheduling:** a bounded global window of 16 background chunk requests, starting at 6 per file and adapting up to 10, runs round-robin across queued PDFs. Viewer page reads never consume those network slots. Disconnected senders are paused until they return.
+- **Less preview work:** generate a 720px-edge JPEG capped at 70 KB on the sending phone (rather than a 1400px/275KB image), with local File-backed ranges from 2 MB upward. Do not copy very large files into memory just to create an optional thumbnail. Relay the JPEG in approximately 6.8 KB frames within the server's 8 KB message cap, reducing the preview to roughly 14 messages or fewer rather than dozens of 4.9 KB messages. PDF.js still renders the original document when presented.
 - **64 KiB original PDF cache chunk layout remains unchanged.** A different chunk size would require a cache-format migration and real-network benchmarks; larger messages are not automatically faster.
 - Fully cached PDFs still use the original document bytes from IndexedDB. Their reconstruction across new presentation tabs has not been restructured because doing so risks extra persistent storage and memory usage.
 
-Tests include stalled foreground requests, a slow student alongside a second student completing a PDF, real PDF rendering, and a separate large-preview fixture. Automated green tests do not establish a universal network speedup. For useful before/after measurements, compare similar 10–20 MB PDFs with the same phone, browser and network, once with the presentation tab open and once closed.
+Tests cover passive cached viewing, retries, a slow student alongside another sender, real PDF rendering, and a separate large-preview fixture. Automated green tests do not establish a universal network speedup. For useful before/after measurements, compare similar 10–20 MB PDFs with the same phone, browser and network, once with the presentation tab open and once closed.
 
 
 ## Performance 2.0 — Stage 0, measurement only

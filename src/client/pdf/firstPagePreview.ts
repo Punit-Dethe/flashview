@@ -3,8 +3,12 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
 const LOCAL_RANGE_BYTES = 65_536;
-const LARGE_FILE_BYTES = 12 * 1024 * 1024;
-const PREVIEW_BYTES = 275_000;
+// Thumbnail previews never need projector-resolution pixels: PDF.js renders
+// the full slide separately when the teacher opens it. Avoid a large canvas
+// and large WebSocket JPEGs competing with live PDF range traffic.
+const LARGE_FILE_BYTES = 2 * 1024 * 1024;
+const PREVIEW_BYTES = 70_000;
+const THUMBNAIL_EDGE = 720;
 
 class LocalFileRanges extends PDFDataRangeTransport {
   private stopped = false;
@@ -63,7 +67,7 @@ async function renderFirstPage(file: File, ranged: boolean): Promise<string> {
       const pdf = await task.promise;
       const page = await pdf.getPage(1);
       const normal = page.getViewport({ scale: 1 });
-      const scale = Math.min(2.5, 1400 / Math.max(normal.width, normal.height));
+      const scale = Math.min(1.4, THUMBNAIL_EDGE / Math.max(normal.width, normal.height));
       const viewport = page.getViewport({ scale });
       let canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.ceil(viewport.width));
@@ -72,18 +76,18 @@ async function renderFirstPage(file: File, ranged: boolean): Promise<string> {
       if (!context) throw Error('Canvas unavailable');
       await page.render({ canvas, canvasContext: context, viewport }).promise;
 
-      let quality = .78;
+      let quality = .67;
       let output = await jpeg(canvas, quality);
       for (let step = 0; output.size > PREVIEW_BYTES && step < 10; step++) {
-        if (quality > .45) {
-          quality = Math.max(.43, quality - .12);
+        if (quality > .4) {
+          quality = Math.max(.4, quality - .1);
         } else {
           const smaller = document.createElement('canvas');
-          smaller.width = Math.max(320, Math.floor(canvas.width * .72));
-          smaller.height = Math.max(320, Math.floor(canvas.height * .72));
+          smaller.width = Math.max(240, Math.floor(canvas.width * .72));
+          smaller.height = Math.max(240, Math.floor(canvas.height * .72));
           smaller.getContext('2d')?.drawImage(canvas, 0, 0, smaller.width, smaller.height);
           canvas = smaller;
-          quality = .68;
+          quality = .55;
         }
         output = await jpeg(canvas, quality);
       }
@@ -108,11 +112,14 @@ async function renderFirstPage(file: File, ranged: boolean): Promise<string> {
 export async function makeFirstPagePreview(file: File): Promise<string> {
   if (file.size >= LARGE_FILE_BYTES) {
     try {
-      // For large files, read PDF.js's requested local byte ranges, instead
-      // of copying the whole 12-50 MB original into phone memory.
+      // A 2-50 MB PDF can be read from the phone's random-access File
+      // without copying the whole file into memory just to paint a thumbnail.
       return await renderFirstPage(file, true);
     } catch {
-      // Keep the known-compatible path for difficult PDFs and browsers.
+      // A corrupt/non-linearized huge PDF can otherwise trigger a second,
+      // synchronous 12-50 MB full-file copy just for an optional thumbnail.
+      // Protect the main file-transfer lane: show the PDF icon instead.
+      if (file.size >= 12 * 1024 * 1024) throw Error('Thumbnail unavailable');
     }
   }
   return renderFirstPage(file, false);

@@ -351,7 +351,7 @@ export class ClassroomRoom extends DurableObject<Env> {
           !Number.isSafeInteger(msg.part) || !Number.isSafeInteger(msg.total) ||
           Number(msg.part) < 0 || Number(msg.total) < 1 || Number(msg.total) > 80 ||
           Number(msg.part) >= Number(msg.total) ||
-          typeof msg.data !== 'string' || msg.data.length < 1 || msg.data.length > 5000 ||
+          typeof msg.data !== 'string' || msg.data.length < 1 || (msg.data.length > 7000 || (msg.data.length > 5000 && Number(msg.total) > 16)) ||
           !/^[a-zA-Z0-9+/=]+$/.test(msg.data)) return;
       this.sendHost({
         type: 'preview.chunk', fileId: file.fileId,

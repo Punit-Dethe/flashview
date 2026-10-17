@@ -162,9 +162,6 @@ html, body { background: var(--canvas); }
 .premium-app .end-dialog-actions { gap: 10px; justify-content: flex-end; }
 .premium-app .end-danger { background: #a94c54; border: 1px solid #bc636d; border-radius: 8px; color: white; }
 .premium-app .end-danger:hover:not(:disabled) { background: #bd5861; }
-.premium-app .switch-dialog .join-form { margin-top: 19px; max-width: 100%; }
-.premium-app .switch-dialog .end-dialog-actions { margin-top: 17px; display: grid; grid-template-columns: 1fr 1fr; }
-.premium-app .switch-dialog .end-dialog-actions button { width: 100%; }
 .premium-app .global-error { color: #ffd3cc; background: #3a2528; border: 1px solid #693b43; border-radius: 9px; }
 .premium-app .simple-state { color: #f2f2f5; }
 .premium-app .perf-toggle { color: #9ca2bb; }
@@ -195,7 +192,6 @@ html, body { background: var(--canvas); }
   .premium-app .file-icon { width: 36px; height: 44px; flex-basis: 36px; }
   .premium-app .list-heading-title h2 { font-size: 21px; }
   .premium-app .list-heading-title p { max-width: 210px; }
-  .premium-app .switch-dialog .end-dialog-actions { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   .premium-app button, .premium-app .file-progress-track > span { transition: none !important; animation: none !important; }
@@ -372,17 +368,6 @@ html, body { background: var(--canvas); }
   background: #37292d;
   border-color: #604247;
   color: #fff0ee;
-}
-.premium-app .join-another-button {
-  width: 100%;
-  min-height: 42px;
-  justify-content: center;
-  margin-top: 9px;
-  font-size: 11px;
-  font-weight: 550;
-  background: #212229;
-  border-color: #373840;
-  color: #d2d2dd;
 }
 .premium-app .sidebar-participants {
   flex: 1 1 auto;
@@ -588,7 +573,6 @@ html, body { background: var(--canvas); }
   .premium-app .qr-side { margin-bottom: 8px; }
   .premium-app .room-code { font-size: 33px; margin: 4px 0 9px; }
   .premium-app .invite-actions .primary-button, .premium-app .invite-actions .outline-button { min-height: 35px; padding: 7px 6px; }
-  .premium-app .join-another-button { min-height: 35px; }
   .premium-app .sidebar-participants { margin-top: 12px; }
 }
 @media (max-width: 760px) {
@@ -1107,8 +1091,8 @@ html, body { background: var(--canvas); }
 
 /* Drive-inspired room foundation — familiar light surfaces, restrained Material UI.
    Kept deliberately separate from the dark teacher utility sidebar/presenter. */
-html, body { background: #f7f9fc; }
-.premium-app { background: #f7f9fc; color: #202124; }
+html, body { background: #F8FAFD; }
+.premium-app { background: #F8FAFD; color: #202124; }
 .premium-app .site-header {
   background: #fff; border-bottom: 1px solid #e2e6ed;
   backdrop-filter: none; -webkit-backdrop-filter: none;
@@ -1160,8 +1144,8 @@ html, body { background: #f7f9fc; }
 .premium-app .room-auto-approve:has(input:focus-visible) { outline: 2px solid #366dcc; outline-offset: 2px; }
 
 /* Host: preserve the recognizable QR/participants dark sidebar, lighten document canvas. */
-.premium-app.is-host-workspace { background: #f7f9fc; }
-.premium-app .workspace-left { background: #17181d; border-right: 1px solid #29303a; }
+.premium-app.is-host-workspace { background: #F8FAFD; }
+.premium-app .workspace-left { background: #303742; border-right: 1px solid #404852; }
 .premium-app .workspace-left .outline-button { background: #292b33; border-color: #444753; color: #f1f2f8; }
 .premium-app .workspace-left .primary-button { background: #ecedf5; color: #202433; border-color: #ecedf5; }
 .premium-app .room-admission-status {
@@ -1169,7 +1153,7 @@ html, body { background: #f7f9fc; }
   color: #a4a8b8; font-size: 11px; line-height: 1.5;
 }
 .premium-app .workspace-right {
-  background: #f7f9fc; color: #283243;
+  background: #F8FAFD; color: #283243;
 }
 .premium-app .workspace-right .list-heading-title h1 { color: #263447; }
 .premium-app .workspace-right .list-heading-title p { color: #7c899c; }
@@ -1430,4 +1414,46 @@ html, body { background: #f7f9fc; }
   .premium-app .student-pill-stay { animation: none; opacity: 1; transform: none; }
   .premium-app .student-pill-upload { animation: none; opacity: 0; }
   .premium-app .student-status-pill .transfer-pill-spinner { animation: none; }
+}
+
+/* One-line create-room action: open admission by default, optional
+   approval switch beside Create room, not a separate full-width row. */
+.premium-app .room-creation-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 11px;
+  margin-top: 24px;
+}
+.premium-app .room-creation-actions .room-auto-approve {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 11px;
+  gap: 8px;
+  border-radius: 12px;
+}
+.premium-app .room-creation-actions .room-auto-approve .room-auto-text strong {
+  font-size: 11px;
+}
+.premium-app .room-creation-actions .room-auto-approve .room-auto-text small {
+  font-size: 10px;
+}
+.premium-app .room-creation-actions .room-auto-switch {
+  width: 38px;
+  flex-basis: 38px;
+}
+.premium-app .room-creation-actions .room-auto-approve input:checked ~ .room-auto-switch::after {
+  transform: translateX(14px);
+}
+.premium-app .room-creation-actions > .primary-button {
+  flex: 0 0 auto;
+  min-height: 61px;
+  margin: 0;
+  white-space: nowrap;
+  padding: 10px 14px;
+}
+@media (max-width: 420px) {
+  .premium-app .room-creation-actions { gap: 8px; }
+  .premium-app .room-creation-actions > .primary-button { padding: 9px 12px; font-size: 12px; }
+  .premium-app .room-creation-actions .room-auto-approve { padding: 9px 8px; }
 }

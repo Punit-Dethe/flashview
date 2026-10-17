@@ -120,9 +120,10 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
       'Documents should occupy the area to the right of the full-height sidebar');
     const copy = await first.getByRole('button', { name: /Copy link/ }).boundingBox();
     const end = await first.getByRole('button', { name: /End room/ }).boundingBox();
-    const join = await first.getByRole('button', { name: /Join another room/ }).boundingBox();
-    assert.ok(copy && end && join && Math.abs(copy.y - end.y) < 4 && join.y > copy.y + 30,
-      'Copy link and End room share a row; Join another room sits underneath');
+    assert.ok(copy && end && Math.abs(copy.y - end.y) < 4,
+      'Copy link and End room should share a row');
+    assert.equal(await first.getByRole('button', { name: /Join another room/ }).count(), 0,
+      'Room-switch controls were deliberately removed from the host sidebar');
 
     await right.evaluate(el => {
       const list = el.querySelector('.document-list')!;
@@ -155,15 +156,10 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.match(secondCode ?? '', /^\d{6}$/);
     assert.notEqual(firstCode, secondCode);
 
-    await first.getByRole('button', { name: /Join another room/ }).click();
-    await first.locator('#switch-code').fill(secondCode!);
-    await first.getByRole('button', { name: /Join room/ }).click();
-    await second.locator('.sidebar-participants .approval').waitFor();
-    assert.equal(await second.locator('.workspace-right .approval').count(), 0,
-      'Student approval rows belong in the sidebar, not in the document panel');
-    assert.ok(await first.getByText('Waiting to join').isVisible());
-    assert.equal(await first.evaluate(() => sessionStorage.getItem('flashview-host')), null,
-      'Switching rooms must remove the previous host credentials');
+    assert.equal(await first.locator('.room-code').innerText(), firstCode,
+      'Creating another room must not switch or abandon the active host room');
+    assert.equal(await first.locator('#switch-code').count(), 0,
+      'Removed room switch dialog must not be mounted');
   } finally {
     await browser.close();
     child.kill('SIGTERM');
@@ -179,7 +175,8 @@ test('open rooms auto-admit guests, show only their own PDFs, and expose a light
   const root = 'http://127.0.0.1:' + port;
   try {
     await host.goto(root);
-    await host.getByLabel('Let people join without approval').check();
+    assert.equal(await host.getByLabel('Require approval').isChecked(), false,
+      'Rooms must be open to link holders by default');
     await host.getByRole('button', { name: /Create a room/ }).click();
     await host.locator('.connection.connected').waitFor();
     await host.getByText('Open room · No approval needed').waitFor();
@@ -276,6 +273,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       await mkdir('test-artifacts/ui', { recursive: true });
       await host.screenshot({ path: 'test-artifacts/ui/welcome.png', fullPage: true });
     }
+    await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
     const roomCode = await host.locator('.room-code').textContent();
     assert.match(roomCode ?? '', /^\d{6}$/);
@@ -305,8 +303,30 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     }));
     assert.match(swatch.accent, /^#[0-9A-Fa-f]{6}$/);
     assert.notEqual(swatch.background, 'rgba(0, 0, 0, 0)');
-    // The existing phone-generated first-page JPEG should appear in the card.
-    await card.locator('img.document-thumb-image.is-visible').waitFor({ timeout: 20000 });
+    // Rendering on the sender is independent: diagnose phone rendering
+    // before checking delivery to the host, especially on Firefox.
+    const localPreview = student.locator('.student-file-card').filter({ hasText: 'smoke.pdf' })
+      .locator('img.student-file-preview');
+    await localPreview.waitFor({ timeout: 20000 });
+    assert.ok(await localPreview.evaluate(node => (node as HTMLImageElement).naturalWidth > 100));
+    // The smaller local JPEG should also reach the host without delaying PDF bytes.
+    try {
+      await card.locator('img.document-thumb-image.is-visible').waitFor({ timeout: 20000 });
+    } catch (error) {
+      // Separate a missing relay message from an image decode failure,
+      // particularly on Firefox's headless mobile-sender simulation.
+      const hostPreview = await card.evaluate(el => ({
+        image: Boolean(el.querySelector('img.document-thumb-image')),
+        fallback: Boolean(el.querySelector('.document-pdf-symbol')),
+        spinner: Boolean(el.querySelector('.document-thumb-spinner')),
+      }));
+      const phonePreview = await localPreview.evaluate(el => ({
+        bytes: (el as HTMLImageElement).src.length,
+        width: (el as HTMLImageElement).naturalWidth,
+      }));
+      console.log('PREVIEW_DIAGNOSTICS', { hostPreview, phonePreview });
+      throw error;
+    }
     assert.equal(await card.locator('img.document-thumb-image').evaluate(
       image => (image as HTMLImageElement).naturalWidth > 100), true);
     assert.equal(await card.locator('.document-thumb-spinner').count(), 0,
@@ -671,6 +691,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
   let presentation: Page | null = null;
   try {
     await host.goto(root);
+    await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();
     await host.locator('.connection.connected').waitFor();
@@ -803,6 +824,7 @@ test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async
   try {
     const root = 'http://127.0.0.1:' + port;
     await host.goto(root);
+    await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();
     await host.locator('.connection.connected').waitFor();
@@ -860,6 +882,7 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
   try {
     const url = 'http://127.0.0.1:' + port;
     await host.goto(url + '/?perf=1');
+    await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();
     await host.locator('.connection.connected').waitFor();
@@ -936,6 +959,7 @@ test('mobile progress recovers missed events from the relay manifest and pill is
       });
     });
     await host.goto(origin);
+    await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
     await host.locator('.connection.connected').waitFor();
     const code = await host.locator('.room-code').textContent();

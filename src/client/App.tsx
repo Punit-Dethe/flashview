@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { MAX_PDF_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
@@ -51,6 +51,9 @@ export function App() {
   const filesOnPhone = useRef(new Map<string, SharedFile>());
   const firstPageImages = useRef(new Map<string, string>());
   const previewRendering = useRef(new Set<string>());
+  // Serialize thumbnail rendering on low-powered phones. Upload requests are
+  // offered first and handled independently of this cosmetic work.
+  const previewRenderQueue = useRef<Promise<void>>(Promise.resolve());
   const previewDelivered = useRef(new Set<string>());
   const previewFailed = useRef(new Set<string>());
   const incomingPreviews = useRef(new Map<string, { parts: string[]; received: number; created: number }>());
@@ -67,7 +70,7 @@ export function App() {
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
-  const [autoApprove, setAutoApprove] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(true);
   const [currentRoomCode, setCurrentRoomCode] = useState('');
   const [cacheProgress, setCacheProgress] = useState<Record<string, CacheProgress>>({});
   const [studentCacheProgress, setStudentCacheProgress] = useState<Record<string, CacheProgress>>({});
@@ -89,9 +92,6 @@ export function App() {
   const [endConfirm, setEndConfirm] = useState(false);
   const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
-  const [joinDialogOpen, setJoinDialogOpen] = useState(false);
-  const [switchingRoom, setSwitchingRoom] = useState(false);
-  const [switchCode, setSwitchCode] = useState('');
   const [copied, setCopied] = useState(false);
   const transferSummary = summarizeTransfers(sentFiles, studentCacheProgress);
   const [showDonePill, setShowDonePill] = useState(false);
@@ -205,7 +205,9 @@ export function App() {
     const base64 = dataUrl.split(',')[1];
     if (!base64 || base64.length > 380000 || !socket.connected ||
         previewDelivered.current.has(fileId)) return;
-    const size = 4900;
+    // Keep JSON frames under the relay's strict 8 KiB control-message
+    // cap. A compact 70 KB JPEG needs at most 14 such frames, not ~75.
+    const size = 6_800;
     const total = Math.ceil(base64.length / size);
     if (total > 80) return;
     for (let part = 0; part < total; part++) {
@@ -217,30 +219,41 @@ export function App() {
     previewDelivered.current.add(fileId);
   }
 
+  function prepareLocalPreview(fileId: string): void {
+    const shared = filesOnPhone.current.get(fileId);
+    if (!shared || shared.status === 'offline' || shared.status === 'rejected' ||
+        previewFailed.current.has(fileId) || firstPageImages.current.has(fileId) ||
+        previewRendering.current.has(fileId)) return;
+    previewRendering.current.add(fileId);
+    // Local thumbnail generation is separate from admission and delivery.
+    // Only one phone canvas/PDF.js render is active at a time; the network
+    // sender remains free to serve bytes concurrently.
+    previewRenderQueue.current = previewRenderQueue.current.catch(() => {}).then(async () => {
+      if (!filesOnPhone.current.has(fileId)) return;
+      perf.mark('preview:' + fileId);
+      try {
+        const url = await makeFirstPagePreview(shared.file);
+        perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
+        if (!filesOnPhone.current.has(fileId)) return;
+        firstPageImages.current.set(fileId, url);
+        // This is the phone's own File, not a JPEG sent back from the host.
+        setPhonePreviews(current => ({ ...current, [fileId]: url }));
+        if (shared.status === 'approved') sendPreview(fileId, url);
+      } catch {
+        if (perf.enabled) perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
+        previewFailed.current.add(fileId);
+      }
+    }).finally(() => previewRendering.current.delete(fileId));
+  }
+
   function preparePreview(fileId: string): void {
     const shared = filesOnPhone.current.get(fileId);
-    if (!shared || shared.status !== 'approved' ||
-        previewFailed.current.has(fileId) || previewDelivered.current.has(fileId)) return;
+    if (!shared || shared.status !== 'approved' || previewDelivered.current.has(fileId)) return;
     const saved = firstPageImages.current.get(fileId);
-    if (saved) { sendPreview(fileId, saved); return; }
-    if (previewRendering.current.has(fileId)) return;
-    previewRendering.current.add(fileId);
-    perf.mark('preview:' + fileId);
-    void makeFirstPagePreview(shared.file).then(url => {
-      perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
-      if (!filesOnPhone.current.has(fileId)) return;
-      firstPageImages.current.set(fileId, url);
-      setPhonePreviews(current => ({ ...current, [fileId]: url }));
-      sendPreview(fileId, url);
-    }).catch(() => {
-      // If preview generation fails, emit an explicit error sample.
-      // A failed preview must not block the original PDF transfer.
-      if (perf.enabled) {
-        perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
-      }
-      // Never repeatedly run an expensive failed decoder on every 20s sync.
-      previewFailed.current.add(fileId);
-    }).finally(() => previewRendering.current.delete(fileId));
+    if (saved) sendPreview(fileId, saved);
+    // Never start expensive PDF.js work synchronously on a file approval:
+    // the selection handler already schedules the independent local preview
+    // at an idle opportunity after the transfer has been announced.
   }
 
   useEffect(() => {
@@ -383,7 +396,8 @@ export function App() {
         if (typeof id !== 'string' || !Number.isSafeInteger(part) ||
             !Number.isSafeInteger(total) || typeof data !== 'string' ||
             Number(part) < 0 || Number(total) < 1 || Number(total) > 80 ||
-            Number(part) >= Number(total) || data.length > 5000) return;
+            Number(part) >= Number(total) || data.length > 7000 ||
+            (data.length > 5000 && Number(total) > 16)) return;
         let current = incomingPreviews.current.get(id);
         if (!current || current.parts.length !== total || Date.now() - current.created > 90_000) {
           perf.mark('preview-receive:' + id);
@@ -582,8 +596,15 @@ export function App() {
     setSentFiles(current => [...current, ...batch.map(({ fileId, entry }) => ({
       fileId, name: entry.file.name, size: entry.file.size, status: entry.status,
     }))]);
+    // Announce the files before doing any decoding. Start a low-resolution
+    // local preview shortly afterward; it never awaits host-side reception.
     if (!socket.connected || !hostAvailable) socket.wake();
     else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
+    // Local rendering is queued asynchronously after every file announcement.
+    // Never rely on background-tab timers/idle callbacks here: Firefox can
+    // suspend them, which would also delay the host's first-slide preview.
+    // PDF.js decoding happens off the main thread and thumbnails stay small.
+    for (const { fileId } of batch) prepareLocalPreview(fileId);
   }
 
   // The native file input fires 'cancel' when a picker is dismissed without
@@ -632,53 +653,6 @@ export function App() {
     } catch {
       setError('Could not clear this room’s local PDF cache. Please retry before ending the room.');
     } finally { setEnding(false); }
-  }
-
-  async function switchToRoom(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (switchingRoom) return;
-    const identifier = switchCode.trim();
-    if (!/^\d{6}$/.test(identifier) &&
-        !/^\d{6}\.[A-Za-z0-9_-]+$/.test(identifier)) {
-      setError('Enter a valid six-digit room code or invitation token.');
-      return;
-    }
-    setSwitchingRoom(true);
-    try {
-      // Discard only this room's cache; never touch files on student devices.
-      if (hostSession) {
-        await presentation.clearRoom();
-        socket.send({ type: 'room.end' });
-        sessionStorage.removeItem('flashview-host');
-      }
-      socket.close();
-      presentation.dispose();
-      setHostSession(null);
-      setStudents([]);
-      setDocuments([]);
-      setCacheProgress({});
-      setDownloadSpeed({});
-      hostFilesRef.current = [];
-      completionAcks.current.clear();
-      setStudentCacheProgress({});
-      setPhonePreviews({});
-      setJoinDialogOpen(false);
-      setJoinCode(identifier);
-      setJoinState('idle');
-      setError('');
-      modeRef.current = 'student';
-      setMode('student');
-      window.history.replaceState({}, '', '/?join=' + encodeURIComponent(identifier));
-      socket.connect({
-        role: 'student',
-        name: studentName.trim() || 'Student',
-        ...(/^\d{6}$/.test(identifier) ? { code: identifier } : { joinToken: identifier }),
-      });
-    } catch {
-      setError('Unable to clear the current room. Please try again.');
-    } finally {
-      setSwitchingRoom(false);
-    }
   }
 
   async function copyInvite(): Promise<void> {
@@ -733,19 +707,20 @@ export function App() {
                 <div className="action-icon">↗</div>
                 <h2>Create a room</h2>
                 <p>Set up a room on the smartboard and let students connect with a QR code.</p>
-                <label className="room-auto-approve">
-                  <input type="checkbox" checked={autoApprove}
-                    onChange={event => setAutoApprove(event.target.checked)}/>
-                  <span className="room-auto-text">
-                    <strong>Let people join without approval</strong>
-                    <small>{autoApprove ? 'Anyone with this room link can share PDFs.' :
-                      'Ask before someone joins the room.'}</small>
-                  </span>
-                  <span className="room-auto-switch" aria-hidden="true"/>
-                </label>
-                <button className="primary-button" disabled={busy} onClick={createRoom}>
-                  {busy ? 'Creating…' : 'Create a room'} <span>→</span>
-                </button>
+                <div className="room-creation-actions">
+                  <label className="room-auto-approve">
+                    <input type="checkbox" checked={!autoApprove}
+                      onChange={event => setAutoApprove(!event.target.checked)}/>
+                    <span className="room-auto-text">
+                      <strong>Require approval</strong>
+                      <small>{autoApprove ? 'Anyone with the code can join.' : 'Approve each participant.'}</small>
+                    </span>
+                    <span className="room-auto-switch" aria-hidden="true"/>
+                  </label>
+                  <button className="primary-button" disabled={busy} onClick={createRoom}>
+                    {busy ? 'Creating…' : 'Create a room'} <span>→</span>
+                  </button>
+                </div>
               </div>
               <div className="action-card join-card">
                 <span className="card-index">02 / SHARE</span>
@@ -792,10 +767,6 @@ export function App() {
                     </div>
                     <span className="room-admission-status">{hostSession.autoApprove ?
                       'Open room · No approval needed' : 'Approval required to join'}</span>
-                    <button type="button" className="outline-button join-another-button" onClick={() => {
-                      setSwitchCode('');
-                      setJoinDialogOpen(true);
-                    }}>Join another room <span aria-hidden="true">↗</span></button>
                   </div>
                 </section>
                 <section className="sidebar-participants" aria-label="Participants">
@@ -939,29 +910,6 @@ export function App() {
                 </div>
               </div>
             )}
-          </div>
-        )}
-        {joinDialogOpen && mode === 'host' && hostSession && (
-          <div className="dialog-backdrop" onMouseDown={event => {
-            if (event.target === event.currentTarget && !switchingRoom) setJoinDialogOpen(false);
-          }}>
-            <section className="end-dialog switch-dialog" role="dialog" aria-modal="true" aria-labelledby="switch-title">
-              <div className="eyebrow">JOIN ANOTHER ROOM</div>
-              <h2 id="switch-title">Have a room code?</h2>
-              <p>Enter the six-digit code shared by your teacher. Joining will end your current room and clear its saved PDF copies on this computer.</p>
-              <form className="join-form" onSubmit={event => void switchToRoom(event)}>
-                <label htmlFor="switch-code">ROOM CODE</label>
-                <input id="switch-code" inputMode="numeric" autoFocus required autoComplete="off"
-                  placeholder="000 000" value={switchCode} onChange={event => setSwitchCode(event.target.value.replace(/\s/g, ''))}/>
-                <label htmlFor="switch-name">YOUR NAME <span>(optional)</span></label>
-                <input id="switch-name" maxLength={32} placeholder="Your name" value={studentName}
-                  onChange={event => setStudentName(event.target.value)}/>
-                <div className="end-dialog-actions">
-                  <button type="button" className="outline-button" disabled={switchingRoom} onClick={() => setJoinDialogOpen(false)}>Cancel</button>
-                  <button type="submit" className="primary-button" disabled={switchingRoom}>{switchingRoom ? 'Joining…' : 'Join room →'}</button>
-                </div>
-              </form>
-            </section>
           </div>
         )}
         {endConfirm && mode === 'host' && hostSession && (

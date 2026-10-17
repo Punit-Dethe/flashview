@@ -5,6 +5,7 @@ import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
 import { formatBytes } from './pdf/Viewer';
 import { makeFirstPagePreview } from './pdf/firstPagePreview';
 import { PresentationHost } from './presentation';
+import { DocumentCard } from './DocumentCard';
 import { cleanExpiredRoomCaches, type CacheProgress } from './pdf/roomCache';
 import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
@@ -14,15 +15,6 @@ function retainNewestProgress(previous: CacheProgress | undefined, incoming: Cac
   if (!previous || previous.size !== incoming.size) return incoming;
   return incoming.bytes >= previous.bytes ? incoming : previous;
 }
-
-function visibleCachePercent(progress: CacheProgress | undefined, fileSize: number): string {
-  if (!progress || progress.bytes <= 0) return '0%';
-  if (progress.complete) return '100%';
-  // A 64 KiB write is already 0.125% of a max-size 50 MiB file.
-  // One decimal place prevents large PDFs appearing stuck at zero.
-  return Math.min(99.9, progress.bytes / Math.max(1, fileSize) * 100).toFixed(1) + '%';
-}
-
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string };
@@ -73,6 +65,9 @@ export function App() {
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
   const [cacheProgress, setCacheProgress] = useState<Record<string, CacheProgress>>({});
+  const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
+  const previewLookups = useRef(new Set<string>());
+  const previewRoom = useRef(initialSession?.code ?? '');
   const transferSamples = useRef(new Map<string, { bytes: number; time: number }>());
   const [downloadSpeed, setDownloadSpeed] = useState<Record<string, number>>({});
   const [endConfirm, setEndConfirm] = useState(false);
@@ -96,6 +91,26 @@ export function App() {
         setCacheProgress(existing => ({
           ...existing, [file.fileId]: retainNewestProgress(existing[file.fileId], progress),
         }));
+      }).catch(() => {});
+    }
+  }, [hostSession?.code, documents, presentation]);
+
+  // The host already stores each phone-produced first-page JPEG for the presenter.
+  // Reload thumbnails from that cache when a room recovers, with no new transfer.
+  useEffect(() => {
+    const roomCode = hostSession?.code ?? '';
+    if (previewRoom.current !== roomCode) {
+      previewRoom.current = roomCode;
+      previewLookups.current.clear();
+      setDocumentPreviews({});
+    }
+    if (!roomCode) return;
+    for (const file of documents) {
+      if (previewLookups.current.has(file.fileId)) continue;
+      previewLookups.current.add(file.fileId);
+      void presentation.getPreview(file.fileId).then(url => {
+        if (!url || previewRoom.current !== roomCode) return;
+        setDocumentPreviews(current => current[file.fileId] ? current : { ...current, [file.fileId]: url });
       }).catch(() => {});
     }
   }, [hostSession?.code, documents, presentation]);
@@ -273,7 +288,12 @@ export function App() {
           incomingPreviews.current.delete(id);
           perf.elapsed('preview_receive_ms', 'preview-receive:' + id);
           const url = 'data:image/jpeg;base64,' + current.parts.join('');
-          if (url.length <= 390000) void presentation.savePreview(id, url);
+          if (url.length <= 390000 && modeRef.current === 'host') {
+            // One preview serves both thumbnail grid and presenter; only the
+            // picture fade is animated, not the surrounding card geometry.
+            setDocumentPreviews(current => ({ ...current, [id]: url }));
+            void presentation.savePreview(id, url);
+          }
         }
       }
       if (type === 'file.state') {
@@ -643,47 +663,23 @@ export function App() {
                     <button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}
                       aria-label="Refresh submissions" title="Refresh submissions">↻</button>
                   </div>
-                  <div className="document-list">
-                    {documents.filter(f => f.status !== 'rejected').length === 0 &&
+                  <div className="document-list document-grid">
+                    {documents.filter(f => f.status !== 'rejected').length === 0 && (
                       <div className="empty-list">
                         <span className="empty-art" aria-hidden="true">▤</span>
                         <h3>Nothing shared yet</h3>
-                        <p>Once a participant sends a PDF, it will appear here automatically.</p>
-                      </div>}
+                        <p>Once a participant shares a PDF, it will appear here.</p>
+                      </div>
+                    )}
                     {documents.filter(f => f.status !== 'rejected').map(file => (
-                      <article className="document-row" key={file.fileId} style={fileAccentStyle(file.fileId)}>
-                        <div className="file-icon" aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></div>
-                        <div className="file-meta">
-                          <strong title={file.name}>{file.name}</strong>
-                          <span>{file.ownerName} · {formatBytes(file.size)}</span>
-                          <span className="cache-status" data-testid={'cache-' + file.fileId}>
-                            {cacheProgress[file.fileId]?.complete
-                              ? '✓ Fully cached on this computer'
-                              : cacheProgress[file.fileId]
-                                ? '↓ ' + formatBytes(cacheProgress[file.fileId].bytes) + ' / ' + formatBytes(file.size) + ' saved' +
-                                  (downloadSpeed[file.fileId] > 0 ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
-                                : 'Ready for progressive transfer'}
-                          </span>
-                          <div className="cache-percent-line">
-                            <span>{cacheProgress[file.fileId]?.complete ? 'Ready offline' :
-                              cacheProgress[file.fileId]?.bytes ? 'Downloading PDF' : 'Waiting for download'}</span>
-                            <strong className="cache-percent" data-testid={'percent-' + file.fileId}>
-                              {visibleCachePercent(cacheProgress[file.fileId], file.size)}
-                            </strong>
-                          </div>
-                          <div className={'file-progress-track' + (cacheProgress[file.fileId]?.complete ? ' is-complete' : '')}
-                            role="progressbar" aria-label={'Cached progress for ' + file.name} aria-valuemin={0} aria-valuemax={100}
-                            aria-valuenow={Math.min(100, Math.round((cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100))}>
-                            <span style={{ width: Math.min(100, (cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100) + '%' }}/>
-                          </div>
-                        </div>
-                        {file.status === 'approved' || cacheProgress[file.fileId]?.complete ?
-                          <button className="open-button" onClick={() => {
-                            try { presentation.open(file); }
-                            catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
-                          }}>Present <span aria-hidden="true">↗</span></button>
-                          : <span className="unavailable">{file.status === 'offline' ? 'Sender offline' : file.status}</span>}
-                      </article>
+                      <DocumentCard key={file.fileId}
+                        file={file} previewUrl={documentPreviews[file.fileId]}
+                        progress={cacheProgress[file.fileId]}
+                        bytesPerSecond={downloadSpeed[file.fileId]}
+                        onPresent={() => {
+                          try { presentation.open(file); }
+                          catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
+                        }}/>
                     ))}
                   </div>
 

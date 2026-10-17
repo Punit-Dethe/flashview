@@ -10,6 +10,13 @@ type RangeCallbacks = {
   resolve: (begin: number, bytes: Uint8Array) => void;
   reject: (reason: string) => void;
 };
+type StreamCallbacks = {
+  fileId: string; next: number; end: number;
+  timer: ReturnType<typeof setTimeout>;
+  processing: Promise<void>;
+  onData: (begin: number, data: Uint8Array) => Promise<void>;
+  resolve: () => void; reject: (reason: string) => void;
+};
 
 /**
  * Session-aware socket. A short network interruption does not erase browser File objects:
@@ -19,6 +26,7 @@ export class RoomSocket {
   private ws: WebSocket | null = null;
   private identity: Record<string, unknown> | null = null;
   private pending = new Map<string, RangeCallbacks>();
+  private streams = new Map<string, StreamCallbacks>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -177,6 +185,9 @@ export class RoomSocket {
             // Do not endlessly reconnect to a session that has been closed or rejected.
             this.stopped = true;
           }
+          if (message.type === 'stream.error' && typeof message.streamId === 'string') {
+            this.failStream(message.streamId, String(message.message ?? 'Stream interrupted'));
+          }
           if (message.type === 'range.error' && typeof message.requestId === 'string') {
             const pending = this.pending.get(message.requestId);
             if (pending) {
@@ -192,6 +203,33 @@ export class RoomSocket {
       } else if (event.data instanceof ArrayBuffer) {
         try {
           const { header, bytes } = decodeRangePacket(event.data);
+          if (header.type === 'stream.data') {
+            const id = header.requestId;
+            const state = this.streams.get(id);
+            if (!state || state.fileId !== header.fileId) return;
+            const piece = bytes.slice();
+            this.refreshStreamTimer(id, state);
+            // Serialize IndexedDB commits, even if later frames arrive before
+            // the first transaction completes. Credits follow durable commits.
+            state.processing = state.processing.then(async () => {
+              if (this.streams.get(id) !== state) return;
+              if (header.begin !== state.next ||
+                  piece.byteLength !== Math.min(256 * 1024, state.end - state.next)) {
+                this.failStream(id, 'Out-of-order stream frame'); return;
+              }
+              await state.onData(header.begin, piece);
+              if (this.streams.get(id) !== state) return;
+              state.next += piece.byteLength;
+              if (state.next === state.end) {
+                clearTimeout(state.timer);
+                this.streams.delete(id);
+                state.resolve();
+              } else if (!this.send({type:'stream.credit',streamId:id,credits:1})) {
+                this.failStream(id, 'Stream connection interrupted');
+              }
+            }).catch(error => this.failStream(id, String(error)));
+            return;
+          }
           const pending = this.pending.get(header.requestId);
           if (pending && pending.fileId === header.fileId && pending.begin === header.begin) {
             clearTimeout(pending.timer);
@@ -248,10 +286,11 @@ export class RoomSocket {
    */
   async sendBytesWhenReady(
     requestId: string, fileId: string, begin: number, bytes: ArrayBuffer,
+    type: 'range.data' | 'stream.data' = 'range.data',
   ): Promise<boolean> {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    const packet = encodeRangePacket({ type: 'range.data', requestId, fileId, begin }, bytes);
+    const packet = encodeRangePacket({ type, requestId, fileId, begin }, bytes);
     const maxBuffered = 4 * 1024 * 1024;
     const started = performance.now();
     while (this.ws === ws && ws.readyState === WebSocket.OPEN) {
@@ -308,7 +347,47 @@ export class RoomSocket {
     };
   }
 
+  /**
+   * Phase 3 experiment: one authorized contiguous stream; four frames of
+   * bounded credit. Only committed IndexedDB blocks replenish the sender.
+   */
+  openStream(
+    fileId: string, begin: number, end: number,
+    onData: (begin: number, data: Uint8Array) => Promise<void>,
+  ): {done: Promise<void>; cancel: () => void} {
+    const streamId = crypto.randomUUID().replaceAll('-', '');
+    let resolve!: () => void;
+    let reject!: (message: string) => void;
+    const done = new Promise<void>((ok, bad) => {
+      resolve = ok; reject = bad;
+    });
+    const state: StreamCallbacks = {
+      fileId, next: begin, end, onData, resolve,
+      reject, processing: Promise.resolve(),
+      timer: setTimeout(() => this.failStream(streamId, 'Stream stalled'), 25_000),
+    };
+    this.streams.set(streamId, state);
+    if (!this.send({type:'stream.open',streamId,fileId,begin,end})) {
+      this.failStream(streamId, 'Sender is offline');
+    }
+    return {done, cancel: () => this.failStream(streamId, 'Stream cancelled')};
+  }
+
+  private refreshStreamTimer(id: string, state: StreamCallbacks): void {
+    clearTimeout(state.timer);
+    state.timer = setTimeout(() => this.failStream(id, 'Stream stalled'), 25_000);
+  }
+  private failStream(id: string, reason: string): void {
+    const state = this.streams.get(id);
+    if (!state) return;
+    clearTimeout(state.timer);
+    this.streams.delete(id);
+    this.send({ type: 'stream.stop', streamId: id });
+    state.reject(reason);
+  }
+
   private failAll(message: string): void {
+    for (const id of [...this.streams.keys()]) this.failStream(id, message);
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(message);

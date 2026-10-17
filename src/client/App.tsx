@@ -55,6 +55,9 @@ export function App() {
   // offered first and handled independently of this cosmetic work.
   const previewRenderQueue = useRef<Promise<void>>(Promise.resolve());
   const previewDelivered = useRef(new Set<string>());
+  const senderStreams = useRef(new Map<string, {
+    fileId: string; next: number; end: number; credits: number; active: boolean;
+  }>());
   const previewFailed = useRef(new Set<string>());
   const incomingPreviews = useRef(new Map<string, { parts: string[]; received: number; created: number }>());
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -267,6 +270,8 @@ export function App() {
       // Only after a genuine drop is a preview eligible for retransmission.
       if (status === 'disconnected' && modeRef.current === 'student') {
         previewDelivered.current.clear();
+        // Old authorizations cannot survive a WebSocket reconnect.
+        senderStreams.current.clear();
       }
     };
     presentation.onProgress = progress => {
@@ -453,6 +458,18 @@ export function App() {
       if (type === 'range.request') {
         void respondToRange(message);
       }
+      if (type === 'stream.open' && modeRef.current === 'student') {
+        void acceptStream(message);
+      }
+      if (type === 'stream.credit' && modeRef.current === 'student') {
+        const stream = typeof message.streamId === 'string' ? senderStreams.current.get(message.streamId) : undefined;
+        if (stream && message.credits === 1) {
+          stream.credits++;
+          void pumpStream(message.streamId as string);
+        }
+      }
+      if (type === 'stream.stop' && typeof message.streamId === 'string')
+        senderStreams.current.delete(message.streamId);
       if (type === 'room.closed') {
         if (modeRef.current === 'host') void presentation.clearRoom().catch(() => {});
         setError('This classroom session has ended.');
@@ -490,6 +507,58 @@ export function App() {
   // The socket callback refers only to stable refs and state setters.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket]);
+
+  function acceptStream(message: ServerMessage): void {
+    const {streamId,fileId,begin,end,credits} = message;
+    if (typeof streamId !== 'string' || typeof fileId !== 'string' ||
+        !Number.isSafeInteger(begin) || !Number.isSafeInteger(end) || credits !== 4 ||
+        senderStreams.current.has(streamId) ||
+        (senderStreams.current.size >= 4)) return;
+    const file = filesOnPhone.current.get(fileId);
+    if (!file || file.status !== 'approved' || Number(begin) < 0 ||
+        Number(end) > file.file.size || Number(end) <= Number(begin)) {
+      socket.send({type:'stream.error',streamId,message:'PDF is no longer available'});
+      return;
+    }
+    senderStreams.current.set(streamId, {
+      fileId, next:Number(begin), end:Number(end), credits:4, active:false,
+    });
+    void pumpStream(streamId);
+  }
+
+  async function pumpStream(streamId: string): Promise<void> {
+    const stream = senderStreams.current.get(streamId);
+    if (!stream || stream.active) return;
+    stream.active = true;
+    try {
+      while (senderStreams.current.get(streamId) === stream &&
+             stream.credits > 0 && stream.next < stream.end && socket.connected) {
+        const file = filesOnPhone.current.get(stream.fileId);
+        if (!file || file.status !== 'approved') throw Error('PDF sharing stopped');
+        stream.credits--;
+        const begin = stream.next;
+        const end = Math.min(begin + 256 * 1024, stream.end);
+        const reading = perf.enabled ? performance.now() : 0;
+        const bytes = await file.file.slice(begin, end).arrayBuffer();
+        if (senderStreams.current.get(streamId) !== stream || !socket.connected) return;
+        if (perf.enabled) perf.record('sender_read_ms', performance.now() - reading, {bytes:bytes.byteLength});
+        if (!await socket.sendBytesWhenReady(streamId, stream.fileId, begin, bytes, 'stream.data'))
+          throw Error('Network sender is busy');
+        if (senderStreams.current.get(streamId) !== stream) return;
+        stream.next = end;
+      }
+      if (stream.next === stream.end) senderStreams.current.delete(streamId);
+    } catch {
+      if (senderStreams.current.get(streamId) === stream) {
+        senderStreams.current.delete(streamId);
+        socket.send({type:'stream.error',streamId,message:'Cannot continue PDF stream'});
+      }
+    } finally {
+      stream.active = false;
+      if (senderStreams.current.get(streamId) === stream && stream.credits > 0)
+        void pumpStream(streamId);
+    }
+  }
 
   async function respondToRange(message: ServerMessage): Promise<void> {
     const { requestId, fileId, begin, end } = message;

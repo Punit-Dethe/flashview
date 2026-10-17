@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import type { PdfManifest } from '../shared/protocol';
 import { isPdfName } from '../shared/fileTypes';
 import type { CacheProgress } from './pdf/roomCache';
@@ -79,7 +79,7 @@ export function DocumentCard({file,previewUrl,progress,bytesPerSecond=0,onPresen
       disabled={!cached||saving} onClick={onDownload}
       aria-label={'Download '+file.name} aria-busy={saving}
       title={cached?'Save the complete original file':progressLabel}
-      style={{'--p':percent+'%'} as React.CSSProperties}>
+      style={{'--p':percent+'%'} as CSSProperties}>
       <span>{saving?'Preparing…':cached?'Download ↓':'Receiving… '+Math.round(percent)+'%'}</span>
     </button>}
   </article>;

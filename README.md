@@ -1,6 +1,6 @@
 # FlashView
 
-**Instant PDF presentation across devices.** A teacher opens FlashView on a smartboard and receives a room instantly. A student scans its QR code from their phone, chooses a PDF, and the teacher can view its pages without waiting for the entire file to upload.
+**Instant PDF presentation across devices.** A teacher creates a room on FlashView from a smartboard. A student scans its QR code from their phone, chooses a PDF, and the teacher can view its pages without waiting for the entire file to upload.
 
 [Read the full technical roadmap and design decisions](./plan.md).
 
@@ -12,11 +12,13 @@
 - No cloud file storage. The sender **must stay online until the entire PDF is cached on the classroom computer**; afterward, the PDF is available without the sender. The relay can access document bytes in transit (not end-to-end encrypted).
 - Direct P2P and upload-to-storage are deliberately out of scope for the first release.
 
-## Premium dark workspace (October 2026)
+## Premium dark classroom workspace (October 2026)
 
-The default homepage is a single dark classroom workspace. Opening it automatically creates a short-lived room; refresh reuses the host session in that browser tab. The invitation area contains the live QR code, six-digit room number, Copy invite link and **Join another room**. Switching rooms ends the current session and clears only its local classroom cache. Mobile layouts stack the QR above the invitation controls.
+FlashView opens to the original **Create a room / Join a room** choices. Room creation happens only after clicking Create a room. Refreshing an existing host room restores the current session in that tab; a student's `?join=` invitation opens the student flow directly.
 
-A student opening a **?join=** invitation goes straight to the joining flow without creating a room. **?manual=1** retains the older explicit room-creation entry point for compatibility and browser baseline tests. Cloudflare account deployment is separate from GitHub source changes; pushing to a branch does not itself publish a Worker unless Cloudflare Git builds are connected.
+After creating a room, the teacher sees a dark split-pane workspace. On desktop, the **left invitation panel stays pinned** with the QR code, six-digit room number, Copy link and End session controls side by side, and Join another room below. The **right document column scrolls independently**, keeping the QR accessible even when many students submit PDFs. Pending student approvals live in the document pane. On smaller screens the panels stack and use standard page scrolling.
+
+Joining another room ends the current room and removes its cached PDF bytes from that computer after the teacher submits the new code. Ending a session continues to require confirmation and cleanup. The PDF transfer protocol, background caching, and fullscreen presenter are unchanged.
 
 ## Local development
 
@@ -27,7 +29,7 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173**. A room is created automatically and the QR code appears on the homepage. Open a separate private browser window, select **Join another room**, enter the six-digit room code, allow the student, and choose a PDF. Student approval also allows their documents to be shared; there is no separate PDF approval step. For an explicit Create Room screen during tests, open **/?manual=1**.
+Open **http://localhost:5173** and click **Create a room** to show the teacher's QR code. Open a separate private browser window, choose **Join a session**, enter the six-digit room code, and allow the student from the teacher's right-hand document panel. The student can then choose a PDF. Student approval also allows their documents to be shared; there is no separate file-approval step.
 
 The QR produced by a localhost development server will not be reachable from a separate phone. Use a public HTTPS deployment or an HTTPS tunnel exposing the Vite frontend for cross-device testing.
 

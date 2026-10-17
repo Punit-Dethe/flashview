@@ -216,3 +216,294 @@ html, body { background: var(--canvas); }
 .premium-app .sent-row .plain-action { color: #c3c5d7; }
 .premium-app .simple-state { background: #1a1b21; border-color: #383942; }
 .premium-app .waiting-card h2 { color: #f0f0f5; }
+
+/* Room workspace v2 — pinned invitation on the left, independently scrollable documents.
+   There is deliberately no global page scroll when a desktop classroom is open. */
+.premium-app.is-host-workspace {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.premium-app.is-host-workspace .site-header { flex: 0 0 66px; }
+.premium-app.is-host-workspace .site-footer { display: none; }
+.premium-app.is-host-workspace .app-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.premium-app.is-host-workspace .premium-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 0 29px 0;
+}
+.premium-app .workspace-topline {
+  flex: 0 0 auto;
+  padding: 19px 0 17px;
+  border-bottom: 1px solid #282a31;
+}
+.premium-app .workspace-live-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #aab5b1;
+  font-size: 11px;
+  font-weight: 520;
+}
+.premium-app .workspace-split {
+  display: grid;
+  grid-template-columns: minmax(302px, 348px) minmax(0, 1fr);
+  gap: clamp(30px, 4vw, 63px);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.premium-app .workspace-left {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 27px 0 24px;
+}
+.premium-app .workspace-invite-heading { flex: 0 0 auto; }
+.premium-app .workspace-invite-heading .eyebrow {
+  font-size: 10px;
+  letter-spacing: .12em;
+  color: #a9abb9;
+}
+.premium-app .workspace-invite-heading h1 {
+  font-size: clamp(26px, 2.55vw, 35px);
+  line-height: 1.18;
+  font-weight: 585;
+  letter-spacing: -.055em;
+  color: #f4f4f8;
+  margin: 11px 0 10px;
+}
+.premium-app .workspace-invite-heading p {
+  color: #898c9b;
+  font-size: 12px;
+  line-height: 1.62;
+  max-width: 315px;
+  margin: 0;
+}
+.premium-app .premium-invite {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+  margin-top: 23px;
+  padding: 0;
+  border: 1px solid #32343d;
+  border-radius: 16px;
+  background: linear-gradient(160deg,#1e2027,#1a1b21);
+  overflow: hidden;
+}
+.premium-app .qr-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  border-left: none;
+  border-bottom: 1px solid #30313a;
+  background: rgba(255,255,255,.016);
+  padding: 21px 20px 16px;
+}
+.premium-app .qr-plate {
+  width: min(100%, 216px);
+  height: auto;
+  aspect-ratio: 1;
+  padding: 12px;
+  border-radius: 13px;
+  margin: 0;
+  background: #fff;
+}
+.premium-app .qr-plate svg { width: 100%; height: 100%; display: block; }
+.premium-app .qr-side > span {
+  color: #9293a0;
+  font-size: 10px;
+  letter-spacing: .105em;
+}
+.premium-app .invite-content {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 20px 21px 19px;
+  min-width: 0;
+}
+.premium-app .room-code-label {
+  text-align: center;
+  color: #9b9ba8;
+  font-size: 10px;
+  letter-spacing: .14em;
+}
+.premium-app .room-code {
+  color: #f6f6fa;
+  text-align: center;
+  font-size: clamp(39px,3.2vw,50px);
+  line-height: 1.14;
+  font-weight: 545;
+  letter-spacing: .14em;
+  margin: 7px 0 18px;
+  font-variant-numeric: tabular-nums;
+}
+.premium-app .invite-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+}
+.premium-app .invite-actions .primary-button,
+.premium-app .invite-actions .outline-button {
+  width: 100%;
+  min-width: 0;
+  font-size: 11px;
+  gap: 8px;
+  padding: 11px 8px;
+  min-height: 40px;
+  white-space: nowrap;
+}
+.premium-app .invite-actions .end-room-button {
+  background: #282931;
+  border-color: #42434c;
+  color: #dedee8;
+}
+.premium-app .invite-actions .end-room-button:hover:not(:disabled) {
+  background: #352b30;
+  border-color: #5b454a;
+  color: #fff1ef;
+}
+.premium-app .join-another-button {
+  width: 100%;
+  margin-top: 9px;
+  min-height: 41px;
+  display: flex;
+  justify-content: center;
+  font-size: 11px;
+  color: #d7d8e4;
+  background: #22232b;
+  border: 1px solid #373943;
+}
+.premium-app .workspace-invite-footer {
+  flex: 0 0 auto;
+  margin-top: 19px;
+  padding: 0 7px;
+}
+.premium-app .workspace-invite-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #b9c0c0;
+  font-size: 11px;
+  font-weight: 530;
+}
+.premium-app .workspace-invite-footer p {
+  color: #717581;
+  line-height: 1.55;
+  font-size: 11px;
+  margin: 9px 0 0 16px;
+}
+.premium-app .workspace-right {
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 27px 9px 42px 0;
+  scrollbar-width: thin;
+  scrollbar-color: #444651 transparent;
+}
+.premium-app .workspace-right::-webkit-scrollbar { width: 8px; }
+.premium-app .workspace-right::-webkit-scrollbar-thumb {
+  background: #444651;
+  border-radius: 99px;
+}
+.premium-app .workspace-right .document-column {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  width: 100%;
+}
+.premium-app .workspace-right .list-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0;
+  padding: 6px 0 22px;
+}
+.premium-app .workspace-right .list-heading-title .eyebrow {
+  color: #9092a0;
+  margin-bottom: 12px;
+}
+.premium-app .workspace-right .list-heading-title h2 {
+  font-size: clamp(24px, 2.6vw, 34px);
+  line-height: 1.2;
+  letter-spacing: -.047em;
+}
+.premium-app .workspace-right .list-heading-title p {
+  color: #8d8f9d;
+  margin-top: 9px;
+}
+.premium-app .workspace-right .pending-panel {
+  margin: 5px 0 21px;
+}
+.premium-app .workspace-right .document-list {
+  border-radius: 12px;
+  border-color: #2d2f37;
+}
+.premium-app .workspace-right .empty-list {
+  min-height: 260px;
+}
+.premium-app .workspace-right .document-row {
+  padding: 17px 18px;
+}
+.premium-app .workspace-right .document-row .file-meta { min-width: 0; }
+.premium-app .workspace-right .open-button { flex: 0 0 auto; align-self: center; }
+@media (max-height: 820px) and (min-width: 761px) {
+  .premium-app .workspace-left { padding-top: 20px; padding-bottom: 12px; }
+  .premium-app .workspace-invite-heading h1 { font-size: 27px; margin: 7px 0 6px; }
+  .premium-app .workspace-invite-heading p { line-height: 1.4; }
+  .premium-app .premium-invite { margin-top: 14px; }
+  .premium-app .qr-side { padding: 14px 13px 10px; gap: 8px; }
+  .premium-app .qr-plate { width: min(100%, 175px); }
+  .premium-app .invite-content { padding: 14px 18px 15px; }
+  .premium-app .room-code { font-size: 42px; margin-bottom: 11px; }
+  .premium-app .workspace-invite-footer { margin-top: 12px; }
+  .premium-app .workspace-invite-footer p { line-height: 1.4; }
+}
+@media (max-height: 620px) and (min-width: 761px) {
+  .premium-app .workspace-invite-heading p { display: none; }
+  .premium-app .qr-plate { width: min(100%, 132px); }
+  .premium-app .qr-side { padding: 8px; }
+  .premium-app .room-code { font-size: 32px; margin: 5px 0 8px; }
+  .premium-app .invite-content { padding: 10px 15px; }
+  .premium-app .workspace-invite-footer p { display: none; }
+  .premium-app .workspace-invite-footer { margin-top: 8px; }
+  .premium-app .invite-actions .primary-button, .premium-app .invite-actions .outline-button { min-height: 34px; padding: 7px 6px; }
+  .premium-app .join-another-button { min-height: 34px; }
+}
+@media (max-width: 760px) {
+  .premium-app.is-host-workspace { height: auto; min-height: 100dvh; overflow: visible; }
+  .premium-app.is-host-workspace .app-content { display: block; overflow: visible; }
+  .premium-app.is-host-workspace .site-header { flex-basis: auto; }
+  .premium-app.is-host-workspace .premium-workspace { display: block; padding: 0 19px 48px; overflow: visible; }
+  .premium-app .workspace-split { display: flex; flex-direction: column; gap: 0; overflow: visible; }
+  .premium-app .workspace-left { padding: 26px 0 0; overflow: visible; }
+  .premium-app .workspace-invite-heading h1 { font-size: 32px; }
+  .premium-app .premium-invite { max-width: 420px; width: 100%; margin: 19px auto 0; }
+  .premium-app .qr-plate { width: min(100%, 210px); }
+  .premium-app .workspace-invite-footer { max-width: 420px; width: 100%; margin: 15px auto 0; }
+  .premium-app .workspace-right { overflow: visible; padding: 36px 0 20px; scrollbar-gutter: auto; }
+  .premium-app .workspace-right .list-heading { align-items: flex-start; }
+  .premium-app .workspace-right .list-heading-title h2 { font-size: 27px; }
+}

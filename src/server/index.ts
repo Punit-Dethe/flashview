@@ -102,6 +102,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
       students: students(room), files: [...room.files.values()],
     });
+    for (const student of room.students.values()) send(student.ws, { type: 'host.online' });
     return;
   }
   if (msg.role === 'student') {

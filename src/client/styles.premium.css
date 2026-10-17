@@ -790,6 +790,16 @@ html, body { background: var(--canvas); }
 }
 .premium-app .document-card-open:hover > span,
 .premium-app .document-card-open:focus-visible > span { opacity: 1; transform: translateY(0); }
+/* Non-PDF files have no in-browser preview: show a stable type badge and
+   a visible download action only after the complete binary is cached. */
+.premium-app .document-card-download > span { opacity: 1; transform: none; }
+.premium-app .document-card-download:disabled { cursor: default; }
+.premium-app .document-card-download:disabled > span {
+  color: #aeb0bf; background: rgba(20,21,27,.72);
+  box-shadow: none;
+}
+.premium-app .document-pdf-symbol > span { font-size: 11px; letter-spacing: .035em; }
+.premium-app .student-file-pdf-mark { font-size: 11px; letter-spacing: .02em; }
 .premium-app .document-not-ready { display: none; }
 .premium-app .document-card-info {
   flex: 0 0 74px;

@@ -525,26 +525,41 @@ export function App() {
     const input = event.target;
     const selectedFiles = Array.from(input.files ?? []);
     input.value = '';
+    // Validate the whole file-picker selection before presenting any of it.
+    // Registering one PDF at a time could flash "Done" while later PDFs in
+    // the same selection were still being checked.
+    const batch: Array<{ fileId: string; entry: SharedFile }> = [];
     for (const file of selectedFiles) {
       if (file.size > MAX_PDF_BYTES || file.size === 0 || !file.name.toLowerCase().endsWith('.pdf')) {
         setError('Please choose PDFs smaller than 50 MB.');
         continue;
       }
-      const prefix = await file.slice(0, 1024).text();
-      if (!prefix.includes('%PDF-')) {
-        setError(file.name + ' is not a valid PDF.');
-        continue;
+      try {
+        const prefix = await file.slice(0, 1024).text();
+        if (!prefix.includes('%PDF-')) {
+          setError(file.name + ' is not a valid PDF.');
+          continue;
+        }
+        batch.push({
+          fileId: crypto.randomUUID().replaceAll('-', ''),
+          entry: { file, status: 'announcing' },
+        });
+      } catch {
+        setError(file.name + ' could not be read. Please choose it again.');
       }
-      const fileId = crypto.randomUUID().replaceAll('-', '');
-      const entry: SharedFile = { file, status: 'announcing' };
+    }
+    if (!batch.length) return;
+    for (const { fileId, entry } of batch) {
       filesOnPhone.current.set(fileId, entry);
       perf.mark('offer:' + fileId);
-      setSentFiles(current => [...current, { fileId, name: file.name, size: file.size, status: 'announcing' }]);
-      setPillDismissed(false);
-      setPillLeaving(false);
-      if (!socket.connected || !hostAvailable) socket.wake();
-      else offerLocalFile(fileId, entry);
     }
+    setSentFiles(current => [...current, ...batch.map(({ fileId, entry }) => ({
+      fileId, name: entry.file.name, size: entry.file.size, status: entry.status,
+    }))]);
+    setPillDismissed(false);
+    setPillLeaving(false);
+    if (!socket.connected || !hostAvailable) socket.wake();
+    else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
   }
 
   // The native file input fires 'cancel' when a picker is dismissed without

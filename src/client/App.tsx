@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { MAX_PDF_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
@@ -70,7 +70,7 @@ export function App() {
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
-  const [autoApprove, setAutoApprove] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(true);
   const [currentRoomCode, setCurrentRoomCode] = useState('');
   const [cacheProgress, setCacheProgress] = useState<Record<string, CacheProgress>>({});
   const [studentCacheProgress, setStudentCacheProgress] = useState<Record<string, CacheProgress>>({});
@@ -92,9 +92,6 @@ export function App() {
   const [endConfirm, setEndConfirm] = useState(false);
   const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
-  const [joinDialogOpen, setJoinDialogOpen] = useState(false);
-  const [switchingRoom, setSwitchingRoom] = useState(false);
-  const [switchCode, setSwitchCode] = useState('');
   const [copied, setCopied] = useState(false);
   const transferSummary = summarizeTransfers(sentFiles, studentCacheProgress);
   const [showDonePill, setShowDonePill] = useState(false);
@@ -654,53 +651,6 @@ export function App() {
     } finally { setEnding(false); }
   }
 
-  async function switchToRoom(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (switchingRoom) return;
-    const identifier = switchCode.trim();
-    if (!/^\d{6}$/.test(identifier) &&
-        !/^\d{6}\.[A-Za-z0-9_-]+$/.test(identifier)) {
-      setError('Enter a valid six-digit room code or invitation token.');
-      return;
-    }
-    setSwitchingRoom(true);
-    try {
-      // Discard only this room's cache; never touch files on student devices.
-      if (hostSession) {
-        await presentation.clearRoom();
-        socket.send({ type: 'room.end' });
-        sessionStorage.removeItem('flashview-host');
-      }
-      socket.close();
-      presentation.dispose();
-      setHostSession(null);
-      setStudents([]);
-      setDocuments([]);
-      setCacheProgress({});
-      setDownloadSpeed({});
-      hostFilesRef.current = [];
-      completionAcks.current.clear();
-      setStudentCacheProgress({});
-      setPhonePreviews({});
-      setJoinDialogOpen(false);
-      setJoinCode(identifier);
-      setJoinState('idle');
-      setError('');
-      modeRef.current = 'student';
-      setMode('student');
-      window.history.replaceState({}, '', '/?join=' + encodeURIComponent(identifier));
-      socket.connect({
-        role: 'student',
-        name: studentName.trim() || 'Student',
-        ...(/^\d{6}$/.test(identifier) ? { code: identifier } : { joinToken: identifier }),
-      });
-    } catch {
-      setError('Unable to clear the current room. Please try again.');
-    } finally {
-      setSwitchingRoom(false);
-    }
-  }
-
   async function copyInvite(): Promise<void> {
     if (!joinLink) return;
     try {
@@ -753,19 +703,20 @@ export function App() {
                 <div className="action-icon">↗</div>
                 <h2>Create a room</h2>
                 <p>Set up a room on the smartboard and let students connect with a QR code.</p>
-                <label className="room-auto-approve">
-                  <input type="checkbox" checked={autoApprove}
-                    onChange={event => setAutoApprove(event.target.checked)}/>
-                  <span className="room-auto-text">
-                    <strong>Let people join without approval</strong>
-                    <small>{autoApprove ? 'Anyone with this room link can share PDFs.' :
-                      'Ask before someone joins the room.'}</small>
-                  </span>
-                  <span className="room-auto-switch" aria-hidden="true"/>
-                </label>
-                <button className="primary-button" disabled={busy} onClick={createRoom}>
-                  {busy ? 'Creating…' : 'Create a room'} <span>→</span>
-                </button>
+                <div className="room-creation-actions">
+                  <label className="room-auto-approve">
+                    <input type="checkbox" checked={!autoApprove}
+                      onChange={event => setAutoApprove(!event.target.checked)}/>
+                    <span className="room-auto-text">
+                      <strong>Require approval</strong>
+                      <small>{autoApprove ? 'Anyone with the code can join.' : 'Approve each participant.'}</small>
+                    </span>
+                    <span className="room-auto-switch" aria-hidden="true"/>
+                  </label>
+                  <button className="primary-button" disabled={busy} onClick={createRoom}>
+                    {busy ? 'Creating…' : 'Create room'} <span>→</span>
+                  </button>
+                </div>
               </div>
               <div className="action-card join-card">
                 <span className="card-index">02 / SHARE</span>
@@ -812,10 +763,6 @@ export function App() {
                     </div>
                     <span className="room-admission-status">{hostSession.autoApprove ?
                       'Open room · No approval needed' : 'Approval required to join'}</span>
-                    <button type="button" className="outline-button join-another-button" onClick={() => {
-                      setSwitchCode('');
-                      setJoinDialogOpen(true);
-                    }}>Join another room <span aria-hidden="true">↗</span></button>
                   </div>
                 </section>
                 <section className="sidebar-participants" aria-label="Participants">
@@ -959,29 +906,6 @@ export function App() {
                 </div>
               </div>
             )}
-          </div>
-        )}
-        {joinDialogOpen && mode === 'host' && hostSession && (
-          <div className="dialog-backdrop" onMouseDown={event => {
-            if (event.target === event.currentTarget && !switchingRoom) setJoinDialogOpen(false);
-          }}>
-            <section className="end-dialog switch-dialog" role="dialog" aria-modal="true" aria-labelledby="switch-title">
-              <div className="eyebrow">JOIN ANOTHER ROOM</div>
-              <h2 id="switch-title">Have a room code?</h2>
-              <p>Enter the six-digit code shared by your teacher. Joining will end your current room and clear its saved PDF copies on this computer.</p>
-              <form className="join-form" onSubmit={event => void switchToRoom(event)}>
-                <label htmlFor="switch-code">ROOM CODE</label>
-                <input id="switch-code" inputMode="numeric" autoFocus required autoComplete="off"
-                  placeholder="000 000" value={switchCode} onChange={event => setSwitchCode(event.target.value.replace(/\s/g, ''))}/>
-                <label htmlFor="switch-name">YOUR NAME <span>(optional)</span></label>
-                <input id="switch-name" maxLength={32} placeholder="Your name" value={studentName}
-                  onChange={event => setStudentName(event.target.value)}/>
-                <div className="end-dialog-actions">
-                  <button type="button" className="outline-button" disabled={switchingRoom} onClick={() => setJoinDialogOpen(false)}>Cancel</button>
-                  <button type="submit" className="primary-button" disabled={switchingRoom}>{switchingRoom ? 'Joining…' : 'Join room →'}</button>
-                </div>
-              </form>
-            </section>
           </div>
         )}
         {endConfirm && mode === 'host' && hostSession && (

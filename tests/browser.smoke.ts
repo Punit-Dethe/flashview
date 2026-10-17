@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, firefox, type Page } from 'playwright';
@@ -1069,3 +1070,68 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     child.kill('SIGTERM');
   }
 });
+
+test('network packet sizes 128/256 KiB preserve exact original PDF bytes in 64 KiB browser cache', { timeout: 110000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const root = 'http://127.0.0.1:' + port;
+  const fixture = makePdf(3900);
+  const expectedDigest = createHash('sha256').update(fixture).digest('hex');
+  try {
+    for (const packetKiB of [128, 256]) {
+      const host = await browser.newPage();
+      const student = await browser.newPage();
+      try {
+        await host.goto(root + '/?packet=' + packetKiB);
+        await host.getByRole('button', {name: /Create a room/}).click();
+        const code = (await host.locator('.room-code').innerText()).trim();
+        await host.locator('.connection.connected').waitFor();
+        await student.goto(root);
+        await student.locator('#code').fill(code);
+        await student.getByRole('button', {name: /Join room/}).click();
+        await student.locator('.student-drive').waitFor();
+        await student.locator('input[type=file]').setInputFiles({
+          name: 'packet-check.pdf', mimeType: 'application/pdf', buffer: fixture,
+        });
+        await host.locator('.document-row .cache-ring[aria-valuenow="100"]')
+          .waitFor({timeout:30000});
+        const stored = await host.evaluate(async room => {
+          const request = indexedDB.open('flashview-room-cache');
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          const chunks = await new Promise<Array<{index:number;room:string;data:ArrayBuffer}>>((resolve, reject) => {
+            const tx = db.transaction('chunks', 'readonly');
+            const get = tx.objectStore('chunks').getAll();
+            get.onsuccess = () => resolve(get.result);
+            get.onerror = () => reject(get.error);
+          });
+          db.close();
+          const parts = chunks.filter(x => x.room === room).sort((a,b) => a.index-b.index);
+          const length = parts.reduce((sum,x) => sum+x.data.byteLength, 0);
+          const all = new Uint8Array(length);
+          let position = 0;
+          for (const piece of parts) {
+            all.set(new Uint8Array(piece.data), position);
+            position += piece.data.byteLength;
+          }
+          const digest = await crypto.subtle.digest('SHA-256', all);
+          return { length, count: parts.length, indices: parts.map(x => x.index),
+            sha256: Array.from(new Uint8Array(digest)).map(x => x.toString(16).padStart(2,'0')).join('') };
+        }, code);
+        assert.equal(stored.length, fixture.length, 'Full file must survive packet splitting');
+        assert.ok(stored.count > 6, 'Multi-packet test fixture must exercise multiple groups');
+        assert.deepEqual(stored.indices, Array.from({length:stored.count}, (_,i)=>i));
+        assert.equal(stored.sha256, expectedDigest, 'All cached PDF bytes must match exactly');
+      } finally {
+        await host.close();
+        await student.close();
+      }
+    }
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});
+

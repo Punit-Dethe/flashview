@@ -2,12 +2,13 @@ import { MAX_RANGE_BYTES, ROOM_TTL_MS, type PdfManifest } from '../../shared/pro
 import type { RoomSocket } from '../socket';
 import { perf } from '../perf';
 import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
+import { packetChunksFromQuery, selectMissingChunkGroup } from './networkPacket';
 
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
-// Foreground page reads use separate requests and can join in-flight chunks.
+// PDF viewing remains passive and does not request network bytes.
 const BACKGROUND_WINDOW = WINDOW_INITIAL;
-const MAX_BACKGROUND_REQUESTS = 16; // Leaves >30 available server slots for foreground requests.
+const MAX_BACKGROUND_REQUESTS = 16; // Each slot represents one network request, not one cache block.
 const DB_NAME = 'flashview-room-cache';
 const DB_VERSION = 2;
 const MAX_MEMORY_BYTES = 48 * 1024 * 1024;
@@ -183,6 +184,9 @@ export class RoomPdfCache {
   private working = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private activeBackground = new Set<Promise<void>>();
+  // Adaptive limits count outstanding network requests, not individual 64 KiB
+  // persistent blocks. The baseline at 64 KiB retains the same request count.
+  private activePerFileRequests = new Map<string, number>();
   private reserved = new Map<string, Set<number>>();
   private nextIndex = new Map<string, number>();
   private cooldown = new Map<string, number>();
@@ -190,6 +194,7 @@ export class RoomPdfCache {
   private readonly adaptive = new Map<string, AdaptiveTransferWindow>();
   // Keep a fixed scheduler available for identical-file A/B tests.
   private readonly fixedTransfer = new URLSearchParams(location.search).get('transfer') === 'fixed';
+  private readonly networkChunks = packetChunksFromQuery(location.search);
   private storageFailedFiles = new Set<string>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
@@ -341,6 +346,66 @@ export class RoomPdfCache {
     this.inFlight.set(key, promise);
     return promise;
   }
+  /**
+   * One 128/256 KiB WebSocket range response, saved as separate 64 KiB cache
+   * blocks. Keep the existing independent IndexedDB transaction per block:
+   * changing storage batching belongs to the NEXT isolated experiment.
+   */
+  private async chunkGroup(file: PdfManifest, indices: number[]): Promise<void> {
+    if (indices.length < 2 || indices.length > 4) throw Error('Invalid network group');
+    const begin = indices[0] * CHUNK_BYTES;
+    const end = Math.min(file.size, (indices[indices.length - 1] + 1) * CHUNK_BYTES);
+    if (end - begin > MAX_RANGE_BYTES) throw Error('Network range too large');
+    const networkStartedAt = performance.now();
+    const data = await new Promise<Uint8Array>((resolve, reject) => {
+      if (!this.socket.connected) return reject(Error('The sender is offline. Cached pages remain available.'));
+      this.socket.requestRange(file.fileId, begin, end, (start, bytes) => {
+        if (start !== begin || bytes.byteLength !== end - begin) {
+          reject(Error('Incomplete PDF byte range')); return;
+        }
+        if (!this.fixedTransfer && !this.stopped)
+          this.tuner(file.fileId).success(performance.now() - networkStartedAt);
+        resolve(bytes);
+      }, reason => {
+        if (!this.fixedTransfer && !this.stopped) this.tuner(file.fileId).failure();
+        reject(Error(reason));
+      });
+    });
+    if (this.stopped) throw Error('Classroom cache closed');
+    await Promise.all(indices.map(async index => {
+      const key = this.key(file.fileId, index);
+      const offset = index * CHUNK_BYTES - begin;
+      const piece = data.slice(offset, Math.min(offset + CHUNK_BYTES, data.byteLength));
+      this.putMemory(key, piece);
+      const writingSince = perf.enabled ? performance.now() : 0;
+      const saving = saveChunk({
+        key, room: this.roomId, document: this.roomId + '/' + file.fileId,
+        index, data: piece.slice().buffer,
+      });
+      this.pendingWrites.add(saving);
+      try {
+        await saving;
+        if (perf.enabled) perf.record('cache_write_ms', performance.now() - writingSince, { bytes: piece.byteLength });
+        if (this.stopped) return;
+        const set = await this.indexSet(file.fileId);
+        set.add(index);
+        const state = completion(file, set);
+        if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
+        this.onProgress(state);
+        this.notifyCacheWaiters(key);
+      } catch {
+        this.warning();
+        this.storageFailedFiles.add(file.fileId);
+        this.jobs.delete(file.fileId);
+        // A persisted chunk is never acknowledged before its transaction
+        // commits. In-memory bytes can still satisfy existing viewers.
+        this.notifyCacheWaiters(key);
+      } finally {
+        this.pendingWrites.delete(saving);
+      }
+    }));
+  }
+
   private notifyCacheWaiters(key: string): void {
     const waiting = this.cacheWaiters.get(key);
     if (!waiting) return;
@@ -445,7 +510,7 @@ export class RoomPdfCache {
     }
     return value;
   }
-  private reserveNext(file: PdfManifest, cached: Set<number>): number | null {
+  private reserveNext(file: PdfManifest, cached: Set<number>): number[] {
     const total = Math.ceil(file.size / CHUNK_BYTES);
     let reserved = this.reserved.get(file.fileId);
     if (!reserved) {
@@ -453,17 +518,13 @@ export class RoomPdfCache {
       this.reserved.set(file.fileId, reserved);
     }
     const currentWindow = this.fixedTransfer ? BACKGROUND_WINDOW : this.tuner(file.fileId).limit;
-    if (reserved.size >= currentWindow) return null;
-    let cursor = this.nextIndex.get(file.fileId) ?? 0;
-    for (let checked = 0; checked < total; checked++) {
-      const index = (cursor + checked) % total;
-      if (!cached.has(index) && !reserved.has(index)) {
-        reserved.add(index);
-        this.nextIndex.set(file.fileId, (index + 1) % total);
-        return index;
-      }
-    }
-    return null;
+    if ((this.activePerFileRequests.get(file.fileId) ?? 0) >= currentWindow) return [];
+    const cursor = this.nextIndex.get(file.fileId) ?? 0;
+    const selected = selectMissingChunkGroup(total, cursor, cached, reserved, this.networkChunks);
+    if (!selected.length) return [];
+    for (const index of selected) reserved.add(index);
+    this.nextIndex.set(file.fileId, (selected[selected.length - 1] + 1) % total);
+    return selected;
   }
 
   private async work(): Promise<void> {
@@ -503,19 +564,26 @@ export class RoomPdfCache {
               }
               continue;
             }
-            const index = this.reserveNext(file, cached);
-            if (index === null) continue;
+            const indices = this.reserveNext(file, cached);
+            if (indices.length === 0) continue;
             scheduled = true;
             assignedThisRound = true;
+            this.activePerFileRequests.set(fileId, (this.activePerFileRequests.get(fileId) ?? 0) + 1);
             // Each request settles independently. Failures back off ONLY
             // the affected student/file; successful peers continue.
             let task: Promise<void>;
-            task = this.chunk(file, index).then(() => {
+            const transfer = indices.length === 1
+              ? this.chunk(file, indices[0]).then(() => {})
+              : this.chunkGroup(file, indices);
+            task = transfer.then(() => {
               this.cooldown.delete(fileId);
             }).catch(() => {
               if (this.jobs.has(fileId)) this.cooldown.set(fileId, Date.now() + 4500);
             }).finally(() => {
-              this.reserved.get(fileId)?.delete(index);
+              for (const index of indices) this.reserved.get(fileId)?.delete(index);
+              const count = (this.activePerFileRequests.get(fileId) ?? 0) - 1;
+              if (count > 0) this.activePerFileRequests.set(fileId, count);
+              else this.activePerFileRequests.delete(fileId);
               this.activeBackground.delete(task);
             });
             this.activeBackground.add(task);
@@ -554,6 +622,7 @@ export class RoomPdfCache {
     this.indices.clear();
     for (const key of [...this.cacheWaiters.keys()]) this.notifyCacheWaiters(key);
     this.reserved.clear();
+    this.activePerFileRequests.clear();
     this.nextIndex.clear();
     this.cooldown.clear();
     this.adaptive.clear();

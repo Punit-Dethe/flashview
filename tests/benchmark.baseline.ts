@@ -4,6 +4,7 @@
  *
  * BENCH_MIB=2 BENCH_RUNS=2 BENCH_STUDENTS=1 npm run bench:baseline
  * BENCH_MIB=12 BENCH_RUNS=3 BENCH_FILE_READ_DELAY_MS=20 npm run bench:baseline
+ * BENCH_PACKET_KIB=256 BENCH_MIB=4 BENCH_RUNS=3 npm run bench:baseline
  *
  * Read-delay simulation models slow access to phone bytes, NOT actual Wi-Fi.
  */
@@ -19,8 +20,10 @@ const studentCount = Number(process.env.BENCH_STUDENTS ?? 1);
 const slowReadMs = Number(process.env.BENCH_FILE_READ_DELAY_MS ?? 0);
 const isCloudflare = process.env.FLASHVIEW_BACKEND === 'cloudflare';
 const transferMode = process.env.BENCH_TRANSFER_MODE === 'fixed' ? 'fixed' : 'adaptive';
+const packetKiB = Number(process.env.BENCH_PACKET_KIB ?? 64);
 if (!(mib >= 1 && mib <= 45) || !(repeats >= 1 && repeats <= 10) ||
-    !(studentCount >= 1 && studentCount <= 15) || !(slowReadMs >= 0 && slowReadMs <= 500)) {
+    !(studentCount >= 1 && studentCount <= 15) || !(slowReadMs >= 0 && slowReadMs <= 500) ||
+    ![64, 128, 256].includes(packetKiB)) {
   throw new Error('Invalid baseline configuration');
 }
 
@@ -104,7 +107,8 @@ try {
     const senders: Awaited<ReturnType<typeof ctx.newPage>>[] = [];
     try {
       const origin = 'http://127.0.0.1:' + backend.port;
-      await host.goto(origin + '/?perf=1' + (transferMode === 'fixed' ? '&transfer=fixed' : ''));
+      await host.goto(origin + '/?perf=1' + (transferMode === 'fixed' ? '&transfer=fixed' : '') +
+        (packetKiB !== 64 ? '&packet=' + packetKiB : ''));
       await host.getByLabel('Require approval').check();
       await host.getByRole('button', {name: /Create a room/}).click();
       const roomCode = await host.locator('.room-code').innerText();
@@ -195,7 +199,7 @@ const report = {
   label: 'synthetic-headless-localhost-not-real-classroom-speed',
   backend: isCloudflare ? 'cloudflare-local' : 'node-local',
   fixture: '10-page-nonlinearized-text-pdf-with-comment-padding',
-  configuration: {mib,repeats,studentCount,simulatedFileReadDelayMs:slowReadMs,transferMode},
+  configuration: {mib,repeats,studentCount,simulatedFileReadDelayMs:slowReadMs,transferMode,packetKiB},
   median: {
     firstSlideMs: median(results.flatMap(x => x.timeToFirstSlideMs === null ? [] : [x.timeToFirstSlideMs])),
     cacheAllMs: median(results.map(x => x.timeToCacheAllMs)),
@@ -205,7 +209,8 @@ const report = {
 };
 await mkdir('test-artifacts',{recursive:true});
 const filename = 'test-artifacts/stage0-' + (isCloudflare?'cloudflare':'node') +
-  '-' + mib + 'mib-' + studentCount + 'students-' + slowReadMs + 'ms-' + transferMode + '.json';
+  '-' + mib + 'mib-' + studentCount + 'students-' + slowReadMs + 'ms-' + transferMode +
+  (packetKiB === 64 ? '' : '-packet' + packetKiB + 'kib') + '.json';
 await writeFile(filename,JSON.stringify(report,null,2)+'\n','utf8');
 console.log('Stage 0 report: ' + filename);
 console.log(JSON.stringify(report.median));

@@ -416,28 +416,6 @@ export class RoomPdfCache {
     return result;
   }
 
-  async range(file: PdfManifest, begin: number, end: number): Promise<Uint8Array> {
-    if (!Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
-      begin < 0 || end <= begin || end > file.size || end - begin > MAX_RANGE_BYTES) {
-      throw Error('Invalid PDF byte request');
-    }
-    const first = Math.floor(begin / CHUNK_BYTES);
-    const last = Math.floor((end - 1) / CHUNK_BYTES);
-    // An on-demand page may span several chunks. Fetch them concurrently
-    // instead of paying a separate round-trip latency for every 64 KiB.
-    const pieces = await Promise.all(
-      Array.from({ length: last - first + 1 },
-        (_, index) => this.chunk(file, first + index)),
-    );
-    const combined = new Uint8Array(end - begin);
-    for (let i = first; i <= last; i++) {
-      const chunkStart = i * CHUNK_BYTES;
-      const takeStart = Math.max(begin, chunkStart);
-      const takeEnd = Math.min(end, chunkStart + pieces[i - first].length);
-      combined.set(pieces[i - first].subarray(takeStart - chunkStart, takeEnd - chunkStart), takeStart - begin);
-    }
-    return combined;
-  }
   /** Queue a file as soon as it is offered, not when the viewer opens. */
   prefetch(file: PdfManifest): void {
     if (this.stopped || this.storageFailedFiles.has(file.fileId)) return;

@@ -152,9 +152,11 @@ export function App() {
       fileId: file.fileId, size: file.size, bytes: file.cachedBytes,
       complete: file.cachedBytes === file.size,
     };
+    // A manifest is authoritative, including downward correction if the
+    // teacher's browser storage was cleared after an earlier completion.
+    // Live push events are still monotonic; only explicit sync may reset.
     setStudentCacheProgress(current => ({
-      ...current,
-      [file.fileId]: retainNewestProgress(current[file.fileId], update),
+      ...current, [file.fileId]: update,
     }));
   }
 

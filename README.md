@@ -289,7 +289,7 @@ the **teacher host** URL to test a different network transport:
 1. The host selects a contiguous missing segment of the PDF and sends ONE
    `stream.open` control message to the room relay.
 2. The relay authorizes an approved student's file and grants a bounded
-   initial window of **4 × 256 KiB**. The phone reads authorized frames
+   initial window of **8 × 256 KiB**. The phone reads authorized frames
    concurrently, then sends them sequentially in PDF order.
 3. The relay checks identity, matching file, exact next byte offset, frame
    size and remaining credits. **No PDF bytes are stored at Cloudflare.**

@@ -79,8 +79,9 @@ export class PresentationHost {
     if (!this.cache) throw Error('Classroom cache is unavailable. Refresh the dashboard.');
     // A fully downloaded PDF is independent of the original sender and
     // classroom WebSocket. Allow it to present while the relay reconnects.
-    if (!this.socket.connected && file.status !== 'offline' && !locallyComplete)
-      throw Error('Classroom connection interrupted.');
+    // Viewer access depends on cached bytes, never the current sender socket.
+    // Missing data simply waits for the independent transfer engine.
+    void locallyComplete;
     if (typeof BroadcastChannel === 'undefined') throw Error('Presentation tabs are unsupported in this browser.');
     const key = crypto.randomUUID().replaceAll('-', '');
     const openedAt = perf.enabled ? performance.now() : 0;
@@ -111,7 +112,7 @@ export class PresentationHost {
           }
         }).catch(() => {});
       } else if (m.type === 'first-page') {
-        this.cache?.prefetch(file);
+        // The viewer has no influence on the transfer scheduler.
       } else if (m.type === 'perf' && perf.enabled) {
         if (m.metric === 'first_slide_after_present_ms' && !firstSlideObserved) {
           firstSlideObserved = true;
@@ -130,15 +131,12 @@ export class PresentationHost {
             !Number.isSafeInteger(m.begin) || !Number.isSafeInteger(m.end) ||
             m.begin < 0 || m.end <= m.begin || m.end > file.size ||
             m.end - m.begin > MAX_RANGE_BYTES || requests.has(m.id)) return;
-        // The presenter may be foreground while its owning classroom tab
-        // is backgrounded. Missing-page requests are a reason to wake the
-        // shared room socket immediately, not wait for a periodic timer.
-        if (!this.socket.connected) this.socket.wake();
-        // Cached bytes are available even after the student leaves.
-        // All misses use one shared room cache, not a fresh viewer transfer.
+        // Presenter is a passive read-only client. It must NEVER cause a
+        // network request or alter concurrency/priority of file transfers.
         let cancelled = false;
-        requests.set(m.id, { cancel: () => { cancelled = true; } });
-        void this.cache!.range(file, m.begin, m.end).then(bytes => {
+        const controller = new AbortController();
+        requests.set(m.id, { cancel: () => { cancelled = true; controller.abort(); } });
+        void this.cache!.cachedRange(file, m.begin, m.end, controller.signal).then(bytes => {
           if (!cancelled && this.tabs.has(key)) channel.postMessage({
             type: 'data', id: m.id, begin: m.begin, bytes,
           });

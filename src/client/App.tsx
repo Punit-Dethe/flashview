@@ -6,7 +6,6 @@ import { formatBytes } from './pdf/Viewer';
 import { makeFirstPagePreview } from './pdf/firstPagePreview';
 import { PresentationHost } from './presentation';
 import { DocumentCard } from './DocumentCard';
-import { THUMBNAILS_ENABLED } from './thumbnailExperiment';
 import { StudentTransferCard } from './StudentTransferCard';
 import { TransferPill } from './TransferPill';
 import { summarizeTransfers } from './transferProgress';
@@ -147,7 +146,7 @@ export function App() {
       previewLookups.current.clear();
       setDocumentPreviews({});
     }
-    if (!roomCode || !THUMBNAILS_ENABLED) return;
+    if (!roomCode) return;
     for (const file of documents) {
       if (previewLookups.current.has(file.fileId)) continue;
       previewLookups.current.add(file.fileId);
@@ -203,7 +202,6 @@ export function App() {
   }
 
   function sendPreview(fileId: string, dataUrl: string): void {
-    if (!THUMBNAILS_ENABLED) return;
     const base64 = dataUrl.split(',')[1];
     if (!base64 || base64.length > 380000 || !socket.connected ||
         previewDelivered.current.has(fileId)) return;
@@ -222,7 +220,6 @@ export function App() {
   }
 
   function prepareLocalPreview(fileId: string): void {
-    if (!THUMBNAILS_ENABLED) return;
     const shared = filesOnPhone.current.get(fileId);
     if (!shared || shared.status === 'offline' || shared.status === 'rejected' ||
         previewFailed.current.has(fileId) || firstPageImages.current.has(fileId) ||
@@ -250,7 +247,6 @@ export function App() {
   }
 
   function preparePreview(fileId: string): void {
-    if (!THUMBNAILS_ENABLED) return;
     const shared = filesOnPhone.current.get(fileId);
     if (!shared || shared.status !== 'approved' || previewDelivered.current.has(fileId)) return;
     const saved = firstPageImages.current.get(fileId);
@@ -392,7 +388,7 @@ export function App() {
           if (file.status === 'approved') preparePreview(file.fileId);
         }
       }
-      if (type === 'preview.chunk' && THUMBNAILS_ENABLED) {
+      if (type === 'preview.chunk') {
         const id = message.fileId;
         const part = message.part;
         const total = message.total;
@@ -608,7 +604,7 @@ export function App() {
     // Never rely on background-tab timers/idle callbacks here: Firefox can
     // suspend them, which would also delay the host's first-slide preview.
     // PDF.js decoding happens off the main thread and thumbnails stay small.
-    if (THUMBNAILS_ENABLED) for (const { fileId } of batch) prepareLocalPreview(fileId);
+    for (const { fileId } of batch) prepareLocalPreview(fileId);
   }
 
   // The native file input fires 'cancel' when a picker is dismissed without
@@ -823,7 +819,7 @@ export function App() {
                     )}
                     {documents.filter(f => f.status !== 'rejected').map(file => (
                       <DocumentCard key={file.fileId}
-                        file={file} previewUrl={THUMBNAILS_ENABLED ? documentPreviews[file.fileId] : undefined}
+                        file={file} previewUrl={documentPreviews[file.fileId]}
                         progress={cacheProgress[file.fileId]}
                         bytesPerSecond={downloadSpeed[file.fileId]}
                         onPresent={() => {
@@ -888,7 +884,7 @@ export function App() {
                           <div className="student-files-grid">
                             {sentFiles.filter(f => f.status !== 'rejected').map(f =>
                               <StudentTransferCard key={f.fileId} file={f}
-                                progress={studentCacheProgress[f.fileId]} preview={THUMBNAILS_ENABLED ? phonePreviews[f.fileId] : undefined}
+                                progress={studentCacheProgress[f.fileId]} preview={phonePreviews[f.fileId]}
                                 onStop={() => revoke(f.fileId)}/>)}
                           </div>
 

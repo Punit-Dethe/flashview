@@ -3,7 +3,6 @@ import { MAX_RANGE_BYTES } from '../shared/protocol';
 import { RoomPdfCache, type CacheProgress, cleanExpiredRoomCaches } from './pdf/roomCache';
 import type { RoomSocket } from './socket';
 import { perf, perfEnabled, type PerfName } from './perf';
-import { THUMBNAILS_ENABLED } from './thumbnailExperiment';
 
 const PREFIX = 'flashview-present-';
 type Pending = { cancel: () => void };
@@ -58,11 +57,10 @@ export class PresentationHost {
   resume(): void { this.cache?.resume(); }
   /** Reuse the first-slide image already stored for the presenter, without extra PDF requests. */
   async getPreview(fileId: string): Promise<string | null> {
-    if (!THUMBNAILS_ENABLED) return null;
     return this.cache?.getPreview(fileId) ?? null;
   }
   async savePreview(fileId: string, dataUrl: string): Promise<void> {
-    if (!THUMBNAILS_ENABLED || !this.cache) return;
+    if (!this.cache) return;
     await this.cache.savePreview(fileId, dataUrl);
     for (const tab of this.tabs.values()) {
       if (tab.file.fileId === fileId) {
@@ -108,7 +106,7 @@ export class PresentationHost {
         channel.postMessage({ type: 'metadata', file, roomId: this.cache?.roomId });
         void this.cache?.progress(file).then(progress =>
           channel.postMessage({ type: 'progress', progress })).catch(() => {});
-        if (THUMBNAILS_ENABLED) void this.cache?.getPreview(file.fileId).then(dataUrl => {
+        void this.cache?.getPreview(file.fileId).then(dataUrl => {
           if (dataUrl && this.tabs.has(key)) {
             channel.postMessage({ type: 'preview', fileId: file.fileId, dataUrl });
           }

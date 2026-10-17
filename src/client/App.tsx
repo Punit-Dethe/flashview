@@ -74,6 +74,13 @@ export function App() {
   const [phonePreviews, setPhonePreviews] = useState<Record<string, string>>({});
   const [hostAvailable, setHostAvailable] = useState(true);
   const hostFilesRef = useRef<PdfManifest[]>([]);
+  const completionAcks = useRef(new Set<string>());
+  const acknowledgeComplete = (fileId: string, bytes: number): void => {
+    if (modeRef.current !== 'host' || !socket.connected || completionAcks.current.has(fileId)) return;
+    if (socket.send({ type: 'cache.progress', fileId, bytes })) {
+      completionAcks.current.add(fileId);
+    }
+  };
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
   const previewLookups = useRef(new Set<string>());
   const previewRoom = useRef(initialSession?.code ?? '');
@@ -120,9 +127,7 @@ export function App() {
           ...existing, [file.fileId]: retainNewestProgress(existing[file.fileId], progress),
         }));
         // Only finished PDFs need an acknowledgement during host restoration.
-        if (socket.connected && progress.complete) socket.send({
-          type: 'cache.progress', fileId: file.fileId, bytes: file.size,
-        });
+        if (progress.complete) acknowledgeComplete(file.fileId, file.size);
       }).catch(() => {});
     }
   }, [hostSession?.code, documents, presentation, socket]);
@@ -237,6 +242,7 @@ export function App() {
     socket.onStatus = status => {
       setSocketStatus(status);
       if (status === 'connected') {
+        if (modeRef.current === 'host') completionAcks.current.clear();
         presentation.resume();
         if (modeRef.current === 'student') socket.send({ type: 'file.sync' });
       }
@@ -251,9 +257,7 @@ export function App() {
       }));
       // Single acknowledgement AFTER IndexedDB confirms the entire PDF.
       // Intermediate progress stays local; it cannot slow PDF byte delivery.
-      if (modeRef.current === 'host' && socket.connected && progress.complete) {
-        socket.send({ type: 'cache.progress', fileId: progress.fileId, bytes: progress.size });
-      }
+      if (progress.complete) acknowledgeComplete(progress.fileId, progress.size);
       const now = performance.now();
       const sample = transferSamples.current.get(progress.fileId);
       if (!sample) {
@@ -518,6 +522,7 @@ export function App() {
       setCacheProgress({});
       setDownloadSpeed({});
       hostFilesRef.current = [];
+      completionAcks.current.clear();
       transferSamples.current.clear();
       presentation.setRoom(newSession.code);
       socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });
@@ -662,6 +667,7 @@ export function App() {
       setCacheProgress({});
       setDownloadSpeed({});
       hostFilesRef.current = [];
+      completionAcks.current.clear();
       setStudentCacheProgress({});
       setPhonePreviews({});
       setJoinDialogOpen(false);

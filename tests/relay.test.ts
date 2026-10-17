@@ -138,7 +138,15 @@ test('different devices exchange metadata, approvals and byte-range PDF data via
     assert.equal(data.header.requestId, requestId);
     assert.deepEqual(Buffer.from(data.bytes), pdf);
 
-    // Only teacher-reported cached bytes are forwarded to this file's student.
+    // Older clients may still send per-chunk updates. Those must never
+    // reach the phone or trigger durable metadata updates.
+    host.send({ type: 'cache.progress', fileId, bytes: Math.floor(pdf.length / 2) });
+    student.send({ type: 'file.sync' });
+    const interim = await student.wait('file.manifest');
+    const interimFiles = interim.files as Array<{ fileId: string; cachedBytes?: number }>;
+    assert.equal(interimFiles.find(f => f.fileId === fileId)?.cachedBytes, undefined);
+
+    // Only final completion gets one host acknowledgement.
     host.send({ type: 'cache.progress', fileId, bytes: pdf.length });
     const ack = await student.wait('cache.progress');
     assert.equal(ack.fileId, fileId);

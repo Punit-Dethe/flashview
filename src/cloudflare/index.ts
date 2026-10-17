@@ -150,6 +150,8 @@ export class ClassroomRoom extends DurableObject<Env> {
         type: 'room.state', id: cfg.code, code: cfg.code, joinToken: cfg.joinToken,
         students: this.students(), files: [...this.files.values()],
       });
+      for (const [studentSocket, student] of this.peers)
+        if (student.role === 'student') send(studentSocket, { type: 'host.online' });
       return;
     }
     if (msg.role === 'student') {

@@ -257,12 +257,12 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
       send(sender.ws, {type:'stream.open', streamId, fileId: file.fileId, begin, end, credits: STREAM_CREDITS});
     } else if (msg.type === 'stream.credit') {
       const stream = typeof msg.streamId === 'string' ? room.streams.get(msg.streamId) : undefined;
-      if (!stream || stream.credits >= STREAM_CREDITS || stream.next >= stream.end || msg.credits !== 1) return;
-      stream.credits++;
+      if (!stream || stream.credits + 4 > STREAM_CREDITS || stream.next >= stream.end || msg.credits !== 4) return;
+      stream.credits += 4;
       stream.updated = Date.now();
       const sender = room.students.get(stream.senderId);
       if (sender?.approved)
-        send(sender.ws, { type: 'stream.credit', streamId: msg.streamId, credits: 1 });
+        send(sender.ws, { type: 'stream.credit', streamId: msg.streamId, credits: 4 });
     } else if (msg.type === 'stream.stop') {
       const stream = typeof msg.streamId === 'string' ? room.streams.get(msg.streamId) : undefined;
       if (!stream) return;

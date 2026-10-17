@@ -75,9 +75,12 @@ export class PresentationHost {
   }
   dispose(): void { this.closeAll(); this.cache?.dispose(); this.cache = null; this.lastProgressPaint.clear(); }
 
-  open(file: PdfManifest): void {
+  open(file: PdfManifest, locallyComplete = false): void {
     if (!this.cache) throw Error('Classroom cache is unavailable. Refresh the dashboard.');
-    if (!this.socket.connected && file.status !== 'offline') throw Error('Classroom connection interrupted.');
+    // A fully downloaded PDF is independent of the original sender and
+    // classroom WebSocket. Allow it to present while the relay reconnects.
+    if (!this.socket.connected && file.status !== 'offline' && !locallyComplete)
+      throw Error('Classroom connection interrupted.');
     if (typeof BroadcastChannel === 'undefined') throw Error('Presentation tabs are unsupported in this browser.');
     const key = crypto.randomUUID().replaceAll('-', '');
     const openedAt = perf.enabled ? performance.now() : 0;
@@ -127,6 +130,10 @@ export class PresentationHost {
             !Number.isSafeInteger(m.begin) || !Number.isSafeInteger(m.end) ||
             m.begin < 0 || m.end <= m.begin || m.end > file.size ||
             m.end - m.begin > MAX_RANGE_BYTES || requests.has(m.id)) return;
+        // The presenter may be foreground while its owning classroom tab
+        // is backgrounded. Missing-page requests are a reason to wake the
+        // shared room socket immediately, not wait for a periodic timer.
+        if (!this.socket.connected) this.socket.wake();
         // Cached bytes are available even after the student leaves.
         // All misses use one shared room cache, not a fresh viewer transfer.
         let cancelled = false;
@@ -162,6 +169,7 @@ export class PresentationHost {
 export class PresentationGuest implements PdfRangeSource {
   private channel: BroadcastChannel;
   private pending = new Map<string, { resolve: Reply; reject: Failure; timer: ReturnType<typeof setTimeout> }>();
+  private activeRanges = new Set<(reason?: string) => void>();
   onFile: (file: PdfManifest, roomId: string) => void = () => {};
   onClosed: () => void = () => {};
   onProgress: (progress: CacheProgress) => void = () => {};
@@ -195,26 +203,72 @@ export class PresentationGuest implements PdfRangeSource {
     if (perf.enabled) this.channel.postMessage({ type: 'perf', metric, ms, page });
   }
   requestRange(_fileId: string, begin: number, end: number, resolve: Reply, reject: Failure): () => void {
-    const id = crypto.randomUUID().replaceAll('-', '');
-    const timer = setTimeout(() => {
-      this.pending.delete(id);
-      reject('The PDF request timed out. Keep the classroom tab open.');
-    }, 25_000);
-    this.pending.set(id, { resolve, reject, timer });
-    this.channel.postMessage({ type: 'range', id, begin, end });
-    return () => {
-      const item = this.pending.get(id);
-      if (!item) return;
-      clearTimeout(item.timer);
-      this.pending.delete(id);
-      this.channel.postMessage({ type: 'cancel', id });
+    // BroadcastChannel may lose a message while the host tab is suspended.
+    // Reissue each attempt with a fresh ID; keep the PDF.js range reader
+    // ALIVE instead of permanently failing it on a transient timeout.
+    let id: string | null = null;
+    let cancelled = false;
+    let failures = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = () => {
+      cancelled = true;
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      retryTimer = null;
+      if (id !== null) {
+        const pending = this.pending.get(id);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pending.delete(id);
+          this.channel.postMessage({ type: 'cancel', id });
+        }
+        id = null;
+      }
+      this.activeRanges.delete(stop);
     };
+    const stop = (reason?: string) => {
+      if (cancelled) return;
+      cleanup();
+      if (reason) reject(reason);
+    };
+    const retry = (reason: string) => {
+      if (cancelled) return;
+      // Invalid ranges and corrupt files will never become valid by retrying.
+      if (/invalid pdf byte|invalid.*range|incomplete pdf byte|password/i.test(reason)) {
+        stop(reason);
+        return;
+      }
+      // Back off a repeated failure, but never abandon a page simply because
+      // the student was temporarily backgrounded or the network switched.
+      const delay = Math.min(600 * 2 ** Math.min(failures++, 4), 8_000);
+      retryTimer = setTimeout(sendRequest, delay);
+    };
+    const sendRequest = () => {
+      if (cancelled) return;
+      const requestId = crypto.randomUUID().replaceAll('-', '');
+      id = requestId;
+      const timer = setTimeout(() => {
+        if (this.pending.delete(requestId)) retry('Classroom did not respond');
+      }, 25_000);
+      this.pending.set(requestId, {
+        resolve: (start, bytes) => {
+          if (cancelled || id !== requestId) return;
+          cleanup();
+          resolve(start, bytes);
+        },
+        reject: reason => {
+          if (cancelled || id !== requestId) return;
+          retry(reason);
+        },
+        timer,
+      });
+      this.channel.postMessage({ type: 'range', id: requestId, begin, end });
+    };
+    this.activeRanges.add(stop);
+    sendRequest();
+    return () => stop();
   }
   close(): void {
-    for (const item of this.pending.values()) {
-      clearTimeout(item.timer);
-      item.reject('Presentation closed');
-    }
+    for (const stop of [...this.activeRanges]) stop('Presentation closed');
     this.pending.clear();
     this.channel.postMessage({ type: 'close' });
     this.channel.close();

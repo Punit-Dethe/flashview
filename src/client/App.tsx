@@ -214,8 +214,15 @@ export function App() {
       // A socket can look OPEN while an earlier broadcast was missed.
       if (socket.connected) socket.send({ type: modeRef.current === 'host' ? 'room.sync' : 'file.sync' });
     };
-    const online = () => { socket.wake(); wake(); };
-    document.addEventListener('visibilitychange', wake);
+    const visibility = () => {
+      if (document.visibilityState === 'hidden') socket.pauseHeartbeat();
+      else wake();
+    };
+    // focus is essential on mobile: an OS file picker doesn't always trigger
+    // visibilitychange, and browsers may suspend the heartbeat while browsing.
+    const online = () => wake();
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('focus', wake);
     window.addEventListener('pageshow', online);
     window.addEventListener('online', online);
     // Repair missed WebSocket notifications while the page is actually in use.
@@ -348,7 +355,8 @@ export function App() {
       ...(/^\d{6}$/.test(initialJoin) ? { code: initialJoin } : { joinToken: initialJoin }),
     });
     return () => {
-      document.removeEventListener('visibilitychange', wake);
+      document.removeEventListener('visibilitychange', visibility);
+      window.removeEventListener('focus', wake);
       window.removeEventListener('pageshow', online);
       window.removeEventListener('online', online);
       clearInterval(syncTimer);
@@ -421,6 +429,9 @@ export function App() {
   }
 
   async function addPdf(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    // File pickers on mobile can freeze timers and temporarily suspend sockets.
+    // Resume immediately on selection instead of waiting for backoff/polling.
+    socket.wake();
     const input = event.target;
     const selectedFiles = Array.from(input.files ?? []);
     input.value = '';
@@ -443,6 +454,22 @@ export function App() {
         setError('You are offline. The PDF is saved in this tab and will be announced when the connection returns.');
       } else offerLocalFile(fileId, entry);
     }
+  }
+
+  // The native file input fires 'cancel' when a picker is dismissed without
+  // selection; React's InputHTMLAttributes doesn't expose this newer event.
+  useEffect(() => {
+    if (mode !== 'student' || joinState !== 'accepted') return;
+    const input = fileInputRef.current;
+    if (!input) return;
+    const onCancel = () => socket.wake();
+    input.addEventListener('cancel', onCancel);
+    return () => input.removeEventListener('cancel', onCancel);
+  }, [mode, joinState, socket]);
+
+  function browseFiles(): void {
+    socket.pauseHeartbeat();
+    fileInputRef.current?.click();
   }
 
   function revoke(fileId: string): void {
@@ -677,7 +704,7 @@ export function App() {
                         progress={cacheProgress[file.fileId]}
                         bytesPerSecond={downloadSpeed[file.fileId]}
                         onPresent={() => {
-                          try { presentation.open(file); }
+                          try { presentation.open(file, Boolean(cacheProgress[file.fileId]?.complete)); }
                           catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
                         }}/>
                     ))}
@@ -715,11 +742,11 @@ export function App() {
             {joinState === 'accepted' && (
               <div className="send-workspace">
                 <div className="accepted-mark"><span className="status-dot"/> CONNECTED TO CLASSROOM</div>
-                <div className="upload-target" onClick={() => fileInputRef.current?.click()} role="button" tabIndex={0}
-                  onKeyDown={e => { if (e.key === 'Enter') fileInputRef.current?.click(); }}>
+                <div className="upload-target" onClick={browseFiles} role="button" tabIndex={0}
+                  onKeyDown={e => { if (e.key === 'Enter') browseFiles(); }}>
                   <span className="upload-glyph">↑</span><h2>Choose a PDF to share.</h2>
                   <p>Your teacher will see the file name immediately and can open pages on demand.</p>
-                  <button className="primary-button" onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}>Browse files <span>↗</span></button>
+                  <button className="primary-button" onClick={e => { e.stopPropagation(); browseFiles(); }}>Browse files <span>↗</span></button>
                   <small>PDF files only · Up to 50 MB</small>
                 </div>
                 <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={addPdf}/>

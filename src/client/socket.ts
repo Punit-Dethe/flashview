@@ -25,6 +25,11 @@ export class RoomSocket {
   private retryCount = 0;
   private stopped = false;
   private pingSentAt: number | null = null;
+  private authenticated = false;
+  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
+  private openingSince = 0;
+  private heartbeatPaused = false;
   onMessage: (message: ServerMessage) => void = () => {};
   onStatus: (status: SocketStatus) => void = () => {};
 
@@ -33,6 +38,7 @@ export class RoomSocket {
     this.stopped = false;
     this.identity = { ...identity };
     this.retryCount = 0;
+    this.heartbeatPaused = false;
     this.open();
   }
 
@@ -44,12 +50,27 @@ export class RoomSocket {
     this.pingSentAt = null;
   }
 
+  /** The system file picker may suspend a mobile webview without a visibility event. */
+  pauseHeartbeat(): void {
+    this.heartbeatPaused = true;
+    this.stopHeartbeat();
+  }
+
+  private startHeartbeat(): void {
+    if (this.pingTimer !== null || this.heartbeatPaused ||
+        (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
+    this.pingTimer = setInterval(() => this.ping(), 25_000);
+  }
+
   private ping(): void {
-    if (!this.connected || this.pingTimeout !== null) return;
+    if (!this.connected || this.pingTimeout !== null || this.heartbeatPaused ||
+        (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
     if (!this.send({ type: 'heartbeat.ping' })) return;
     if (perf.enabled) this.pingSentAt = performance.now();
     this.pingTimeout = setTimeout(() => {
       this.pingTimeout = null;
+      if (this.heartbeatPaused ||
+          (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
       if (this.ws?.readyState === WebSocket.OPEN) {
         // A half-open TCP connection can appear OPEN until a packet is attempted.
         this.ws.close(4001, 'Heartbeat timeout');
@@ -60,12 +81,28 @@ export class RoomSocket {
   /** Call when returning from another tab or when internet access resumes. */
   wake(): void {
     if (this.stopped || !this.identity) return;
+    this.heartbeatPaused = false;
+    // Discard an old deadline from a suspended file picker or background tab.
+    if (this.pingTimeout !== null) clearTimeout(this.pingTimeout);
+    this.pingTimeout = null;
+    this.startHeartbeat();
     if (this.connected) {
-      // Avoid interpreting a delayed background-tab timer as a server disconnect.
+      // Re-validate an apparently open connection immediately on foreground return.
       this.ping();
       return;
     }
-    if (this.ws?.readyState === WebSocket.CONNECTING) return;
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
+      // Some mobile OS resumes leave the original handshake stuck forever.
+      if (Date.now() - this.openingSince > 9_000) this.ws.close();
+      return;
+    }
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      // OPEN isn't the same as authenticated, but a normal handshake needs
+      // a brief chance to finish before foreground focus triggers a restart.
+      if (Date.now() - this.openingSince > 9_000)
+        this.ws.close(4002, 'Authentication stalled');
+      return;
+    }
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -81,15 +118,30 @@ export class RoomSocket {
       : typeof this.identity.roomId === 'string' ? this.identity.roomId : '';
     const suffix = /^\d{6}$/.test(roomCode) ? '?room=' + encodeURIComponent(roomCode) : '';
     const connectStarted = perf.enabled ? performance.now() : 0;
+    this.authenticated = false;
     let authenticated = false;
     const ws = new WebSocket(protocol + '//' + window.location.host + '/ws' + suffix);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
+    this.openingSince = Date.now();
+    this.connectTimer = setTimeout(() => {
+      if (this.ws === ws && ws.readyState === WebSocket.CONNECTING)
+        ws.close();
+    }, 10_000);
     this.onStatus('connecting');
     ws.onopen = () => {
       if (this.ws !== ws) return;
-      this.send({ type: 'hello', ...this.identity });
-      this.pingTimer = setInterval(() => this.ping(), 25_000);
+      if (this.connectTimer !== null) clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+      // Hello must go out before the socket is considered authenticated.
+      ws.send(JSON.stringify({ v: 1, type: 'hello', ...this.identity }));
+      this.startHeartbeat();
+      // A network can finish its TCP handshake without finishing the room
+      // handshake. Do not leave the interface connecting forever.
+      this.handshakeTimer = setTimeout(() => {
+        if (this.ws === ws && !this.authenticated && ws.readyState === WebSocket.OPEN)
+          ws.close(4002, 'Room handshake timeout');
+      }, 10_000);
     };
     ws.onmessage = event => {
       if (this.ws !== ws) return;
@@ -116,6 +168,9 @@ export class RoomSocket {
               perf.record('socket_connect_ms', performance.now() - connectStarted);
             }
             this.retryCount = 0;
+            this.authenticated = true;
+            if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
+            this.handshakeTimer = null;
             this.onStatus('connected');
           }
           if (message.type === 'room.closed' || message.type === 'join.rejected') {
@@ -149,6 +204,11 @@ export class RoomSocket {
     ws.onclose = () => {
       if (this.ws !== ws) return;
       this.ws = null;
+      this.authenticated = false;
+      if (this.connectTimer !== null) clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+      if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
       this.stopHeartbeat();
       this.failAll('Connection interrupted; retry the page if necessary');
       this.onStatus('disconnected');
@@ -170,7 +230,9 @@ export class RoomSocket {
     }, delayMs);
   }
 
-  get connected(): boolean { return this.ws?.readyState === WebSocket.OPEN; }
+  get connected(): boolean {
+    return this.authenticated && this.ws?.readyState === WebSocket.OPEN;
+  }
 
   send(message: Record<string, unknown>): boolean {
     if (!this.connected) return false;
@@ -258,6 +320,11 @@ export class RoomSocket {
     if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.stopHeartbeat();
+    this.authenticated = false;
+    if (this.connectTimer !== null) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
+    if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = null;
     this.failAll('Connection closed');
     const old = this.ws;
     this.ws = null;

@@ -871,3 +871,235 @@ html, body { background: var(--canvas); }
   .premium-app .document-card-open > span { transition: none; }
   .premium-app .document-thumb-spinner { animation: none; border-top-color: rgba(236,236,247,.85); }
 }
+
+
+/* Shared phone transfer progress: the ring tracks bytes safely stored by host. */
+.premium-app .transfer-ring {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: #cce9d5;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #1b1d24;
+  border: 1px solid rgba(255,255,255,.13);
+  box-shadow: 0 3px 12px #0004;
+}
+.premium-app .transfer-ring svg { width: 34px; height: 34px; }
+.premium-app .transfer-ring.is-complete .ring-fill { stroke: #a7d4b4; }
+.premium-app .transfer-ring.is-complete .ring-track { stroke: #425748; }
+
+.premium-app .student-screen .student-transfer-section {
+  padding: 0;
+  margin: 32px 0 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.premium-app .student-transfer-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 15px;
+}
+.premium-app .student-transfer-heading h3 {
+  margin: 0;
+  color: #ececf4;
+  font-size: 15px;
+  font-weight: 615;
+  letter-spacing: -.028em;
+}
+.premium-app .student-transfer-heading > span {
+  color: #9b9daa;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.premium-app .student-files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 174px), 1fr));
+  gap: 13px;
+}
+.premium-app .student-file-card {
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: #1b1c22;
+  border: 1px solid #34353e;
+  border-radius: 12px;
+  min-width: 0;
+}
+.premium-app .student-file-card.is-stopped { opacity: .58; }
+.premium-app .student-file-visual {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--file-accent) 9%, #292a34);
+  display: grid;
+  place-items: center;
+}
+.premium-app .student-file-preview {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.premium-app .student-file-pdf-mark {
+  display: grid;
+  place-items: center;
+  width: 47px;
+  height: 61px;
+  color: var(--file-accent);
+  background: var(--file-soft);
+  border: 1px solid var(--file-line);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 770;
+  letter-spacing: .04em;
+}
+.premium-app .student-file-ring {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  background: rgba(19,20,26,.94);
+  z-index: 2;
+}
+.premium-app .student-file-info {
+  flex: 0 0 102px;
+  min-width: 0;
+  padding: 10px 11px 11px;
+  border-top: 1px solid #33343e;
+}
+.premium-app .student-file-info strong {
+  display: block;
+  color: #ededf4;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 620;
+}
+.premium-app .student-file-info p {
+  margin: 5px 0 7px;
+  color: #9699a6;
+  font-size: 11px;
+}
+.premium-app .student-file-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #bdc0d0;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+.premium-app .student-file-stop {
+  display: block;
+  padding: 0;
+  margin: 7px 0 0;
+  color: #afb1c4;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.premium-app .student-transfer-hint {
+  font-size: 11px;
+  line-height: 1.55;
+  color: #8c8e9b;
+  margin: 15px 0 0;
+}
+.premium-app .transfer-pill {
+  position: fixed;
+  z-index: 55;
+  left: 50%;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  transform: translate(-50%, 0);
+  width: max-content;
+  max-width: calc(100vw - 28px);
+  min-width: 208px;
+  min-height: 57px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 11px 8px 9px;
+  border: 1px solid #464750;
+  border-radius: 999px;
+  background: rgba(31,32,40,.97);
+  color: #f0f0f6;
+  box-shadow: 0 11px 33px #0009, inset 0 1px 0 #ffffff11;
+  animation: transfer-pill-in .26s ease-out both;
+  transition: opacity .3s ease, transform .3s ease;
+}
+@keyframes transfer-pill-in {
+  from { opacity: 0; transform: translate(-50%, 12px) scale(.98); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+.premium-app .transfer-pill.is-leaving {
+  opacity: 0;
+  transform: translate(-50%, 12px) scale(.98);
+  pointer-events: none;
+}
+.premium-app .transfer-pill-ring { width: 39px; height: 39px; }
+.premium-app .transfer-pill-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 85px;
+  flex: 1 1 auto;
+}
+.premium-app .transfer-pill-copy strong {
+  font-size: 12px;
+  font-weight: 640;
+  letter-spacing: -.01em;
+}
+.premium-app .transfer-pill-copy > span {
+  color: #aaacbb;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.premium-app .transfer-pill-spinner {
+  box-sizing: border-box;
+  flex: none;
+  height: 23px;
+  width: 23px;
+  margin: 8px;
+  border: 2.5px solid #ffffff33;
+  border-top-color: #dedff3;
+  border-radius: 50%;
+  animation: document-preview-spin .85s linear infinite;
+}
+.premium-app .transfer-pill-action {
+  flex: none;
+  margin-left: 4px;
+  border: 1px solid #565967;
+  color: #edeef4;
+  background: #373945;
+  border-radius: 999px;
+  padding: 8px 10px;
+  font-weight: 590;
+  font-size: 11px;
+  cursor: pointer;
+}
+.premium-app .transfer-pill.is-done .transfer-pill-copy strong { color: #cce9d4; }
+@media(max-width:580px) {
+  .premium-app .student-files-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .premium-app .student-file-info { flex-basis: 99px; padding: 9px; }
+  .premium-app .student-file-info strong { font-size: 11px; }
+  .premium-app .student-file-visual .transfer-ring { width: 32px; height: 32px; top: 7px; right: 7px; }
+  .premium-app .student-file-visual .transfer-ring svg { width: 29px; height: 29px; }
+}
+@media(prefers-reduced-motion: reduce) {
+  .premium-app .transfer-pill { animation: none; transition: none; }
+  .premium-app .transfer-pill-spinner { animation: none; }
+}

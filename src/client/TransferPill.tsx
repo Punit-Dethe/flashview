@@ -3,19 +3,20 @@ import { TransferRing } from './TransferRing';
 
 type Props = {
   connecting: boolean;
+  leaving?: boolean;
   summary: TransferSummary;
   onReconnect: () => void;
 };
 
 /** Small persistent-while-useful status surface, shared by connection and transfers. */
-export function TransferPill({ connecting, summary, onReconnect }: Props) {
+export function TransferPill({ connecting, leaving = false, summary, onReconnect }: Props) {
   const done = summary.complete;
   const text = connecting ? 'Connecting' : done ? 'Done' : 'Uploading';
   const detail = summary.count ? done ?
     summary.count + ' ' + (summary.count === 1 ? 'file' : 'files') + ' ready' :
     summary.ready + ' of ' + summary.count + ' ready' : 'To classroom';
   return (
-    <div className={'transfer-pill' + (done ? ' is-done' : '')} role="status"
+    <div className={'transfer-pill' + (done ? ' is-done' : '') + (leaving ? ' is-leaving' : '')} role="status"
       aria-label={text + ' · ' + detail}>
       {connecting ?
         <span className="transfer-pill-spinner" aria-hidden="true"/> :

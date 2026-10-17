@@ -1207,3 +1207,89 @@ test('Phase 3: two students continuously stream independent PDFs into byte-perfe
     child.kill('SIGTERM');
   }
 });
+
+
+test('Phase 3: streaming resumes from durable PDF chunks after host socket interruption', {timeout:120000}, async()=>{
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage();
+  const student=await browser.newPage();
+  const pdf=makePdf(49000);
+  const expected=createHash('sha256').update(pdf).digest('hex');
+  const root='http://127.0.0.1:'+port;
+  try {
+    await host.addInitScript(()=>{
+      const Original=WebSocket;
+      (window as typeof window & {__testHostWS?:WebSocket}).WebSocket=class extends Original {
+        constructor(url:string|URL,protocols?:string|string[]){
+          super(url,protocols);
+          (window as typeof window & {__testHostWS?:WebSocket}).__testHostWS=this;
+        }
+      } as typeof WebSocket;
+    });
+    await student.addInitScript(delayMs=>{
+      const original=Blob.prototype.arrayBuffer;
+      Blob.prototype.arrayBuffer=async function(){
+        await new Promise(resolve=>setTimeout(resolve,delayMs));
+        return original.call(this);
+      };
+    },300);
+    await host.goto(root+'/?transfer=stream&packet=256');
+    await host.getByRole('button',{name:/Create a room/}).click();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    await host.locator('.connection.connected').waitFor();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-drive').waitFor();
+    await student.locator('input[type=file]').setInputFiles({
+      name:'interrupted-stream.pdf',mimeType:'application/pdf',buffer:pdf,
+    });
+    const row=host.locator('.document-row').first();
+    await host.waitForFunction(()=>{
+      const value=Number(document.querySelector('.document-row .cache-ring')?.getAttribute('aria-valuenow')??0);
+      return value>0 && value<100;
+    },null,{timeout:25000});
+    const before=await host.evaluate(async(room)=>{
+      const request=indexedDB.open('flashview-room-cache');
+      return new Promise<number>((resolve,reject)=>{
+        request.onsuccess=()=>{
+          const get=request.result.transaction('chunks','readonly').objectStore('chunks').index('room')
+            .count(IDBKeyRange.only(room));
+          get.onsuccess=()=>resolve(get.result);
+          get.onerror=()=>reject(get.error);
+        };
+        request.onerror=()=>reject(request.error);
+      });
+    },code);
+    assert.ok(before>0,'Some PDF blocks must have committed before disconnect');
+    await host.evaluate(()=>(window as typeof window & {__testHostWS?:WebSocket}).__testHostWS?.close());
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:80000});
+    const stored=await host.evaluate(async room=>{
+      const req=indexedDB.open('flashview-room-cache');
+      const db=await new Promise<IDBDatabase>((res,rej)=>{
+        req.onsuccess=()=>res(req.result);
+        req.onerror=()=>rej(req.error);
+      });
+      const all=await new Promise<Array<{room:string;index:number;data:ArrayBuffer}>>((res,rej)=>{
+        const read=db.transaction('chunks','readonly').objectStore('chunks').getAll();
+        read.onsuccess=()=>res(read.result);
+        read.onerror=()=>rej(read.error);
+      });
+      db.close();
+      const sorted=all.filter(x=>x.room===room).sort((a,b)=>a.index-b.index);
+      const data=new Uint8Array(sorted.reduce((sum,x)=>sum+x.data.byteLength,0));
+      let offset=0;
+      for(const chunk of sorted){data.set(new Uint8Array(chunk.data),offset);offset+=chunk.data.byteLength;}
+      const sha=await crypto.subtle.digest('SHA-256',data);
+      return {indexCount:sorted.length,
+        indices:sorted.map(x=>x.index),
+        sha:Array.from(new Uint8Array(sha)).map(x=>x.toString(16).padStart(2,'0')).join('')};
+    },code);
+    assert.ok(stored.indexCount>before);
+    assert.deepEqual(stored.indices,Array.from({length:stored.indexCount},(_,i)=>i));
+    assert.equal(stored.sha,expected,'No cached PDF corruption after reconnect and resume');
+  } finally {
+    await host.close();await student.close();await browser.close();child.kill('SIGTERM');
+  }
+});

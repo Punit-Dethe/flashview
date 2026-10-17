@@ -205,9 +205,9 @@ export function App() {
     const base64 = dataUrl.split(',')[1];
     if (!base64 || base64.length > 380000 || !socket.connected ||
         previewDelivered.current.has(fileId)) return;
-    // Use moderate frames for Firefox/mobile WebSocket compatibility.
-    // A 70 KB JPEG needs at most 8 frames (versus up to ~75 previously).
-    const size = 12_000;
+    // Keep JSON frames under the relay's strict 8 KiB control-message
+    // cap. A compact 70 KB JPEG needs at most 14 such frames, not ~75.
+    const size = 6_800;
     const total = Math.ceil(base64.length / size);
     if (total > 80) return;
     for (let part = 0; part < total; part++) {
@@ -396,8 +396,8 @@ export function App() {
         if (typeof id !== 'string' || !Number.isSafeInteger(part) ||
             !Number.isSafeInteger(total) || typeof data !== 'string' ||
             Number(part) < 0 || Number(total) < 1 || Number(total) > 80 ||
-            Number(part) >= Number(total) || data.length > 50000 ||
-            (data.length > 5000 && Number(total) > 8)) return;
+            Number(part) >= Number(total) || data.length > 7000 ||
+            (data.length > 5000 && Number(total) > 16)) return;
         let current = incomingPreviews.current.get(id);
         if (!current || current.parts.length !== total || Date.now() - current.created > 90_000) {
           perf.mark('preview-receive:' + id);

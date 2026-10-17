@@ -535,17 +535,28 @@ export function App() {
              stream.credits > 0 && stream.next < stream.end && socket.connected) {
         const file = filesOnPhone.current.get(stream.fileId);
         if (!file || file.status !== 'approved') throw Error('PDF sharing stopped');
-        stream.credits--;
-        const begin = stream.next;
-        const end = Math.min(begin + 256 * 1024, stream.end);
-        const reading = perf.enabled ? performance.now() : 0;
-        const bytes = await file.file.slice(begin, end).arrayBuffer();
-        if (senderStreams.current.get(streamId) !== stream || !socket.connected) return;
-        if (perf.enabled) perf.record('sender_read_ms', performance.now() - reading, {bytes:bytes.byteLength});
-        if (!await socket.sendBytesWhenReady(streamId, stream.fileId, begin, bytes, 'stream.data'))
-          throw Error('Network sender is busy');
-        if (senderStreams.current.get(streamId) !== stream) return;
-        stream.next = end;
+        // Read the currently authorized frames in parallel, then deliver them
+        // in offset order. An artificial slow File.slice must not force a
+        // 256 KiB read/response roundtrip for every frame.
+        const reads: Array<{ begin:number; read:Promise<ArrayBuffer> }> = [];
+        while (stream.credits > 0 && stream.next < stream.end) {
+          stream.credits--;
+          const begin=stream.next, end=Math.min(begin+256*1024,stream.end);
+          stream.next=end;
+          const started=perf.enabled ? performance.now() : 0;
+          const read=file.file.slice(begin,end).arrayBuffer().then(bytes=>{
+            if(perf.enabled) perf.record('sender_read_ms',performance.now()-started,{bytes:bytes.byteLength});
+            return bytes;
+          });
+          reads.push({begin,read});
+        }
+        const buffers=await Promise.all(reads.map(x=>x.read));
+        for (let i=0;i<reads.length;i++) {
+          if (senderStreams.current.get(streamId)!==stream || !socket.connected) return;
+          if (!await socket.sendBytesWhenReady(streamId,stream.fileId,
+              reads[i].begin,buffers[i],'stream.data'))
+            throw Error('Network sender is busy');
+        }
       }
       if (stream.next === stream.end) senderStreams.current.delete(streamId);
     } catch {

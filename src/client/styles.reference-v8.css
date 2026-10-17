@@ -212,7 +212,25 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .reference-room .sidebar-participants {
   display:flex; flex:1 1 auto; min-height:0; flex-direction:column; padding:0;
   margin:8px 0 0; border:0; background:transparent; }
-.premium-app .reference-room .sidebar-participants-heading { padding:0 0 8px; }
+.premium-app .reference-room .sidebar-participants-heading {
+  display:flex; align-items:center; justify-content:space-between;
+  gap:8px; padding:0 0 8px;
+}
+/* Status is retained as a tiny sidebar dot for connection feedback,
+   not as the large top-right relay text that obscured the view controls. */
+.premium-app .reference-room .reference-room-connection.connection {
+  display:inline-flex; flex:0 0 12px; min-width:12px; min-height:12px;
+  width:12px; height:12px; padding:1px; margin:0; align-items:center;
+  justify-content:center; border:0; border-radius:50%; box-shadow:none;
+  background:transparent; color:#5d6685;
+}
+.premium-app .reference-room .reference-room-connection .status-dot {
+  display:block; flex:0 0 9px; width:9px; height:9px;
+  border:0; border-radius:50%; background:#26bd83;
+}
+.premium-app .reference-room .reference-room-connection:not(.connected) .status-dot {
+  background:#d5a05e;
+}
 .premium-app .reference-room .sidebar-participants-heading h2 { color:#5d6685; font-size:14px;
   font-weight:400; letter-spacing:0; }
 .premium-app .reference-room .sidebar-participants-scroll {
@@ -294,19 +312,38 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .reference-room .document-pdf-symbol svg { display:block; height:60px; width:auto; max-width:75px; }
 .premium-app .reference-room .document-thumb-spinner { border-top-color:#5d6685; border-color:#dce2ed; border-top-color:#15161c; }
 .premium-app .reference-room .document-card-info {
-  flex:none; height:auto; min-height:0; gap:0; padding:14px 16px 12px;
+  flex:none; width:100%; max-width:100%; min-width:0; box-sizing:border-box;
+  height:auto; min-height:0; gap:0; padding:14px 16px 12px;
   background:#fff; border:0; color:#0b1230; }
 .premium-app .reference-room .document-card-info h3 {
   width:100%; font-size:14.5px; line-height:1.3; font-weight:600; letter-spacing:-.01em;
-  color:#0b1230; margin:0; padding:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.premium-app .reference-room .document-card-info p { display:flex; gap:6px; margin:3px 0 0; color:#5d6685; font-size:12.5px; }
-.premium-app .reference-room .document-card-info p span:first-child { color:#5d6685; }
-/* The reference HTML uses one matching hue for every sender's avatar,
-   the dot next to their name, and the gradient of their file icons. */
-.premium-app .reference-room .document-file-owner { display:inline-flex; align-items:center; gap:6px;
-  min-width:0; max-width:75%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.premium-app .reference-room .document-owner-dot { flex:0 0 8px; width:8px; height:8px;
-  border-radius:50%; background:#d2d9e5; }
+  color:#0b1230; margin:0; padding:0 14px 0 0; box-sizing:border-box;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* File metadata stays on one baseline. The stronger direct-child selector
+   overrides the old generic span:first-child rule that turned the owner into
+   a block and pushed their color dot above the name. */
+.premium-app .reference-room .document-card-info p.document-file-meta {
+  display:flex; align-items:center; flex-wrap:nowrap; gap:6px;
+  width:100%; min-width:0; margin:3px 0 0; overflow:hidden;
+  color:#5d6685; font-size:12.5px; line-height:1.4; white-space:nowrap;
+}
+.premium-app .reference-room .document-card-info p > .document-file-owner {
+  display:inline-flex; flex:0 1 auto; min-width:0; max-width:100%;
+  align-items:center; gap:6px; white-space:nowrap; color:#5d6685;
+  overflow:hidden; text-overflow:clip;
+}
+.premium-app .reference-room .document-file-owner .document-owner-name {
+  display:block; flex:0 1 auto; min-width:0; overflow:hidden;
+  white-space:nowrap; text-overflow:ellipsis;
+}
+.premium-app .reference-room .document-file-owner .document-owner-dot {
+  display:block; flex:0 0 8px; width:8px; height:8px; align-self:center;
+  border-radius:50%; background:#d2d9e5; overflow:visible;
+}
+.premium-app .reference-room .document-file-meta .document-file-separator,
+.premium-app .reference-room .document-file-meta .document-file-size {
+  display:inline-block; flex:0 0 auto; white-space:nowrap;
+}
 .premium-app .reference-room .document-card .cache-ring {
   /* Preserve the progressbar for assistive technology and existing transfer tests.
      Reference v8 paints active progress within the action button, not a corner ring. */
@@ -381,6 +418,23 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app.is-student-room .student-drive-empty p { color:#5d6685; }
 .premium-app.is-student-room .student-add-fab { background:#0e0f14; color:#fff; border-radius:99px; }
 .premium-app.is-student-room .student-add-fab:hover { background:#262830; }
+.premium-app.is-student-room .student-empty-pixel-icon {
+  display:block; flex:none; height:86px; width:86px;
+  max-height:none; max-width:none;
+}
+.premium-app.is-student-room .student-transfer-actions .student-add-fab {
+  min-width:122px; height:62px; padding:0 23px;
+  border-radius:22px; font-size:16px; font-weight:650;
+  box-shadow:0 9px 26px -10px rgba(14,15,20,.42);
+}
+.premium-app.is-student-room .student-transfer-actions .student-add-fab > span:first-child {
+  font-size:30px;
+}
+@media(max-width:580px) {
+  .premium-app.is-student-room .student-transfer-actions .student-add-fab {
+    min-width:108px; height:58px; padding:0 16px; font-size:15px;
+  }
+}
 
 /* Mobile and reduced-motion implementation follow the supplied breakpoints. */
 @media(max-width:900px){

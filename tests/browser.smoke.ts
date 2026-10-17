@@ -143,7 +143,7 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.ok(leftBefore && leftBefore.width > 250);
     assert.ok(leftBefore && Math.abs(leftBefore.y - 22) < 3,
       'The reference v8 classroom has a 22px outside gutter');
-    const docHeading = await right.getByRole('heading', { name: /Queue/ }).boundingBox();
+    const docHeading = await right.getByRole('heading', { name: /^Files/ }).boundingBox();
     assert.ok(docHeading && leftBefore && docHeading.x >= leftBefore.x + leftBefore.width,
       'Documents should occupy the area to the right of the full-height sidebar');
     await first.getByRole('button', { name: 'List view' }).click();
@@ -1380,5 +1380,96 @@ test('reference UI assigns one color per real participant, including two student
   } finally {
     await host.close();await first.close();await second.close();await browser.close();
     child.kill('SIGTERM');
+  }
+});
+
+
+test('refined file cards align owner dots, truncate long names and keep phone controls readable', {timeout:80000}, async()=>{
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({viewport:{width:1280,height:760}});
+  const student=await browser.newPage({viewport:{width:390,height:844}});
+  const root='http://127.0.0.1:'+port;
+  const longName='Extremely_long_university_assignment_final_presentation_document_revision_123456789.xlsx';
+  try{
+    await host.goto(root);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    assert.equal(await host.getByRole('heading',{name:/^Files/}).count(),1);
+    assert.equal(await host.locator('.reference-room-tools button').count(),2,
+      'Top-right toolbar must contain only Grid/List controls');
+    assert.equal(await host.locator('.reference-live').count(),0,
+      'The relay status pill must no longer occupy the top-right toolbar');
+    assert.equal(await host.locator('.sidebar-participants-heading .connection.connected').count(),1,
+      'A tiny sidebar dot keeps connection feedback without a toolbar pill');
+    const code=(await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.locator('#student-name').fill('Alexandra Long Student Name Test');
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    assert.equal(await student.locator('.student-empty-pixel-icon').count(),1,
+      'Phone empty state should reuse the same pixel-art folder as the website');
+    const actionBox=await student.locator('.student-add-fab').boundingBox();
+    assert.ok(actionBox&&actionBox.width>=108&&actionBox.height>=58,
+      'The New button should be larger but still fit on a phone');
+    await student.locator('input[type=file]').setInputFiles({
+      name:longName,mimeType:'application/octet-stream',buffer:Buffer.alloc(19_000,31),
+    });
+    const card=host.locator('.document-row').filter({hasText:longName});
+    await card.waitFor({timeout:25000});
+    const check=await card.evaluate(element=>{
+      const title=element.querySelector<HTMLElement>('.document-card-info h3')!;
+      const line=element.querySelector<HTMLElement>('.document-file-meta')!;
+      const owner=element.querySelector<HTMLElement>('.document-file-owner')!;
+      const name=element.querySelector<HTMLElement>('.document-owner-name')!;
+      const dot=element.querySelector<HTMLElement>('.document-owner-dot')!;
+      const size=element.querySelector<HTMLElement>('.document-file-size')!;
+      const titleRect=title.getBoundingClientRect();
+      const cardRect=element.getBoundingClientRect();
+      const dotRect=dot.getBoundingClientRect();
+      const nameRect=name.getBoundingClientRect();
+      const sizeRect=size.getBoundingClientRect();
+      const lineRect=line.getBoundingClientRect();
+      return {
+        filename: title.textContent,
+        titleEllipsis:getComputedStyle(title).textOverflow,
+        titleHasOverflow:title.scrollWidth>title.clientWidth,
+        titleRightPadding:parseFloat(getComputedStyle(title).paddingRight),
+        titleRightEdge:titleRect.right,
+        cardRightEdge:cardRect.right,
+        ownerDisplay:getComputedStyle(owner).display,
+        metaWrap:getComputedStyle(line).flexWrap,
+        nameHasOverflow:name.scrollWidth>name.clientWidth,
+        dotCenter:(dotRect.top+dotRect.bottom)/2,
+        nameCenter:(nameRect.top+nameRect.bottom)/2,
+        sizeRightEdge:sizeRect.right,
+        metaRightEdge:lineRect.right,
+      };
+    });
+    assert.equal(check.filename,longName,'Long original filename remains intact');
+    assert.equal(check.titleEllipsis,'ellipsis');
+    assert.equal(check.titleHasOverflow,true,'Long file name visually ends in ellipsis');
+    assert.ok(check.titleRightPadding>=12,'File name gets breathing room on the right');
+    assert.ok(check.cardRightEdge-check.titleRightEdge>=12,'Text should not touch the card edge');
+    assert.ok(['flex','inline-flex'].includes(check.ownerDisplay), 'Owner metadata must use a horizontal flex row');
+    assert.equal(check.metaWrap,'nowrap');
+    assert.ok(Math.abs(check.dotCenter-check.nameCenter)<4,
+      'The color dot is centered beside the sender name, never above it');
+    assert.equal(check.nameHasOverflow,true,'Long sender names also truncate rather than wrap');
+    assert.ok(check.sizeRightEdge<=check.metaRightEdge+1,
+      'File size remains visible without overflowing the metadata row');
+    await host.getByRole('button',{name:'List view'}).click();
+    const list=host.locator('.document-grid.is-list');
+    await list.waitFor();
+    const dot=await list.locator('.document-owner-dot').first().boundingBox();
+    const name=await list.locator('.document-owner-name').first().boundingBox();
+    assert.ok(dot&&name&&Math.abs((dot.y+dot.height/2)-(name.y+name.height/2))<4,
+      'List mode keeps the owner dot beside the name too');
+    await host.getByRole('button',{name:'End room'}).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button',{name:/End & clear cache/}).click();
+  }finally{
+    await host.close();await student.close();await browser.close();child.kill('SIGTERM');
   }
 });

@@ -463,8 +463,8 @@ export function App() {
       }
       if (type === 'stream.credit' && modeRef.current === 'student') {
         const stream = typeof message.streamId === 'string' ? senderStreams.current.get(message.streamId) : undefined;
-        if (stream && message.credits === 1) {
-          stream.credits++;
+        if (stream && message.credits === 4) {
+          stream.credits += 4;
           void pumpStream(message.streamId as string);
         }
       }

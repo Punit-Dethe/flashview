@@ -1135,3 +1135,73 @@ test('network packet sizes 128/256 KiB preserve exact original PDF bytes in 64 K
   }
 });
 
+
+
+test('QR joins open the upload workspace immediately; leaving or ending a room returns to a clean homepage', {timeout: 100000}, async () => {
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage();
+  const student=await browser.newPage({viewport:{width:390,height:820}});
+  const root='http://127.0.0.1:'+port;
+  try {
+    // Capture a flash even if the server accepts before Playwright evaluates
+    // the page; a MutationObserver sees every mounted join-form panel.
+    await student.addInitScript(() => {
+      const scoped=window as typeof window & {__sawQrJoinForm?:boolean};
+      scoped.__sawQrJoinForm=false;
+      new MutationObserver(()=>{
+        if (document.querySelector('.student-screen .room-entry')) scoped.__sawQrJoinForm=true;
+      }).observe(document,{subtree:true,childList:true});
+    });
+
+    await host.goto(root);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const invite=await host.evaluate(()=>{
+      const saved=sessionStorage.getItem('flashview-host');
+      return saved ? (JSON.parse(saved) as {joinToken:string}).joinToken : '';
+    });
+    assert.ok(invite.includes('.'),'QR link must include an authorized invite token');
+
+    await student.goto(root+'/?join='+encodeURIComponent(invite));
+    await student.locator('.student-drive').waitFor();
+    assert.equal(await student.locator('.student-screen .room-entry').count(),0,
+      'QR links must never render the manual room-code form');
+    await student.waitForFunction(()=>
+      Boolean(document.querySelector('.student-add-fab:not([disabled])')),null,{timeout:20000});
+    assert.equal(await student.evaluate(()=>
+      (window as typeof window & {__sawQrJoinForm?:boolean}).__sawQrJoinForm),false,
+      'Joining through a QR link must not flash the manual join screen');
+    assert.equal(await student.getByRole('button',{name:'Add PDFs'}).count(),1);
+
+    // A room ended by the teacher should instantly leave the student's
+    // workspace, clear its QR URL and restore an EMPTY join-code input.
+    await host.getByRole('button',{name:/End room/}).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button',{name:/End & clear cache/}).click();
+    await student.locator('.welcome').waitFor({timeout:20000});
+    assert.equal(new URL(student.url()).search,'','Expired invite must be removed from URL');
+    assert.equal(await student.locator('#code').inputValue(),'',
+      'Ended room must not leave the QR token or six-digit code in the input');
+    await host.locator('.welcome').waitFor({timeout:15000});
+
+    // Manually entering a code has the same clean exit behavior.
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    await student.getByRole('button',{name:'Leave room'}).click();
+    await student.locator('.welcome').waitFor();
+    assert.equal(await student.locator('#code').inputValue(),'',
+      'Leaving should clear the manually entered code');
+    assert.equal(new URL(student.url()).search,'');
+    await student.reload();
+    await student.locator('.welcome').waitFor();
+    assert.equal(await student.locator('#code').inputValue(),'',
+      'The prior QR link must not rejoin the room after a refresh');
+  } finally {
+    await host.close();await student.close();await browser.close();child.kill('SIGTERM');
+  }
+});

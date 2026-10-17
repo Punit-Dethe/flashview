@@ -1,6 +1,7 @@
 import { TransferRing } from './TransferRing';
 import { formatBytes } from './pdf/Viewer';
 import { fileAccentStyle } from './fileAccent';
+import { isPdfName, fileTypeLabel } from '../shared/fileTypes';
 import type { TransferFile } from './transferProgress';
 import type { CacheProgress } from './pdf/roomCache';
 
@@ -24,8 +25,8 @@ export function StudentTransferCard({ file, progress, preview, onStop }: Props) 
     <article className={'student-file-card' + (stopped ? ' is-stopped' : '')}
       style={fileAccentStyle(file.fileId)}>
       <div className="student-file-visual">
-        {preview ? <img src={preview} alt="" className="student-file-preview"/> :
-          <span className="student-file-pdf-mark" aria-hidden="true">PDF</span>}
+        {isPdfName(file.name) && preview ? <img src={preview} alt="" className="student-file-preview"/> :
+          <span className="student-file-pdf-mark" aria-hidden="true">{fileTypeLabel(file.name)}</span>}
         {done && <TransferRing percent={100} complete
           label={'Received by classroom host: ' + file.name}
           className="student-file-ring"/>}

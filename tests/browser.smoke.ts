@@ -92,12 +92,12 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.equal(await first.locator('.site-header').count(), 0, 'Room workspace must have no header');
     assert.equal(await first.locator('.workspace-topline').count(), 0, 'Room breadcrumbs and room-active strip are removed');
     assert.equal(await first.locator('.workspace-invite-heading').count(), 0, 'Sidebar must not have an introductory hero');
-    assert.equal(await first.getByRole('heading', { name: 'Participants' }).count(), 1);
+    assert.equal(await first.getByRole('heading', { name: /In the room/ }).count(), 1);
     const firstCode = (await first.locator('.room-code').textContent())?.trim();
     assert.match(firstCode ?? '', /^\d{6}$/);
     assert.equal(await first.locator('.qr-plate svg').count(), 1);
     const sidebarWordmark = first.locator('.sidebar-brand');
-    assert.equal((await sidebarWordmark.innerText()).trim(), 'flashview.');
+    assert.equal((await sidebarWordmark.innerText()).trim(), 'flashview');
     const wordmarkBox = await sidebarWordmark.boundingBox();
     const qrBox = await first.locator('.qr-plate').boundingBox();
     const brandFontSize = await sidebarWordmark.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
@@ -114,9 +114,9 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     const right = first.getByTestId('documents-scroll-region');
     const leftBefore = await left.boundingBox();
     assert.ok(leftBefore && leftBefore.width > 250);
-    assert.ok(leftBefore && Math.abs(leftBefore.y) < 2,
-      'Sidebar must begin at the top edge of the viewport without header chrome');
-    const docHeading = await right.getByRole('heading', { name: /Files/ }).boundingBox();
+    assert.ok(leftBefore && Math.abs(leftBefore.y - 22) < 3,
+      'The reference v8 classroom has a 22px outside gutter');
+    const docHeading = await right.getByRole('heading', { name: /Queue/ }).boundingBox();
     assert.ok(docHeading && leftBefore && docHeading.x >= leftBefore.x + leftBefore.width,
       'Documents should occupy the area to the right of the full-height sidebar');
     const copy = await first.getByRole('button', { name: /Copy link/ }).boundingBox();
@@ -205,7 +205,7 @@ test('open rooms auto-admit guests, show only their own PDFs, and expose a light
       background: getComputedStyle(document.querySelector('.student-drive')!).backgroundColor,
     }));
     assert.equal(widthInfo.columns, 2, 'Mobile view should fit exactly two cards per row');
-    assert.equal(widthInfo.background, 'rgb(255, 255, 255)', 'Student room must be a light surface');
+    assert.equal(widthInfo.background, 'rgb(243, 247, 254)', 'Student room adopts the reference light-blue page');
     await host.locator('.document-row').filter({ hasText: 'private-alice.pdf' }).waitFor();
     assert.equal(await second.locator('.student-file-card').count(), 0,
       'A different student must not see Alice’s files');
@@ -294,15 +294,19 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       buffer: makePdf(),
     });
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).waitFor();
-    // Every document keeps a square footprint during the spinner-to-JPEG fade.
+    // Reference v8 uses a fixed 118px preview tile, separate filename and
+    // a rounded action footer. The PDF JPEG must not resize that fixed tile.
     const card = host.locator('.document-row').filter({ hasText: 'smoke.pdf' });
     const tile = await card.boundingBox();
-    assert.ok(tile && Math.abs(tile.width - tile.height) < 3, 'Each document tile is square');
-    const swatch = await card.evaluate(element => ({
-      accent: getComputedStyle(element).getPropertyValue('--file-accent').trim(),
-      background: getComputedStyle(element.querySelector('.document-thumb')!).backgroundColor,
-    }));
-    assert.match(swatch.accent, /^#[0-9A-Fa-f]{6}$/);
+    const swatch = await card.evaluate(element => {
+      const visual=element.querySelector('.document-card-visual')!;
+      return {
+        height: visual.getBoundingClientRect().height,
+        background: getComputedStyle(element.querySelector('.document-thumb')!).backgroundColor,
+      };
+    });
+    assert.ok(tile && tile.width > 170 && tile.height > 170, 'Reference gallery cards need readable dimensions');
+    assert.ok(Math.abs(swatch.height - 118) < 2, 'Reference HTML preview height is 118px');
     assert.notEqual(swatch.background, 'rgba(0, 0, 0, 0)');
     // Rendering on the sender is independent: diagnose phone rendering
     // before checking delivery to the host, especially on Firefox.

@@ -303,7 +303,13 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     }));
     assert.match(swatch.accent, /^#[0-9A-Fa-f]{6}$/);
     assert.notEqual(swatch.background, 'rgba(0, 0, 0, 0)');
-    // The existing phone-generated first-page JPEG should appear in the card.
+    // Rendering on the sender is independent: diagnose phone rendering
+    // before checking delivery to the host, especially on Firefox.
+    const localPreview = student.locator('.student-file-card').filter({ hasText: 'smoke.pdf' })
+      .locator('img.student-file-preview');
+    await localPreview.waitFor({ timeout: 20000 });
+    assert.ok(await localPreview.evaluate(node => (node as HTMLImageElement).naturalWidth > 100));
+    // The smaller local JPEG should also reach the host without delaying PDF bytes.
     await card.locator('img.document-thumb-image.is-visible').waitFor({ timeout: 20000 });
     assert.equal(await card.locator('img.document-thumb-image').evaluate(
       image => (image as HTMLImageElement).naturalWidth > 100), true);
@@ -319,12 +325,6 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       await host.screenshot({ path: 'test-artifacts/ui/classroom.png', fullPage: true });
       await student.screenshot({ path: 'test-artifacts/ui/student.png', fullPage: true });
     }
-    // The student thumbnail renders from its own File, without receiving
-    // the host's JPEG over the relay (the preview moves phone → host only).
-    const localPreview = student.locator('.student-file-card').filter({ hasText: 'smoke.pdf' })
-      .locator('img.student-file-preview');
-    await localPreview.waitFor({ timeout: 20000 });
-    assert.ok(await localPreview.evaluate(node => (node as HTMLImageElement).naturalWidth > 100));
     // Student approval also approves each new PDF automatically.
     await student.locator('.student-file-card').filter({ hasText: 'smoke.pdf' })
       .locator('.transfer-ring').waitFor();

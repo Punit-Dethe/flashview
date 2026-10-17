@@ -263,17 +263,18 @@ html, body { background: var(--canvas); }
   background: #17181d;
   border-right: 1px solid #303139;
 }
-/* Quiet typographic brand, separate from the room QR rather than another header. */
+/* Primary sidebar identity — centered above the QR, without a separate header. */
 .premium-app .sidebar-brand {
   flex: 0 0 auto;
-  align-self: flex-start;
+  align-self: center;
   display: block;
-  margin: 0 0 32px 2px;
+  margin: 0 0 34px;
   color: #f1f1f6;
-  font-size: 22px;
-  font-weight: 660;
+  font-size: 38px;
+  font-weight: 650;
   letter-spacing: -.065em;
-  line-height: 1.2;
+  line-height: 1.18;
+  text-align: center;
   -webkit-font-smoothing: antialiased;
 }
 .premium-app .sidebar-brand-dot { color: #afb3ed; }
@@ -573,7 +574,7 @@ html, body { background: var(--canvas); }
 /* Compact display heights preserve room controls and keep approvals scrollable. */
 @media (max-height: 780px) and (min-width: 761px) {
   .premium-app .workspace-left { padding: 20px 23px 0; }
-  .premium-app .sidebar-brand { margin-bottom: 23px; }
+  .premium-app .sidebar-brand { font-size: 34px; margin-bottom: 24px; }
   .premium-app .qr-plate { width: min(100%, 201px); padding: 11px; }
   .premium-app .qr-side { margin-bottom: 13px; }
   .premium-app .room-code { font-size: 40px; margin: 5px 0 12px; }
@@ -582,7 +583,7 @@ html, body { background: var(--canvas); }
 }
 @media (max-height: 600px) and (min-width: 761px) {
   .premium-app .workspace-left { padding: 13px 18px 0; }
-  .premium-app .sidebar-brand { font-size: 19px; margin-bottom: 12px; }
+  .premium-app .sidebar-brand { font-size: 29px; margin-bottom: 13px; }
   .premium-app .qr-plate { width: min(100%, 143px); padding: 8px; }
   .premium-app .qr-side { margin-bottom: 8px; }
   .premium-app .room-code { font-size: 33px; margin: 4px 0 9px; }
@@ -596,7 +597,7 @@ html, body { background: var(--canvas); }
   .premium-app.is-host-workspace .premium-workspace { display: block; height: auto; overflow: visible; }
   .premium-app .workspace-split { display: flex; flex-direction: column; height: auto; overflow: visible; }
   .premium-app .workspace-left { padding: 24px 22px 0; overflow: visible; border-right: none; border-bottom: 1px solid #33343c; }
-  .premium-app .sidebar-brand { margin-bottom: 28px; }
+  .premium-app .sidebar-brand { font-size: clamp(32px, 9vw, 38px); margin-bottom: 30px; }
   .premium-app .premium-invite { max-width: 440px; margin: 0 auto; }
   .premium-app .qr-plate { width: min(100%, 226px); }
   .premium-app .sidebar-participants { flex: initial; width: 100%; margin-top: 24px; }

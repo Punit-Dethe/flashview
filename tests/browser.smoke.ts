@@ -99,8 +99,13 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.equal((await sidebarWordmark.innerText()).trim(), 'flashview.');
     const wordmarkBox = await sidebarWordmark.boundingBox();
     const qrBox = await first.locator('.qr-plate').boundingBox();
+    const brandFontSize = await sidebarWordmark.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    assert.ok(brandFontSize >= 30, 'FlashView wordmark must be visibly prominent');
     assert.ok(wordmarkBox && qrBox && qrBox.y > wordmarkBox.y + wordmarkBox.height,
       'FlashView branding should sit above the QR code');
+    assert.ok(wordmarkBox && qrBox &&
+      Math.abs((wordmarkBox.x + wordmarkBox.width / 2) - (qrBox.x + qrBox.width / 2)) < 3,
+      'FlashView wordmark should be horizontally centered on the QR code');
     assert.ok(wordmarkBox && qrBox && qrBox.y - (wordmarkBox.y + wordmarkBox.height) >= 14 &&
       qrBox.y - (wordmarkBox.y + wordmarkBox.height) <= 54,
       'Wordmark and QR should have calm but compact visual separation');

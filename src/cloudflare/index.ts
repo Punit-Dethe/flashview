@@ -261,20 +261,21 @@ export class ClassroomRoom extends DurableObject<Env> {
       if (msg.type === 'cache.progress') {
         const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
         const bytes = msg.bytes;
-        if (file && Number.isSafeInteger(bytes) && Number(bytes) >= 0 && Number(bytes) <= file.size) {
-          // Persist acknowledged metadata in the durable manifest. Background
-          // phones can request it later, without relying on live WS events.
-          const next = msg.snapshot === true ? Number(bytes) :
-            Math.max(file.cachedBytes ?? 0, Number(bytes));
+        // Hot path protection: ignore intermediate progress from older hosts.
+        // Persist exactly once per completed PDF, not per cached chunk.
+        // A zero snapshot can clear stale completed metadata after cache loss.
+        if (file && Number.isSafeInteger(bytes) &&
+            (bytes === file.size || (msg.snapshot === true && bytes === 0))) {
+          const next = Number(bytes);
           if (file.cachedBytes !== next) {
             file.cachedBytes = next;
             await this.persist();
+            const student = this.student(file.ownerId);
+            if (student && student.peer.approved) send(student.ws, {
+              type: 'cache.progress', fileId: file.fileId, bytes: next,
+              size: file.size, complete: next === file.size,
+            });
           }
-          const student = this.student(file.ownerId);
-          if (student && student.peer.approved) send(student.ws, {
-            type: 'cache.progress', fileId: file.fileId, bytes: next,
-            size: file.size, complete: next === file.size,
-          });
         }
         return;
       }

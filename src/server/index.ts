@@ -357,6 +357,13 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     const file = room.files.get(msg.fileId);
     if (file?.ownerId === peer.id) {
       file.status = 'offline';
+      for (const [id, stream] of room.streams) {
+        if (stream.fileId === file.fileId) {
+          room.streams.delete(id);
+          send(ws, { type: 'stream.stop', streamId: id });
+          notifyHost(room, { type: 'stream.error', streamId: id, message: 'File sharing stopped' });
+        }
+      }
       for (const [id, pending] of room.outstanding) {
         if (pending.fileId === msg.fileId) {
           room.outstanding.delete(id);

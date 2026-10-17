@@ -314,8 +314,9 @@ export function App() {
         }
       }
       if (type === 'cache.progress' && modeRef.current === 'student' &&
-          typeof message.fileId === 'string' && Number.isSafeInteger(message.bytes) &&
-          Number.isSafeInteger(message.size)) {
+          typeof message.fileId === 'string' &&
+          typeof message.bytes === 'number' && Number.isSafeInteger(message.bytes) &&
+          typeof message.size === 'number' && Number.isSafeInteger(message.size)) {
         const local = filesOnPhone.current.get(message.fileId);
         if (local && local.file.size === message.size && message.bytes >= 0 &&
             message.bytes <= local.file.size) {

@@ -129,6 +129,10 @@ export function App() {
         }));
         // Only finished PDFs need an acknowledgement during host restoration.
         if (progress.complete) acknowledgeComplete(file.fileId, file.size);
+        else if (socket.connected && file.cachedBytes === file.size) {
+          // Clear an old "Done" when the host's cached bytes were deleted.
+          socket.send({ type: 'cache.progress', fileId: file.fileId, bytes: 0, snapshot: true });
+        }
       }).catch(() => {});
     }
   }, [hostSession?.code, documents, presentation, socket]);
@@ -330,19 +334,6 @@ export function App() {
         setDocuments(existing => [...existing.filter(f => f.fileId !== file.fileId), file]);
         hostFilesRef.current = [...hostFilesRef.current.filter(f => f.fileId !== file.fileId), file];
         presentation.queue(file);
-      }
-      if (type === 'cache.progress.request' && modeRef.current === 'host') {
-        // Fresh snapshots after a phone rejoins; old completed transfers stay done.
-        for (const file of hostFilesRef.current) {
-          void presentation.progress(file).then(progress => {
-            // A reconnect asks for an authoritative complete/zero snapshot,
-            // never the intermediate byte counts.
-            if (socket.connected) socket.send({
-              type: 'cache.progress', fileId: file.fileId,
-              bytes: progress.complete ? file.size : 0, snapshot: true,
-            });
-          }).catch(() => {});
-        }
       }
       if (type === 'cache.progress' && modeRef.current === 'student' &&
           typeof message.fileId === 'string' &&

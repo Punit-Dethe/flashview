@@ -820,8 +820,6 @@ export function App() {
                 </form>
               </div>
             )}
-            {socketStatus === 'connecting' && joinState === 'accepted' &&
-              <div className="stay-online" role="status">Restoring your classroom connection…</div>}
             {joinState === 'pending' && <div className="waiting-card"><span className="spinner"/><h2>Waiting for the teacher.</h2><p>Your request was delivered. Once approved, you can send a PDF.</p></div>}
             {joinState === 'accepted' && (
               <div className="send-workspace">
@@ -834,22 +832,30 @@ export function App() {
                   <small>PDF files only · Up to 50 MB</small>
                 </div>
                 <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={addPdf}/>
-                {sentFiles.length > 0 && <div className="sent-list"><h3>Files you're sharing</h3>
-                  {sentFiles.map(f => <div className="sent-row" key={f.fileId}>
-                    <span className="file-icon" style={fileAccentStyle(f.fileId)} aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></span><div className="file-meta"><strong>{f.name}</strong><span>{formatBytes(f.size)} · {f.status === 'announcing' ? 'Sending announcement…' : f.status === 'approved' ? 'Shared — caching on classroom computer' : f.status}</span></div>
-                    {f.status !== 'offline' && <button className="plain-action" onClick={() => revoke(f.fileId)}>Stop sharing</button>}
-                  </div>)}</div>}
-                <div className="stay-online">FlashView sends a document announcement first, not the complete PDF. A confirmation means your file is listed in the classroom. Keep this browser tab running for the teacher to view uncached pages.</div>
+                {sentFiles.length > 0 && <section className="sent-list student-transfer-section" aria-label="Your uploads">
+                  <header className="student-transfer-heading">
+                    <h3>Your files</h3>
+                    <span>{transferSummary.ready} of {transferSummary.count} ready</span>
+                  </header>
+                  <div className="student-files-grid">
+                    {sentFiles.map(f => <StudentTransferCard key={f.fileId} file={f}
+                      progress={studentCacheProgress[f.fileId]} preview={phonePreviews[f.fileId]}
+                      onStop={() => revoke(f.fileId)}/>)}
+                  </div>
+                  <p className="student-transfer-hint">{transferSummary.complete ?
+                    'All files are saved on the classroom computer. You can leave this page.' :
+                    'Keep this page open until every file shows a checkmark.'}</p>
+                </section>}
               </div>
             )}
             {joinState === 'rejected' && <button className="outline-button" onClick={startFresh}>Return home →</button>}
-            {socketStatus === 'disconnected' && joinState !== 'idle' &&
-              <div className="disconnect-notice">
-                Connection interrupted. FlashView is reconnecting automatically.
-                <button onClick={() => socket.wake()}>Retry now</button>
-                <small>Keep this tab open. Previously selected PDFs remain available when the connection returns.</small>
-              </div>}
+
             <button className="subtle-link return-home" onClick={startFresh}>← Back to home</button>
+            {showTransferPill && <TransferPill connecting={studentNeedsConnection}
+              summary={transferSummary} onReconnect={() => {
+                socket.wake();
+                if (socket.connected) socket.send({ type: 'file.sync' });
+              }}/>}
           </div>
         )}
         {joinDialogOpen && mode === 'host' && hostSession && (

@@ -181,7 +181,6 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     send(ws, {
       type: 'file.manifest', files: [...room.files.values()].filter(file => file.ownerId === peer.id),
     });
-    notifyHost(room, { type: 'cache.progress.request' });
     return;
   }
   if (peer.role === 'host') {

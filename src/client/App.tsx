@@ -914,6 +914,10 @@ export function App() {
                 <section className="sidebar-participants" aria-label="Participants">
                   <div className="sidebar-participants-heading">
                     <h2>In the room · {students.length}</h2>
+                    <span className={'connection reference-room-connection '+socketStatus}
+                      aria-label={'Room '+statusText(socketStatus)} title={statusText(socketStatus)}>
+                      <span className="status-dot" aria-hidden="true"/>
+                    </span>
                   </div>
                   <div className="sidebar-participants-scroll">
                     {students.length===0&&<p className="sidebar-participants-empty">No one has joined yet.</p>}
@@ -943,7 +947,7 @@ export function App() {
                 <div className="document-column">
                   <div className="list-heading">
                     <div className="list-heading-title">
-                      <h1 className="reference-serif">Queue <sup>{documents.filter(f=>f.status!=='rejected').length}</sup></h1>
+                      <h1 className="reference-serif">Files <sup>{documents.filter(f=>f.status!=='rejected').length}</sup></h1>
                     </div>
                     <div className="reference-room-tools">
                       <div className="reference-view-selector" role="group" aria-label="View">
@@ -956,9 +960,6 @@ export function App() {
                           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
                         </button>
                       </div>
-                      <span className={'connection reference-live '+socketStatus}>
-                        <span className="status-dot"/>{socketStatus==='connected'?'Relay open · nothing stored':statusText(socketStatus)}
-                      </span>
                     </div>
                   </div>
                   <div className={'document-list document-grid'+(queueView==='list'?' is-list':'')}>
@@ -1047,11 +1048,7 @@ export function App() {
                         </section>
                       ) : (
                         <div className="student-drive-empty">
-                          <svg viewBox="0 0 72 72" width="74" height="74" fill="none" aria-hidden="true">
-                            <rect x="10" y="13" width="52" height="46" rx="11" fill="#e8eff8"/>
-                            <path d="M18 32h36M24 24h17" stroke="#91a8c9" strokeWidth="3" strokeLinecap="round"/>
-                            <path d="M26 42h20M26 49h13" stroke="#b1c2d8" strokeWidth="2.5" strokeLinecap="round"/>
-                          </svg>
+                          <PixelIcon kind="folder" className="student-empty-pixel-icon"/>
                           <h2>{joinState === 'connecting' ? 'Ready to share' : 'No files yet'}</h2>
                           <p>{joinState === 'connecting' ? 'Connecting to your room…' : 'Tap New to share a file.'}</p>
                         </div>

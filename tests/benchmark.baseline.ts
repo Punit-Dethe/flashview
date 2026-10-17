@@ -148,7 +148,7 @@ try {
         },null,{timeout:45000});
         firstSlide = Date.now() - start;
       } catch { /* still measure the full PDF */ }
-      await host.getByText('Fully cached on this computer').first().waitFor({timeout:120000});
+      await host.locator('.document-row .cache-ring[aria-valuenow="100"]').first().waitFor({timeout:120000});
       const cacheDuration = Date.now()-start;
       await presenter.locator('canvas[data-rendered-page="1"]').waitFor({timeout:45000});
       const pageStart = Date.now();

@@ -222,7 +222,9 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   padding:6px 0; margin:0; border:0; background:transparent; color:#0b1230; gap:10px;
   animation:reference-pop .4s; }
 .premium-app .reference-room .participant-avatar { flex:0 0 30px; width:30px; height:30px; display:grid;
-  place-items:center; border-radius:50%; background:#e4e8f0; color:#0e0f14; font-size:13px; font-weight:700; }
+  place-items:center; border-radius:50%; background:var(--participant-color,#e4e8f0);
+  color:#fff; font-size:13px; font-weight:700;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--participant-color,#e4e8f0) 25%,transparent); }
 .premium-app .reference-room .participant-info strong { color:#0b1230; font-size:15px; font-weight:500; }
 .premium-app .reference-room .participant-info small { color:#5d6685; font-size:12px; }
 .premium-app .reference-room .mini-accept { background:#0e0f14; color:#fff; border-radius:99px; padding:8px 13px; }
@@ -298,6 +300,12 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   color:#0b1230; margin:0; padding:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .premium-app .reference-room .document-card-info p { display:flex; gap:6px; margin:3px 0 0; color:#5d6685; font-size:12.5px; }
 .premium-app .reference-room .document-card-info p span:first-child { color:#5d6685; }
+/* The reference HTML uses one matching hue for every sender's avatar,
+   the dot next to their name, and the gradient of their file icons. */
+.premium-app .reference-room .document-file-owner { display:inline-flex; align-items:center; gap:6px;
+  min-width:0; max-width:75%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.premium-app .reference-room .document-owner-dot { flex:0 0 8px; width:8px; height:8px;
+  border-radius:50%; background:#d2d9e5; }
 .premium-app .reference-room .document-card .cache-ring {
   /* Preserve the progressbar for assistive technology and existing transfer tests.
      Reference v8 paints active progress within the action button, not a corner ring. */

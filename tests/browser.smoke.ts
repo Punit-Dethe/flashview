@@ -1473,3 +1473,69 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     await host.close();await student.close();await browser.close();child.kill('SIGTERM');
   }
 });
+
+
+test('phone hosting: join-first homepage, collapsed room setup, approvals and shared files', {timeout:80000}, async()=>{
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({viewport:{width:390,height:844}});
+  const student=await browser.newPage({viewport:{width:390,height:844}});
+  const root='http://127.0.0.1:'+port;
+  try{
+    await host.goto(root);
+    const order=await host.evaluate(()=>{
+      const join=document.querySelector('.reference-actions .join-card')!.getBoundingClientRect();
+      const create=document.querySelector('.reference-actions .host-card')!.getBoundingClientRect();
+      return {joinTop:join.top,createTop:create.top};
+    });
+    assert.ok(order.joinTop<order.createTop,'On phones, Send from your device comes first');
+    await host.getByRole('checkbox',{name:'Require approval'}).check();
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor({state:'attached'});
+    const compact=host.locator('.mobile-host-toolbar');
+    assert.ok(await compact.isVisible(),'A phone host sees the compact room header');
+    const code=(await compact.locator('.mobile-host-code').innerText()).trim();
+    assert.match(code,/^\d{6}$/);
+    assert.equal((await compact.locator('.mobile-host-byline').innerText()).trim(),'by flashview');
+    const configure=host.getByRole('button',{name:'Configure'});
+    assert.equal(await configure.getAttribute('aria-expanded'),'false');
+    assert.equal(await host.locator('.qr-plate').isVisible(),false,
+      'QR and sharing controls must be collapsed initially');
+    assert.equal(await host.locator('.list-heading').isVisible(),false,
+      'Phones should not show the Files title or grid/list toolbar');
+    assert.equal(await host.getByText('Waiting for the first file').isVisible(),true);
+
+    await configure.click();
+    assert.equal(await configure.getAttribute('aria-expanded'),'true');
+    assert.equal(await host.locator('.qr-plate').isVisible(),true);
+    assert.equal(await host.getByRole('button',{name:'Copy link'}).isVisible(),true);
+    assert.equal(await host.getByRole('button',{name:'End room'}).isVisible(),true);
+    assert.equal(await host.getByText('Approve each person').isVisible(),true);
+    assert.equal(await host.getByRole('heading',{name:'In the room · 0'}).isVisible(),true);
+
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    const request=host.locator('.sidebar-approval');
+    await request.waitFor({timeout:20000});
+    assert.equal(await host.getByRole('heading',{name:'In the room · 0'}).isVisible(),true,
+      'Pending approvals do not count as connected people');
+    await request.getByRole('button',{name:'Allow'}).click();
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    await host.getByRole('heading',{name:'In the room · 1'}).waitFor();
+    assert.equal(await host.locator('.participant-row').isVisible(),false,
+      'Approved participants are shown as a count, not as a mobile list');
+
+    await student.locator('input[type=file]').setInputFiles({
+      name:'mobile-host-demo.txt',mimeType:'text/plain',buffer:Buffer.from('Hello from the student'),
+    });
+    const card=host.locator('.document-row').filter({hasText:'mobile-host-demo.txt'});
+    await card.waitFor({timeout:25000});
+    assert.equal(await card.isVisible(),true,'Received files remain available on mobile');
+    await configure.click();
+    assert.equal(await host.locator('.qr-plate').isVisible(),false);
+    assert.equal(await card.isVisible(),true,'Collapsing Configure must not hide files');
+  }finally{
+    await host.close();await student.close();await browser.close();child.kill('SIGTERM');
+  }
+});

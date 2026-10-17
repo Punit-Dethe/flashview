@@ -97,6 +97,7 @@ export function App() {
   const [downloadSpeed, setDownloadSpeed] = useState<Record<string, number>>({});
   const [savingFiles, setSavingFiles] = useState<Record<string, boolean>>({});
   const [queueView, setQueueView] = useState<'grid' | 'list'>('grid');
+  const [mobileHostConfigOpen, setMobileHostConfigOpen] = useState(false);
   const [endConfirm, setEndConfirm] = useState(false);
   const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -740,6 +741,7 @@ export function App() {
     setDownloadSpeed({});
     setSavingFiles({});
     setQueueView('grid');
+    setMobileHostConfigOpen(false);
     setEndConfirm(false);
     setEndAcknowledged(false);
     setCopied(false);
@@ -887,8 +889,25 @@ export function App() {
         {mode === 'host' && hostSession && (
           <div className="workspace premium-workspace reference-room">
             <div className="workspace-split">
-              <aside className="workspace-left" aria-label="Room invitation and participants">
-                <div className="sidebar-brand" aria-label="FlashView">flashview</div>
+              <aside className={'workspace-left'+(mobileHostConfigOpen?' mobile-config-expanded':'')}
+                aria-label="Room invitation and participants">
+                <div className="mobile-host-toolbar">
+                  <div className="mobile-host-identity">
+                    <strong className="mobile-host-code">{hostSession.code}</strong>
+                    <span className="mobile-host-byline">by flashview</span>
+                  </div>
+                  <button type="button" className="mobile-host-config-toggle"
+                    aria-expanded={mobileHostConfigOpen} aria-controls="mobile-host-config-panel"
+                    onClick={()=>setMobileHostConfigOpen(open=>!open)}>
+                    Configure
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="m5 8 5 5 5-5" fill="none" stroke="currentColor"
+                        strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+                <div className="mobile-host-config-panel" id="mobile-host-config-panel">
+                  <div className="sidebar-brand" aria-label="FlashView">flashview</div>
                 <section className="room-card premium-invite" aria-label="Live room QR code">
                   <div className="qr-side">
                     <div className="qr-plate">
@@ -913,13 +932,14 @@ export function App() {
                 </div>
                 <section className="sidebar-participants" aria-label="Participants">
                   <div className="sidebar-participants-heading">
-                    <h2>In the room · {students.length}</h2>
+                    <h2>In the room · {students.filter(s=>s.approved).length}</h2>
                     <span className={'connection reference-room-connection '+socketStatus}
                       aria-label={'Room '+statusText(socketStatus)} title={statusText(socketStatus)}>
                       <span className="status-dot" aria-hidden="true"/>
                     </span>
                   </div>
                   <div className="sidebar-participants-scroll">
+                    {students.some(s=>!s.approved)&&<span className="mobile-host-request-label">Requests to join</span>}
                     {students.length===0&&<p className="sidebar-participants-empty">No one has joined yet.</p>}
                     {students.filter(s=>!s.approved).map(s=>(
                       <div className="approval sidebar-approval" data-participant-id={s.id} key={s.id}>
@@ -942,6 +962,7 @@ export function App() {
                     ))}
                   </div>
                 </section>
+                </div>
               </aside>
               <section className="workspace-right" aria-label="Shared documents" data-testid="documents-scroll-region">
                 <div className="document-column">

@@ -504,3 +504,87 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
  .premium-app .reference-room .sidebar-participants { margin:0; }
  .premium-app .reference-room .sidebar-participants-scroll { flex:1 1 auto; min-height:60px; }
 }
+
+
+/* A phone may host a room without dedicating most of its screen to a QR card.
+   Desktop keeps the exact existing sidebar; mobile reveals its controls on demand. */
+.premium-app .reference-room .mobile-host-toolbar,
+.premium-app .reference-room .mobile-host-request-label { display:none; }
+.premium-app .reference-room .mobile-host-config-panel { display:contents; }
+
+@media (max-width:600px) {
+  /* Phones typically join existing rooms, so lead with the sending flow. */
+  .premium-app .reference-actions > .join-card { order:-1; }
+
+  .premium-app .reference-room .workspace-split { gap:14px; }
+  .premium-app .reference-room .workspace-left {
+    padding:0; gap:0; overflow:hidden; border-radius:22px;
+  }
+  .premium-app .reference-room .mobile-host-toolbar {
+    display:flex; align-items:center; justify-content:space-between;
+    gap:14px; min-height:86px; padding:15px 17px 15px 21px;
+  }
+  .premium-app .reference-room .mobile-host-identity {
+    display:flex; flex-direction:column; align-items:flex-start;
+    min-width:0; gap:1px;
+  }
+  .premium-app .reference-room .mobile-host-code {
+    color:#0b1230; font:600 26px/1.15 "DM Mono",monospace;
+    letter-spacing:.075em; font-variant-numeric:tabular-nums;
+  }
+  .premium-app .reference-room .mobile-host-byline {
+    color:#73809a; font-size:10px; font-weight:500; letter-spacing:.01em;
+  }
+  .premium-app .reference-room .mobile-host-config-toggle {
+    display:inline-flex; flex:0 0 auto; align-items:center; justify-content:center;
+    gap:7px; min-height:40px; padding:0 13px; border:1px solid #dce3f0;
+    border-radius:999px; background:#f5f7fb; color:#0b1230;
+    font:600 13px "DM Sans",sans-serif; cursor:pointer;
+  }
+  .premium-app .reference-room .mobile-host-config-toggle:focus-visible {
+    outline:3px solid #3168e8; outline-offset:3px;
+  }
+  .premium-app .reference-room .mobile-host-config-toggle svg {
+    width:16px; height:16px; transition:transform .2s ease;
+  }
+  .premium-app .reference-room .mobile-config-expanded .mobile-host-config-toggle svg {
+    transform:rotate(180deg);
+  }
+  .premium-app .reference-room .mobile-host-config-panel { display:none; }
+  .premium-app .reference-room .mobile-config-expanded .mobile-host-config-panel {
+    display:flex; flex-direction:column; gap:18px;
+    padding:20px 20px 24px; border-top:1px solid #e1e7f2;
+  }
+  .premium-app .reference-room .mobile-host-config-panel .sidebar-brand {
+    font-size:38px; margin:0;
+  }
+  .premium-app .reference-room .mobile-host-config-panel .qr-plate {
+    width:min(100%,300px); max-width:300px; margin:auto;
+  }
+  .premium-app .reference-room .mobile-host-config-panel .sidebar-participants {
+    flex:none; margin:0;
+  }
+  .premium-app .reference-room .mobile-host-config-panel .sidebar-participants-scroll {
+    max-height:none; overflow:visible;
+  }
+  /* Show the count, not an endless list of connected participants. Keep
+     pending requests actionable when approval is enabled. */
+  .premium-app .reference-room .mobile-host-config-panel .participant-row,
+  .premium-app .reference-room .mobile-host-config-panel .sidebar-participants-empty {
+    display:none;
+  }
+  .premium-app .reference-room .mobile-host-request-label {
+    display:block; margin:6px 0; color:#5d6685;
+    font-size:12px; font-weight:600;
+  }
+  /* The mobile file area is intentionally title-free. Cards stay interactive. */
+  .premium-app .reference-room .workspace-right .list-heading { display:none; }
+  .premium-app .reference-room .workspace-right { padding:18px; min-height:280px; }
+  .premium-app .reference-room .workspace-right .document-list.document-grid {
+    min-height:230px;
+  }
+  .premium-app .reference-room .workspace-right .document-grid .empty-list {
+    padding:50px 16px; text-align:center;
+  }
+  .premium-app .reference-room .reference-room-hint { padding-top:22px; }
+}

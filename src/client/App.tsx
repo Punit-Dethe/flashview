@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
 import { assignParticipantColors } from './participantColors';
@@ -918,9 +918,9 @@ export function App() {
                   <div className="sidebar-participants-scroll">
                     {students.length===0&&<p className="sidebar-participants-empty">No one has joined yet.</p>}
                     {students.filter(s=>!s.approved).map(s=>(
-                      <div className="approval sidebar-approval" key={s.id}>
+                      <div className="approval sidebar-approval" data-participant-id={s.id} key={s.id}>
                         <span className="participant-avatar" aria-hidden="true"
-                          style={participantColors[s.id]?{backgroundColor:participantColors[s.id]}:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
+                          style={participantColors[s.id]?{'--participant-color':participantColors[s.id]} as CSSProperties:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
                         <span className="participant-info"><strong>{s.name}</strong><small>Waiting for approval</small></span>
                         <div className="participant-actions">
                           <button className="mini-accept" onClick={()=>socket.send({type:'student.accept',studentId:s.id})}>Allow</button>
@@ -930,9 +930,9 @@ export function App() {
                       </div>
                     ))}
                     {students.filter(s=>s.approved).map(s=>(
-                      <div className="participant-row" key={s.id}>
+                      <div className="participant-row" data-participant-id={s.id} key={s.id}>
                         <span className="participant-avatar" aria-hidden="true"
-                          style={participantColors[s.id]?{backgroundColor:participantColors[s.id]}:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
+                          style={participantColors[s.id]?{'--participant-color':participantColors[s.id]} as CSSProperties:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
                         <span className="participant-info"><strong>{s.name}</strong><small>Connected</small></span>
                       </div>
                     ))}

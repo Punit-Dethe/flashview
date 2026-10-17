@@ -115,6 +115,66 @@ jobs:
           name: flashview-network-packet-comparison
           path: test-artifacts/stage0-*-4mib-1students-40ms-adaptive*.json
           if-no-files-found: warn
+      # Phase 2: compare 1/4/8/16 IndexedDB puts per transaction.
+      # Hold network packet size at the proven 256 KiB default.
+      - name: Phase 2 IndexedDB — Node batch 4
+        run: npm run bench:baseline
+        env:
+          BENCH_MIB: 4
+          BENCH_RUNS: 3
+          BENCH_FILE_READ_DELAY_MS: 40
+          BENCH_PACKET_KIB: 256
+          BENCH_BATCH_SIZE: 4
+      - name: Phase 2 IndexedDB — Node batch 8
+        run: npm run bench:baseline
+        env:
+          BENCH_MIB: 4
+          BENCH_RUNS: 3
+          BENCH_FILE_READ_DELAY_MS: 40
+          BENCH_PACKET_KIB: 256
+          BENCH_BATCH_SIZE: 8
+      - name: Phase 2 IndexedDB — Node batch 16
+        run: npm run bench:baseline
+        env:
+          BENCH_MIB: 4
+          BENCH_RUNS: 3
+          BENCH_FILE_READ_DELAY_MS: 40
+          BENCH_PACKET_KIB: 256
+          BENCH_BATCH_SIZE: 16
+      - name: Phase 2 IndexedDB — Cloudflare local batch 4
+        run: npm run bench:baseline
+        env:
+          FLASHVIEW_BACKEND: cloudflare
+          BENCH_MIB: 4
+          BENCH_RUNS: 3
+          BENCH_FILE_READ_DELAY_MS: 40
+          BENCH_PACKET_KIB: 256
+          BENCH_BATCH_SIZE: 4
+      - name: Phase 2 IndexedDB — Cloudflare local batch 8
+        run: npm run bench:baseline
+        env:
+          FLASHVIEW_BACKEND: cloudflare
+          BENCH_MIB: 4
+          BENCH_RUNS: 3
+          BENCH_FILE_READ_DELAY_MS: 40
+          BENCH_PACKET_KIB: 256
+          BENCH_BATCH_SIZE: 8
+      - name: Phase 2 IndexedDB — Cloudflare local batch 16
+        run: npm run bench:baseline
+        env:
+          FLASHVIEW_BACKEND: cloudflare
+          BENCH_MIB: 4
+          BENCH_RUNS: 3
+          BENCH_FILE_READ_DELAY_MS: 40
+          BENCH_PACKET_KIB: 256
+          BENCH_BATCH_SIZE: 16
+      - name: Upload Phase 2 IndexedDB batch comparisons
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flashview-indexeddb-batch-comparison
+          path: test-artifacts/stage0-*-4mib-1students-40ms-adaptive-packet256kib*.json
+          if-no-files-found: warn
       - name: Upload UI reference screenshots
         uses: actions/upload-artifact@v4
         if: always()

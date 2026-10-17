@@ -226,16 +226,24 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       buffer: makePdf(),
     });
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).waitFor();
-    // Visual regression: every PDF carries a palette-based file identity.
-    const swatch = await host.locator('.document-row').first().evaluate(element => {
-      const icon = element.querySelector('.file-icon');
-      return icon ? {
-        accent: getComputedStyle(element).getPropertyValue('--file-accent').trim(),
-        background: getComputedStyle(icon).backgroundColor,
-      } : null;
-    });
-    assert.match(swatch?.accent ?? '', /^#[0-9A-Fa-f]{6}$/);
-    assert.notEqual(swatch?.background, 'rgba(0, 0, 0, 0)');
+    // Every document keeps a square footprint during the spinner-to-JPEG fade.
+    const card = host.locator('.document-row').filter({ hasText: 'smoke.pdf' });
+    const tile = await card.boundingBox();
+    assert.ok(tile && Math.abs(tile.width - tile.height) < 3, 'Each document tile is square');
+    const swatch = await card.evaluate(element => ({
+      accent: getComputedStyle(element).getPropertyValue('--file-accent').trim(),
+      background: getComputedStyle(element.querySelector('.document-thumb')!).backgroundColor,
+    }));
+    assert.match(swatch.accent, /^#[0-9A-Fa-f]{6}$/);
+    assert.notEqual(swatch.background, 'rgba(0, 0, 0, 0)');
+    // The existing phone-generated first-page JPEG should appear in the card.
+    await card.locator('img.document-thumb-image.is-visible').waitFor({ timeout: 20000 });
+    assert.equal(await card.locator('img.document-thumb-image').evaluate(
+      image => (image as HTMLImageElement).naturalWidth > 100), true);
+    assert.equal(await card.locator('.document-thumb-spinner').count(), 0,
+      'The loader disappears as the first slide fades in');
+    assert.doesNotMatch(await card.innerText(), /Fully cached|ready offline|Downloading PDF/,
+      'Cache status must not clutter the card body');
     if (!process.env.FLASHVIEW_BACKEND) {
       // Locator waits can scroll the test viewport. Reset before full-page
       // captures so sticky navigation isn't composited halfway down the page.
@@ -247,9 +255,9 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     // Student approval also approves each new PDF automatically.
     await student.locator('.sent-row').filter({ hasText: 'smoke.pdf' })
       .getByText('Shared — caching on classroom computer').waitFor();
-    // Cache starts before any teacher presentation tab is opened.
+    // Cache starts before presenting and its ring is readable to assistive technology.
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
-      .getByText(/saved|cached on this computer/).waitFor({ timeout: 15000 });
+      .locator('.cache-ring[role="progressbar"]').waitFor({ timeout: 15000 });
     const [presentation] = await Promise.all([
       host.waitForEvent('popup'),
       host.locator('.document-row').getByRole('button', { name: /Present/ }).click(),
@@ -392,8 +400,9 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       return Boolean(canvas?.dataset.renderedPage === '10' &&
         !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 20000 });
-    await host.getByText('Fully cached on this computer').waitFor({ timeout: 15000 });
-    assert.equal(await host.locator('.document-row .file-progress-track').first().getAttribute('aria-valuenow'), '100');
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').first().waitFor({ timeout: 15000 });
+    assert.equal(await host.locator('.document-row .cache-ring.is-complete path').count(), 1,
+      'Cached files show a complete circular ring with a tick');
     await delay(process.env.FLASHVIEW_BACKEND === 'cloudflare' ? 350 : 31_200);
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
     await presentation.getByRole('spinbutton', { name: 'Page number' }).fill('1');
@@ -455,7 +464,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await host.getByRole('button', { name: /Refresh submissions/ }).click();
     assert.equal(await host.locator('.document-row').count(), 2);
     await host.locator('.document-row').filter({ hasText: 'lost-announcement.pdf' })
-      .getByText('Fully cached on this computer').waitFor({ timeout: 15000 });
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
 
     const [secondPresentation] = await Promise.all([
       host.waitForEvent('popup'),
@@ -474,11 +483,11 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     // and the original host page has been reloaded.
     await student.close();
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
-      .getByText('Fully cached on this computer').waitFor();
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor();
     await host.reload();
     await host.locator('.connection.connected').waitFor();
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
-      .getByText('Fully cached on this computer').waitFor({ timeout: 12000 });
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 12000 });
     const [offlinePresentation] = await Promise.all([
       host.waitForEvent('popup'),
       host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
@@ -639,17 +648,15 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     const after = await cachedChunks();
     assert.ok(after > before,
       'Background cache must keep advancing while a foreground range remains pending: ' + before + ' -> ' + after);
-    // A real partial cache must show a visible numeric percentage, not 0%
-    // until 100% or a progress bar with no text label.
+    // The ring must animate partial completion without exposing noisy numeric text.
     await host.waitForFunction(() => {
       const row = Array.from(document.querySelectorAll('.document-row'))
         .find(el => el.textContent?.includes('progressive.pdf'));
-      const label = row?.querySelector('.cache-percent')?.textContent?.trim() ?? '';
-      const value = Number.parseFloat(label);
+      const value = Number(row?.querySelector('.cache-ring')?.getAttribute('aria-valuenow') ?? 0);
       return value > 0 && value < 100;
     }, null, { timeout: 15000 });
-    const partialPercent = await row.locator('.cache-percent').innerText();
-    assert.ok(Number.parseFloat(partialPercent) > 0 && Number.parseFloat(partialPercent) < 100);
+    const partialPercent = Number(await row.locator('.cache-ring').getAttribute('aria-valuenow'));
+    assert.ok(partialPercent > 0 && partialPercent < 100);
 
     // Either real ranged PDF.js rendering or the phone-produced first-slide
     // preview can win the race. Both must visibly show the correct first page
@@ -660,7 +667,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
       return Boolean((canvas || (jpeg && jpeg.complete && jpeg.naturalWidth > 0)) &&
         !document.querySelector('.viewer-alert'));
     }, null, { timeout: 22000 });
-    assert.doesNotMatch(await row.innerText(), /Fully cached on this computer/,
+    assert.notEqual(await row.locator('.cache-ring').getAttribute('aria-valuenow'), '100',
       'The first slide MUST be visible before background downloading finishes');
     assert.match(await presentation.locator('.viewer-filename').innerText(), /streaming preview/);
     const image = presentation.locator('img[data-first-page-preview]');
@@ -687,8 +694,8 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
       name: 'fast-peer.pdf', mimeType: 'application/pdf', buffer: makePdf(),
     });
     await host.locator('.document-row').filter({ hasText: 'fast-peer.pdf' })
-      .getByText('Fully cached on this computer').waitFor({ timeout: 15000 });
-    assert.doesNotMatch(await row.innerText(), /Fully cached on this computer/,
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
+    assert.notEqual(await row.locator('.cache-ring').getAttribute('aria-valuenow'), '100',
       'The deliberately blocked first sender must still be downloading');
     await fastStudent.close();
 
@@ -697,8 +704,8 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     await student.evaluate(() => {
       (window as typeof window & { __releaseHeldTail?: () => void }).__releaseHeldTail?.();
     });
-    await row.getByText('Fully cached on this computer').waitFor({ timeout: 45000 });
-    assert.equal(await row.locator('.cache-percent').innerText(), '100%');
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 45000 });
+    assert.equal(await row.locator('.cache-ring.is-complete path').count(), 1);
     await presentation.locator('canvas[data-rendered-page="1"]').waitFor({ timeout: 20000 });
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
   } catch (error) {
@@ -818,7 +825,7 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
       buffer: makePdf(16000),
     });
     await host.locator('.document-row').filter({ hasText: 'temporary-backpressure.pdf' })
-      .getByText('Fully cached on this computer').waitFor({ timeout: 25000 });
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
     const samples = await student.evaluate(() =>
       (window as typeof window & {
         __flashviewPerf?: { snapshot: () => { summary: Array<{ metric: string; count: number }> } };

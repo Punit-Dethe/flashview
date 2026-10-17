@@ -27,6 +27,8 @@ export class RoomSocket {
   private pingSentAt: number | null = null;
   private authenticated = false;
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
+  private openingSince = 0;
   private heartbeatPaused = false;
   onMessage: (message: ServerMessage) => void = () => {};
   onStatus: (status: SocketStatus) => void = () => {};
@@ -89,7 +91,11 @@ export class RoomSocket {
       this.ping();
       return;
     }
-    if (this.ws?.readyState === WebSocket.CONNECTING) return;
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
+      // Some mobile OS resumes leave the original handshake stuck forever.
+      if (Date.now() - this.openingSince > 9_000) this.ws.close();
+      return;
+    }
     if (this.ws?.readyState === WebSocket.OPEN) {
       // OPEN isn't the same as authenticated: recover a lost hello reply.
       this.ws.close(4002, 'Authentication stalled');
@@ -115,8 +121,15 @@ export class RoomSocket {
     const ws = new WebSocket(protocol + '//' + window.location.host + '/ws' + suffix);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
+    this.openingSince = Date.now();
+    this.connectTimer = setTimeout(() => {
+      if (this.ws === ws && ws.readyState === WebSocket.CONNECTING)
+        ws.close();
+    }, 10_000);
     this.onStatus('connecting');
     ws.onopen = () => {
+      if (this.connectTimer !== null) clearTimeout(this.connectTimer);
+      this.connectTimer = null;
       if (this.ws !== ws) return;
       // Hello must go out before the socket is considered authenticated.
       ws.send(JSON.stringify({ v: 1, type: 'hello', ...this.identity }));
@@ -190,6 +203,8 @@ export class RoomSocket {
       if (this.ws !== ws) return;
       this.ws = null;
       this.authenticated = false;
+      if (this.connectTimer !== null) clearTimeout(this.connectTimer);
+      this.connectTimer = null;
       if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
       this.handshakeTimer = null;
       this.stopHeartbeat();
@@ -304,6 +319,8 @@ export class RoomSocket {
     this.reconnectTimer = null;
     this.stopHeartbeat();
     this.authenticated = false;
+    if (this.connectTimer !== null) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
     if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
     this.handshakeTimer = null;
     this.failAll('Connection closed');

@@ -205,9 +205,9 @@ export function App() {
     const base64 = dataUrl.split(',')[1];
     if (!base64 || base64.length > 380000 || !socket.connected ||
         previewDelivered.current.has(fileId)) return;
-    // Cloudflare incurs one wake/handler dispatch per WebSocket message.
-    // A small JPEG and 48 KB frames cut 50-75 relay messages to 1-3.
-    const size = 48_000;
+    // Use moderate frames for Firefox/mobile WebSocket compatibility.
+    // A 70 KB JPEG needs at most 8 frames (versus up to ~75 previously).
+    const size = 12_000;
     const total = Math.ceil(base64.length / size);
     if (total > 80) return;
     for (let part = 0; part < total; part++) {

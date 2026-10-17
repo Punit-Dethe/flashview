@@ -16,13 +16,8 @@ const CIRCUMFERENCE = 2 * Math.PI * 16;
 
 /** One visually stable square: loading layer -> softly revealed first-page JPEG. */
 export function DocumentCard({ file, previewUrl, progress, bytesPerSecond = 0, onPresent }: Props) {
-  const [imageReady, setImageReady] = useState(false);
-  const [imageFailed, setImageFailed] = useState(false);
+  const [imageState, setImageState] = useState({ url: '', ready: false, failed: false });
   const [fallbackTimeout, setFallbackTimeout] = useState(false);
-  useEffect(() => {
-    setImageReady(false);
-    setImageFailed(false);
-  }, [previewUrl]);
   useEffect(() => {
     if (previewUrl) return;
     setFallbackTimeout(false);
@@ -34,8 +29,12 @@ export function DocumentCard({ file, previewUrl, progress, bytesPerSecond = 0, o
   const percent = cached ? 100 :
     Math.max(0, Math.min(100, ((progress?.bytes ?? 0) / Math.max(1, file.size)) * 100));
   const available = file.status === 'approved' || cached;
-  const showingImage = Boolean(previewUrl) && imageReady && !imageFailed;
-  const showFallback = imageFailed || (!previewUrl && (fallbackTimeout || cached || file.status === 'offline'));
+  const imageFailed = imageState.url === previewUrl && imageState.failed;
+  const showingImage = Boolean(previewUrl) && imageState.url === previewUrl &&
+    imageState.ready && !imageFailed;
+  // Avoid showing an icon just because the PDF cache completed before the JPEG.
+  // Keep the stable spinner briefly, then fall back if no thumbnail arrives.
+  const showFallback = imageFailed || (!previewUrl && (fallbackTimeout || file.status === 'offline'));
   const progressLabel = cached ? 'Fully cached' :
     Math.round(percent) + '% cached' + (bytesPerSecond > 0 ? ' · ' + formatBytes(bytesPerSecond) + '/s' : '');
 
@@ -46,8 +45,8 @@ export function DocumentCard({ file, previewUrl, progress, bytesPerSecond = 0, o
           {previewUrl && !imageFailed && (
             <img className={'document-thumb-image' + (showingImage ? ' is-visible' : '')}
               src={previewUrl} alt="" loading="lazy" decoding="async"
-              onLoad={() => setImageReady(true)}
-              onError={() => setImageFailed(true)}/>
+              onLoad={() => setImageState({ url: previewUrl, ready: true, failed: false })}
+              onError={() => setImageState({ url: previewUrl, ready: false, failed: true })}/>
           )}
           {!showingImage && (
             <div className="document-thumb-placeholder">

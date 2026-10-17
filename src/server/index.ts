@@ -376,8 +376,10 @@ http.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
 });
 wss.on('connection', ws => {
-  (ws as WebSocket & { isAlive?: boolean }).isAlive = true;
-  ws.on('pong', () => { (ws as WebSocket & { isAlive?: boolean }).isAlive = true; });
+  // Browsers (especially phones in the OS file picker) can miss an occasional
+  // protocol ping. Require several missed replies before terminating a peer.
+  (ws as WebSocket & { missedPongs?: number }).missedPongs = 0;
+  ws.on('pong', () => { (ws as WebSocket & { missedPongs?: number }).missedPongs = 0; });
   ws.on('message', (data, isBinary) => {
     if (isBinary) { handleBinary(ws, data); return; }
     try {
@@ -413,9 +415,13 @@ const housekeeping = setInterval(() => {
     }
   }
   for (const client of wss.clients) {
-    const socket = client as WebSocket & { isAlive?: boolean };
-    if (socket.isAlive === false) { socket.terminate(); continue; }
-    socket.isAlive = false; socket.ping();
+    const socket = client as WebSocket & { missedPongs?: number };
+    const missed = socket.missedPongs ?? 0;
+    // Five missed 10-second checks provide ~50 seconds' grace for mobile
+    // suspension without keeping truly dead clients around forever.
+    if (missed >= 5) { socket.terminate(); continue; }
+    socket.missedPongs = missed + 1;
+    socket.ping();
   }
   for (const [ip, entry] of roomCreationByIp) if (entry.reset < now) roomCreationByIp.delete(ip);
 }, 10_000);

@@ -189,7 +189,7 @@ test('open rooms auto-admit guests, show only their own PDFs, and expose a light
       await page.locator('#code').fill(code);
       await page.locator('#student-name').fill(username);
       await page.getByRole('button', { name: /Join room/ }).click();
-      await page.getByRole('heading', { name: 'My files' }).waitFor();
+      await page.locator('.student-drive').waitFor();
       assert.equal(await page.locator('.student-drive').count(), 1);
       assert.equal(await page.locator('.upload-target').count(), 0);
       assert.equal(await page.getByRole('button', { name: 'Add PDFs' }).count(), 1);
@@ -287,7 +287,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
 
     await host.locator('.approval').filter({ hasText: 'Chromium Tester' }).waitFor();
     await host.locator('.approval').filter({ hasText: 'Chromium Tester' }).getByRole('button', { name: 'Allow' }).click();
-    await student.getByRole('heading', { name: 'My files' }).waitFor();
+    await student.locator('.student-drive').waitFor();
 
     await student.locator('input[type=file]').setInputFiles({
       name: 'smoke.pdf',
@@ -679,7 +679,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').waitFor();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
-    await student.getByRole('heading', { name: 'My files' }).waitFor();
+    await student.locator('.student-drive').waitFor();
 
     const pdfBytes = makePdf(35000);
     await student.locator('input[type=file]').setInputFiles({
@@ -762,7 +762,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     await fastStudent.getByRole('button', { name: /Join room/ }).click();
     const fastApproval = host.locator('.approval').filter({ hasText: 'Student' });
     await fastApproval.last().getByRole('button', { name: 'Allow' }).click();
-    await fastStudent.getByRole('heading', { name: 'My files' }).waitFor();
+    await fastStudent.locator('.student-drive').waitFor();
     await fastStudent.locator('input[type=file]').setInputFiles({
       name: 'fast-peer.pdf', mimeType: 'application/pdf', buffer: makePdf(),
     });
@@ -810,7 +810,7 @@ test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
-    await student.getByRole('heading', { name: 'My files' }).waitFor();
+    await student.locator('.student-drive').waitFor();
     const large = makePdf(110000);
     assert.ok(large.length > 12 * 1024 * 1024);
     await student.locator('input[type=file]').setInputFiles({
@@ -867,7 +867,7 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
-    await student.getByRole('heading', { name: 'My files' }).waitFor();
+    await student.locator('.student-drive').waitFor();
     const pressureApplied = await student.evaluate(() => {
       const w = window as typeof window & {
         __testSocket?: () => WebSocket | undefined;
@@ -945,7 +945,7 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').filter({ hasText: 'Missing Updates' })
       .getByRole('button', { name: 'Allow' }).click();
-    await student.getByRole('heading', { name: 'My files' }).waitFor();
+    await student.locator('.student-drive').waitFor();
     await student.locator('.transfer-pill').waitFor({ state: 'detached' });
 
     // Deliberately lose BOTH forms of progress delivery. The teacher must
@@ -974,13 +974,26 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     const cards = student.locator('.student-file-card');
     await cards.first().waitFor();
     assert.equal(await cards.count(), 2, 'Both selected files must appear immediately on the phone');
-    await student.locator('.transfer-pill').waitFor({ state: 'detached' });
+    await student.locator('.student-status-pill.is-uploading').waitFor();
+    assert.match(await student.locator('.student-status-pill').getAttribute('aria-label') ?? '',
+      /Uploading.*Keep this window open/);
+    assert.equal(await cards.locator('.transfer-ring').count(), 0,
+      'Pending phone cards must not show inaccurate intermediate percentages');
+    const dockLayout = await student.locator('.student-transfer-actions').evaluate(root => {
+      const pill = root.querySelector('.student-status-pill')!.getBoundingClientRect();
+      const add = root.querySelector('.student-add-fab')!.getBoundingClientRect();
+      return { sameRow: Math.abs((pill.top + pill.bottom) / 2 -
+        (add.top + add.bottom) / 2) < 6, separated: pill.right <= add.left };
+    });
+    assert.equal(dockLayout.sameRow, true, 'Status dock sits in the same row as + New');
+    assert.equal(dockLayout.separated, true, 'Status dock must not cover + New');
     await host.locator('.document-row').filter({ hasText: 'small.pdf' })
       .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
     await host.locator('.document-row').filter({ hasText: 'larger.pdf' })
       .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
     assert.equal(await cards.locator('.transfer-ring[aria-valuenow="100"]').count(), 0,
-      'Lost notifications should be reproducible in this test');
+      'A dropped final acknowledgement must not display false completion');
+    await student.locator('.student-status-pill.is-uploading').waitFor();
 
     await student.evaluate(() => {
       const scoped = window as typeof window & {
@@ -989,13 +1002,11 @@ test('mobile progress recovers missed events from the relay manifest and pill is
       scoped.__dropManifest = false;
       scoped.__flashviewSockets?.at(-1)?.send(JSON.stringify({ v: 1, type: 'file.sync' }));
     });
+    await student.locator('.student-status-pill.is-done').waitFor({ timeout: 20000 });
     await student.waitForFunction(() =>
       document.querySelectorAll('.student-file-card .transfer-ring[aria-valuenow="100"]').length === 2,
       null, { timeout: 20000 });
-    await student.locator('.student-file-count').getByText('2 files').waitFor();
-    await student.getByText('All your PDFs are saved on the host computer.').waitFor();
-    assert.equal(await student.locator('.transfer-pill').count(), 0,
-      'Done and Uploading should never produce a status pill');
+    await student.locator('.student-status-pill').waitFor({ state: 'detached', timeout: 7000 });
 
     // Verify the dock from explicit connection-state notifications. Real
     // reconnect is exercised by the other browser tests; WebSocket close
@@ -1020,15 +1031,15 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     });
     await student.locator('.transfer-pill').waitFor({ state: 'detached', timeout: 7000 });
 
-    // Adding one more file changes only the per-file cards, not the dock.
+    // A newly added file must reopen Uploading, never retain the old Done.
     await student.locator('input[type=file]').setInputFiles({
       name: 'late.pdf', mimeType: 'application/pdf', buffer: makePdf(400),
     });
     await student.locator('.student-file-card').filter({ hasText: 'late.pdf' }).waitFor();
-    await student.locator('.student-file-count').getByText('3 files').waitFor({ timeout: 25000 });
+    await student.locator('.student-status-pill.is-uploading').waitFor();
     await student.locator('.student-file-card').filter({ hasText: 'late.pdf' })
       .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
-    assert.equal(await student.locator('.transfer-pill').count(), 0);
+    await student.locator('.student-status-pill.is-done').waitFor({ timeout: 5000 });
   } finally {
     await browser.close();
     child.kill('SIGTERM');

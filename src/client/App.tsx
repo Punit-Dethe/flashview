@@ -71,8 +71,6 @@ export function App() {
   const [studentCacheProgress, setStudentCacheProgress] = useState<Record<string, CacheProgress>>({});
   const [phonePreviews, setPhonePreviews] = useState<Record<string, string>>({});
   const [hostAvailable, setHostAvailable] = useState(true);
-  const [pillDismissed, setPillDismissed] = useState(false);
-  const [pillLeaving, setPillLeaving] = useState(false);
   const hostFilesRef = useRef<PdfManifest[]>([]);
   const progressSentRef = useRef(new Map<string, { bytes: number; at: number }>());
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
@@ -88,20 +86,13 @@ export function App() {
   const [switchCode, setSwitchCode] = useState('');
   const [copied, setCopied] = useState(false);
   const transferSummary = summarizeTransfers(sentFiles, studentCacheProgress);
-  const studentNeedsConnection = socketStatus !== 'connected' || !hostAvailable || joinState === 'pending';
+  // The bottom dock communicates connection state ONLY. The PDF cards show
+  // transfer progress and verified completion independently.
   const showTransferPill = mode === 'student' && (
-    (transferSummary.count > 0 && (!transferSummary.complete || !pillDismissed)) ||
-    ((joinState === 'accepted' || joinState === 'pending') && studentNeedsConnection && !transferSummary.complete)
+    socketStatus === 'connecting' ||
+    ((joinState === 'accepted' || joinState === 'pending') &&
+      (socketStatus !== 'connected' || !hostAvailable))
   );
-
-  useEffect(() => {
-    if (mode !== 'student' || !transferSummary.complete) return;
-    // A completion is acknowledged by the classroom cache and should be
-    // visible briefly before the dock retires itself.
-    const fade = setTimeout(() => setPillLeaving(true), 2900);
-    const hide = setTimeout(() => setPillDismissed(true), 3250);
-    return () => { clearTimeout(fade); clearTimeout(hide); };
-  }, [mode, transferSummary.complete, transferSummary.count]);
 
   useEffect(() => {
     // Abandoned rooms expire automatically; delete their old browser-stored PDFs
@@ -116,8 +107,9 @@ export function App() {
         setCacheProgress(existing => ({
           ...existing, [file.fileId]: retainNewestProgress(existing[file.fileId], progress),
         }));
-        if (socket.connected && progress.bytes > 0) socket.send({
+        if (socket.connected) socket.send({
           type: 'cache.progress', fileId: file.fileId, bytes: progress.bytes,
+          snapshot: true,
         });
       }).catch(() => {});
     }
@@ -148,9 +140,28 @@ export function App() {
     socket.send({ type: 'file.offer', fileId: id, name: entry.file.name, size: entry.file.size });
   }
 
+  /** Restore progress from the authenticated relay's file manifest.
+   * A mobile picker can suspend this page and lose all live progress events.
+   */
+  function acceptCachedManifest(file: PdfManifest): void {
+    const local = filesOnPhone.current.get(file.fileId);
+    if (!local || local.file.size !== file.size ||
+        typeof file.cachedBytes !== 'number' || !Number.isSafeInteger(file.cachedBytes) ||
+        file.cachedBytes < 0 || file.cachedBytes > file.size) return;
+    const update: CacheProgress = {
+      fileId: file.fileId, size: file.size, bytes: file.cachedBytes,
+      complete: file.cachedBytes === file.size,
+    };
+    setStudentCacheProgress(current => ({
+      ...current,
+      [file.fileId]: retainNewestProgress(current[file.fileId], update),
+    }));
+  }
+
   /** Server manifest is the source of truth; recover any lost file.offer messages. */
   function reconcileFiles(serverFiles: PdfManifest[]): void {
     const known = new Map(serverFiles.map(file => [file.fileId, file]));
+    for (const file of serverFiles) acceptCachedManifest(file);
     for (const [id, entry] of filesOnPhone.current) {
       if (entry.status === 'offline' || entry.status === 'rejected') continue;
       const serverFile = known.get(id);
@@ -307,8 +318,9 @@ export function App() {
         // Fresh snapshots after a phone rejoins; old completed transfers stay done.
         for (const file of hostFilesRef.current) {
           void presentation.progress(file).then(progress => {
-            if (socket.connected && progress.bytes > 0) socket.send({
+            if (socket.connected) socket.send({
               type: 'cache.progress', fileId: file.fileId, bytes: progress.bytes,
+              snapshot: true,
             });
           }).catch(() => {});
         }
@@ -383,6 +395,7 @@ export function App() {
       if (type === 'file.state') {
         const file = message.file as PdfManifest | undefined;
         if (file && typeof file.fileId === 'string') {
+          acceptCachedManifest(file);
           const local = filesOnPhone.current.get(file.fileId);
           if (local) {
             local.status = file.status;
@@ -508,8 +521,6 @@ export function App() {
     setSentFiles([]);
     setStudentCacheProgress({});
     setPhonePreviews({});
-    setPillDismissed(false);
-    setPillLeaving(false);
     setHostAvailable(true);
     modeRef.current = 'student';
     setMode('student');
@@ -556,8 +567,6 @@ export function App() {
     setSentFiles(current => [...current, ...batch.map(({ fileId, entry }) => ({
       fileId, name: entry.file.name, size: entry.file.size, status: entry.status,
     }))]);
-    setPillDismissed(false);
-    setPillLeaving(false);
     if (!socket.connected || !hostAvailable) socket.wake();
     else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
   }
@@ -638,8 +647,6 @@ export function App() {
       progressSentRef.current.clear();
       setStudentCacheProgress({});
       setPhonePreviews({});
-      setPillDismissed(false);
-      setPillLeaving(false);
       setJoinDialogOpen(false);
       setJoinCode(identifier);
       setJoinState('idle');
@@ -879,12 +886,7 @@ export function App() {
             {joinState === 'rejected' && <button className="outline-button" onClick={startFresh}>Return home →</button>}
 
             <button className="subtle-link return-home" onClick={startFresh}>← Back to home</button>
-            {showTransferPill && <TransferPill connecting={studentNeedsConnection}
-              leaving={pillLeaving && transferSummary.complete}
-              summary={transferSummary} onReconnect={() => {
-                socket.wake();
-                if (socket.connected) socket.send({ type: 'file.sync' });
-              }}/>}
+            {showTransferPill && <TransferPill/>}
           </div>
         )}
         {joinDialogOpen && mode === 'host' && hostSession && (

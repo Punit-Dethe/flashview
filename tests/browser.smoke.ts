@@ -319,6 +319,12 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       await host.screenshot({ path: 'test-artifacts/ui/classroom.png', fullPage: true });
       await student.screenshot({ path: 'test-artifacts/ui/student.png', fullPage: true });
     }
+    // The student thumbnail renders from its own File, without receiving
+    // the host's JPEG over the relay (the preview moves phone → host only).
+    const localPreview = student.locator('.student-file-card').filter({ hasText: 'smoke.pdf' })
+      .locator('img.student-file-preview');
+    await localPreview.waitFor({ timeout: 20000 });
+    assert.ok(await localPreview.evaluate(node => (node as HTMLImageElement).naturalWidth > 100));
     // Student approval also approves each new PDF automatically.
     await student.locator('.student-file-card').filter({ hasText: 'smoke.pdf' })
       .locator('.transfer-ring').waitFor();

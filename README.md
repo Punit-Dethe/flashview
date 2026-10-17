@@ -242,7 +242,7 @@ Source: GitHub Actions run 38959904035, stage1-comparison artifact.
 Stage 2 has NOT started. Real-device A/B and multi-student stress results
 are needed before changing packet size or raising global concurrency caps.
 
-## Performance 3.0 — Phase 1 network packet A/B (experimental)
+## Performance 3.0 — Phase 1 network packet A/B (validated default)
 
 Phase 0 has already collected repeatable Node and Cloudflare-local baselines.
 This experiment changes ONLY the number of original PDF bytes in each background
@@ -251,9 +251,9 @@ WebSocket range request. Everything else, including thumbnails, room security,
 viewing, remains as before.
 
 In the **teacher/host** URL (before creating the room), choose:
-- Normal **64 KiB** baseline: no parameter, or `?packet=64`
-- Experimental **128 KiB** network requests: `?packet=128`
-- Experimental **256 KiB** network requests: `?packet=256`
+- **256 KiB default**, validated on real devices: no parameter, or `?packet=256`
+- **128 KiB** fallback: `?packet=128`
+- **64 KiB** original fallback: `?packet=64`
 
 Append `&packet=...` if the URL already has other query parameters. Students do
 not need the flag. Incomplete/partially cached files resume at missing 64 KiB
@@ -271,6 +271,6 @@ Repeat each with `FLASHVIEW_BACKEND=cloudflare`. GitHub Actions records these
 as `flashview-network-packet-comparison`. Synthetic localhost timings don't
 establish real-world cellular-to-school transfer performance; measure the same
 PDF and device pair over the actual network, alternating packet sizes.
-No packet size should become the default until real-device results are reviewed.
+After real-device A/B tests, 256 KiB is the default; 64/128 KiB remain opt-in fallbacks.
 WebRTC is outside the planned architecture: FlashView prioritizes a relay that
 works across different networks.

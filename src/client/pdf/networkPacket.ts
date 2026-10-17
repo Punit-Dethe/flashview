@@ -1,11 +1,11 @@
 /**
  * Phase 1 packet-size experiment. Network payloads may span multiple 64 KiB
  * persistent cache blocks, but the IndexedDB schema never changes.
- * Use ?packet=128 or ?packet=256 on the HOST URL to opt in.
+ * Default 256 KiB after real-device validation; ?packet=64/128 are fallbacks.
  */
 export function packetChunksFromQuery(query: string): 1 | 2 | 4 {
   const size = new URLSearchParams(query).get('packet');
-  return size === '128' ? 2 : size === '256' ? 4 : 1;
+  return size === '64' ? 1 : size === '128' ? 2 : 4;
 }
 
 /** Select one contiguous, currently missing byte range without crossing a

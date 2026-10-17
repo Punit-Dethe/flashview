@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { packetChunksFromQuery, selectMissingChunkGroup } from '../src/client/pdf/networkPacket';
 
-test('network packet experiment defaults to exactly the old 64 KiB size', () => {
-  assert.equal(packetChunksFromQuery(''), 1);
+test('validated network packet default is 256 KiB, with reversible 64/128 KiB fallbacks', () => {
+  assert.equal(packetChunksFromQuery(''), 4);
   assert.equal(packetChunksFromQuery('?packet=64'), 1);
   assert.equal(packetChunksFromQuery('?packet=128'), 2);
   assert.equal(packetChunksFromQuery('?packet=256'), 4);
-  assert.equal(packetChunksFromQuery('?packet=512'), 1);
-  assert.equal(packetChunksFromQuery('?packet=garbage'), 1);
+  assert.equal(packetChunksFromQuery('?packet=512'), 4);
+  assert.equal(packetChunksFromQuery('?packet=garbage'), 4);
 });
 
 test('network packet grouping preserves cache holes and avoids duplicates', () => {

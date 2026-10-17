@@ -115,34 +115,6 @@ jobs:
           name: flashview-network-packet-comparison
           path: test-artifacts/stage0-*-4mib-1students-40ms-adaptive*.json
           if-no-files-found: warn
-      # Phase 3 credit-window streaming, opt-in. Compare with the same 4 MiB
-      # 40 ms sender-read fixtures and packet=256 range A/B above.
-      - name: Phase 3 stream — Node local
-        run: npm run bench:baseline
-        env:
-          BENCH_MIB: 4
-          BENCH_RUNS: 3
-          BENCH_STUDENTS: 1
-          BENCH_FILE_READ_DELAY_MS: 40
-          BENCH_PACKET_KIB: 256
-          BENCH_STREAM: 1
-      - name: Phase 3 stream — Cloudflare local
-        run: npm run bench:baseline
-        env:
-          FLASHVIEW_BACKEND: cloudflare
-          BENCH_MIB: 4
-          BENCH_RUNS: 3
-          BENCH_STUDENTS: 1
-          BENCH_FILE_READ_DELAY_MS: 40
-          BENCH_PACKET_KIB: 256
-          BENCH_STREAM: 1
-      - name: Upload Phase 3 range-versus-stream comparisons
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: flashview-streaming-ab
-          path: test-artifacts/stage0-*-4mib-1students-40ms-adaptive-packet256kib*.json
-          if-no-files-found: warn
       - name: Upload UI reference screenshots
         uses: actions/upload-artifact@v4
         if: always()

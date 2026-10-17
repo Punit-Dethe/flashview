@@ -2,8 +2,6 @@ export const MAX_PDF_BYTES = 50 * 1024 * 1024;
 export const MAX_RANGE_BYTES = 256 * 1024;
 export const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
 export const RANGE_TIMEOUT_MS = 20_000;
-export const STREAM_CREDITS = 8;
-export const STREAM_IDLE_MS = 30_000;
 
 export interface PdfManifest {
   fileId: string;
@@ -23,7 +21,7 @@ export interface StudentInfo {
 }
 
 export interface RangeHeader {
-  type: 'range.data' | 'stream.data';
+  type: 'range.data';
   requestId: string;
   fileId: string;
   begin: number;
@@ -51,8 +49,7 @@ export function decodeRangePacket(packet: ArrayBuffer): { header: RangeHeader; b
     throw new Error('Invalid packet header');
   }
   const header = JSON.parse(decoder.decode(new Uint8Array(packet, 2, headerSize))) as RangeHeader;
-  if ((header.type !== 'range.data' && header.type !== 'stream.data') ||
-      !Number.isSafeInteger(header.begin) || header.begin < 0 ||
+  if (header.type !== 'range.data' || !Number.isSafeInteger(header.begin) || header.begin < 0 ||
       typeof header.requestId !== 'string' || typeof header.fileId !== 'string') {
     throw new Error('Invalid range header');
   }

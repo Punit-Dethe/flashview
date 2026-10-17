@@ -241,13 +241,27 @@ export class ClassroomRoom extends DurableObject<Env> {
       });
     }
     if (msg.type === 'file.sync' && peer.role === 'student' && peer.approved) {
-      return void send(ws, {
+      send(ws, {
         type: 'file.manifest',
         files: [...this.files.values()].filter(file => file.ownerId === peer.id),
       });
+      this.sendHost({ type: 'cache.progress.request' });
+      return;
     }
 
     if (peer.role === 'host') {
+      if (msg.type === 'cache.progress') {
+        const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
+        const bytes = msg.bytes;
+        if (file && Number.isSafeInteger(bytes) && Number(bytes) >= 0 && Number(bytes) <= file.size) {
+          const student = this.student(file.ownerId);
+          if (student && student.peer.approved) send(student.ws, {
+            type: 'cache.progress', fileId: file.fileId, bytes: Number(bytes),
+            size: file.size, complete: Number(bytes) === file.size,
+          });
+        }
+        return;
+      }
       if ((msg.type === 'student.accept' || msg.type === 'student.reject') && typeof msg.studentId === 'string') {
         const student = this.student(msg.studentId);
         if (student) {

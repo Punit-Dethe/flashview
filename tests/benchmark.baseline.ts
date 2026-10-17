@@ -105,6 +105,7 @@ try {
     try {
       const origin = 'http://127.0.0.1:' + backend.port;
       await host.goto(origin + '/?perf=1' + (transferMode === 'fixed' ? '&transfer=fixed' : ''));
+      await host.getByLabel('Require approval').check();
       await host.getByRole('button', {name: /Create a room/}).click();
       const roomCode = await host.locator('.room-code').innerText();
       await host.locator('.connection.connected').waitFor();

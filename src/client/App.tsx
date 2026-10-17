@@ -792,7 +792,7 @@ export function App() {
                     <div className="reference-pane-bottom">
                       <label className="reference-toggle">
                         <span><strong>Approve each person</strong><small>Off: anyone with the code can join</small></span>
-                        <input type="checkbox" checked={!autoApprove}
+                        <input type="checkbox" aria-label="Require approval" checked={!autoApprove}
                           onChange={event=>setAutoApprove(!event.target.checked)}/>
                         <span className="reference-switch" aria-hidden="true"/>
                       </label>

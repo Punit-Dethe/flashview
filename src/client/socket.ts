@@ -97,8 +97,10 @@ export class RoomSocket {
       return;
     }
     if (this.ws?.readyState === WebSocket.OPEN) {
-      // OPEN isn't the same as authenticated: recover a lost hello reply.
-      this.ws.close(4002, 'Authentication stalled');
+      // OPEN isn't the same as authenticated, but a normal handshake needs
+      // a brief chance to finish before foreground focus triggers a restart.
+      if (Date.now() - this.openingSince > 9_000)
+        this.ws.close(4002, 'Authentication stalled');
       return;
     }
     if (this.reconnectTimer !== null) {

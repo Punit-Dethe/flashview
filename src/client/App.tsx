@@ -108,8 +108,9 @@ export function App() {
   const connectionInterrupted = socketStatus !== 'connected' || !hostAvailable;
   const transferPhase: 'connecting' | 'uploading' | 'done' | null =
     mode !== 'student' || joinState !== 'accepted' ? null :
-      !transferSummary.complete && transferSummary.count > 0 ?
-        (connectionInterrupted ? 'connecting' : 'uploading') :
+      // A temporary disconnect does not change upload semantics: the
+      // student must keep this page open until the host confirms completion.
+      !transferSummary.complete && transferSummary.count > 0 ? 'uploading' :
       showDonePill && transferSummary.complete ? 'done' :
       connectionInterrupted ? 'connecting' : null;
 

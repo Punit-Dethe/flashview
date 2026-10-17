@@ -65,7 +65,11 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
     radial-gradient(30% 80% at 40% 108%,#fff 45%,transparent 72%),
     radial-gradient(26% 70% at 68% 105%,#fff 40%,transparent 72%),
     radial-gradient(30% 75% at 95% 100%,#fff 40%,transparent 72%); }
-.premium-app .reference-hero { position:relative; z-index:2; text-align:center; padding-top:76px; }
+/* In v8 the navigation is in the sky's normal flow: 60px nav + 76px hero.
+   React positions the pill nav over the sky instead, so restore its missing
+   60px here. This preserves the reference's generous blue/pastel breathing
+   room above the headline without changing the gradient or the action cards. */
+.premium-app .reference-hero { position:relative; z-index:2; text-align:center; padding-top:136px; }
 .premium-app .reference-hero h1.reference-serif {
   color:#fff; font-size:clamp(52px,7.6vw,112px); line-height:.94;
   letter-spacing:-.025em; font-weight:400; max-width:11.5em;
@@ -394,7 +398,9 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
  .premium-app .reference-nav .reference-logo-mark,.premium-app .reference-nav .reference-logo-mark svg { width:22px; height:22px; }
  .premium-app .reference-nav .nav-start { padding:9px 12px; font-size:13px; }
  .premium-app .reference-sky { margin:8px; border-radius:25px; padding:16px 11px 120px; min-height:calc(100vh - 16px); }
- .premium-app .reference-hero { padding-top:100px; }
+ /* Smaller mobile navigation needs its own allowance; retain generous
+    separation between the pill and the white headline. */
+ .premium-app .reference-hero { padding-top:144px; }
  .premium-app .reference-hero h1.reference-serif { font-size:clamp(49px,13.4vw,72px); }
  .premium-app .reference-actions { margin:32px auto 0; border-radius:23px; gap:5px; padding:7px; }
  .premium-app .reference-pane { padding:22px 19px; border-radius:18px; }

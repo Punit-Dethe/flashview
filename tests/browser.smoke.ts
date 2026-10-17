@@ -199,6 +199,10 @@ test('open rooms auto-admit guests, show only their own PDFs, and expose a light
     ]);
     await first.locator('.student-file-card').nth(1).waitFor();
     assert.equal(await first.locator('.student-file-card').count(), 2);
+    assert.equal(await first.locator('img.student-file-preview').count(), 0,
+      'Thumbnail-off experiment must not render phone previews');
+    assert.equal(await first.locator('.student-file-pdf-mark').count(), 2,
+      'Disabled phone previews should show PDF icons');
     const widthInfo = await first.locator('.student-files-grid').evaluate(element => ({
       columns: getComputedStyle(element).gridTemplateColumns.split(' ').length,
       background: getComputedStyle(document.querySelector('.student-drive')!).backgroundColor,
@@ -206,6 +210,10 @@ test('open rooms auto-admit guests, show only their own PDFs, and expose a light
     assert.equal(widthInfo.columns, 2, 'Mobile view should fit exactly two cards per row');
     assert.equal(widthInfo.background, 'rgb(255, 255, 255)', 'Student room must be a light surface');
     await host.locator('.document-row').filter({ hasText: 'private-alice.pdf' }).waitFor();
+    assert.equal(await host.locator('img.document-thumb-image').count(), 0,
+      'Thumbnail-off experiment must not render host previews');
+    assert.equal(await host.locator('.document-pdf-symbol').count(), 2,
+      'Disabled host previews should immediately show PDF icons');
     assert.equal(await second.locator('.student-file-card').count(), 0,
       'A different student must not see Alice’s files');
     await first.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').first()
@@ -268,7 +276,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
   host.on('console', message => { if (message.type() === 'error') browserLogs.push('host CONSOLE: ' + message.text()); });
   student.on('console', message => { if (message.type() === 'error') browserLogs.push('student CONSOLE: ' + message.text()); });
   try {
-    await host.goto(root);
+    await host.goto(root + '?thumbnails=1');
     if (!process.env.FLASHVIEW_BACKEND) {
       await mkdir('test-artifacts/ui', { recursive: true });
       await host.screenshot({ path: 'test-artifacts/ui/welcome.png', fullPage: true });
@@ -278,7 +286,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     const roomCode = await host.locator('.room-code').textContent();
     assert.match(roomCode ?? '', /^\d{6}$/);
     await host.locator('.connection.connected').waitFor();
-    await student.goto(root);
+    await student.goto(root + '?thumbnails=1');
     await student.locator('#code').fill(roomCode!);
     await student.locator('#student-name').fill('Chromium Tester');
     await student.getByRole('button', { name: /Join room/ }).click();
@@ -690,12 +698,12 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
   const root = 'http://127.0.0.1:' + port;
   let presentation: Page | null = null;
   try {
-    await host.goto(root);
+    await host.goto(root + '?thumbnails=1');
     await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();
     await host.locator('.connection.connected').waitFor();
-    await student.goto(root);
+    await student.goto(root + '?thumbnails=1');
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').waitFor();
@@ -823,12 +831,12 @@ test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async
   const student = await browser.newPage();
   try {
     const root = 'http://127.0.0.1:' + port;
-    await host.goto(root);
+    await host.goto(root + '?thumbnails=1');
     await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();
     await host.locator('.connection.connected').waitFor();
-    await student.goto(root);
+    await student.goto(root + '?thumbnails=1');
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();

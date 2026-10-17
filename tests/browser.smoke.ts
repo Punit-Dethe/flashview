@@ -1452,7 +1452,7 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     assert.equal(check.titleHasOverflow,true,'Long file name visually ends in ellipsis');
     assert.ok(check.titleRightPadding>=12,'File name gets breathing room on the right');
     assert.ok(check.cardRightEdge-check.titleRightEdge>=12,'Text should not touch the card edge');
-    assert.equal(check.ownerDisplay,'inline-flex');
+    assert.ok(['flex','inline-flex'].includes(check.ownerDisplay), 'Owner metadata must use a horizontal flex row');
     assert.equal(check.metaWrap,'nowrap');
     assert.ok(Math.abs(check.dotCenter-check.nameCenter)<4,
       'The color dot is centered beside the sender name, never above it');

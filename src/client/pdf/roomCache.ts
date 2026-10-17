@@ -3,7 +3,6 @@ import type { RoomSocket } from '../socket';
 import { perf } from '../perf';
 import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
 import { packetChunksFromQuery, selectMissingChunkGroup } from './networkPacket';
-import { ChunkWriteBatcher, writeBatchSizeFromQuery } from './chunkWriteBatcher';
 
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
@@ -67,18 +66,6 @@ async function saveChunk(record: ChunkRecord): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction('chunks', 'readwrite');
     tx.objectStore('chunks').put(record);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-}
-/** All put operations are issued before awaiting the atomic transaction. */
-async function saveChunkBatch(records: ChunkRecord[]): Promise<void> {
-  const db = await database();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('chunks', 'readwrite');
-    const store = tx.objectStore('chunks');
-    for (const record of records) store.put(record);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -208,12 +195,6 @@ export class RoomPdfCache {
   // Keep a fixed scheduler available for identical-file A/B tests.
   private readonly fixedTransfer = new URLSearchParams(location.search).get('transfer') === 'fixed';
   private readonly networkChunks = packetChunksFromQuery(location.search);
-  // Phase 2 opt-in: group 64 KiB cache block writes into one IDB transaction.
-  // ?batch=1 preserves the exact Phase 1 storage behavior.
-  private readonly writeBatchSize = writeBatchSizeFromQuery(location.search);
-  // Keep student files independent: a failed multi-put transaction must not
-  // roll back cache blocks belonging to a different student.
-  private readonly writeBatchers = new Map<string, ChunkWriteBatcher<ChunkRecord>>();
   private storageFailedFiles = new Set<string>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
@@ -221,26 +202,6 @@ export class RoomPdfCache {
 
   constructor(readonly roomId: string, private readonly socket: RoomSocket) {
     void writeRoom(roomId).catch(() => this.warning());
-  }
-  private persistChunk(record: ChunkRecord): Promise<void> {
-    if (this.writeBatchSize === 1) return saveChunk(record);
-    let writer = this.writeBatchers.get(record.document);
-    if (!writer) {
-      writer = new ChunkWriteBatcher<ChunkRecord>(this.writeBatchSize, async records => {
-        const started = perf.enabled ? performance.now() : 0;
-        try {
-          await saveChunkBatch(records);
-          if (perf.enabled) perf.record('cache_batch_tx_ms',
-            performance.now() - started, { bytes: records.reduce((sum, r) => sum + r.data.byteLength, 0) });
-        } catch (error) {
-          if (perf.enabled) perf.record('cache_batch_tx_ms',
-            performance.now() - started, { outcome: 'error' });
-          throw error;
-        }
-      });
-      this.writeBatchers.set(record.document, writer);
-    }
-    return writer.enqueue(record);
   }
   private warning(): void {
     if (this.warned) return;
@@ -357,7 +318,7 @@ export class RoomPdfCache {
       if (this.stopped) throw Error('Classroom cache closed');
       this.putMemory(key, data);
       const writingSince = perf.enabled ? performance.now() : 0;
-      const saving = this.persistChunk({
+      const saving = saveChunk({
         key, room: this.roomId, document: this.roomId + '/' + file.fileId,
         index, data: data.slice().buffer,
       });
@@ -386,8 +347,9 @@ export class RoomPdfCache {
     return promise;
   }
   /**
-   * One 128/256 KiB WebSocket response, kept as 64 KiB cache records.
-   * Storage batching can be switched on independently of network size.
+   * One 128/256 KiB WebSocket range response, saved as separate 64 KiB cache
+   * blocks. Keep the existing independent IndexedDB transaction per block:
+   * changing storage batching belongs to the NEXT isolated experiment.
    */
   private async chunkGroup(file: PdfManifest, indices: number[]): Promise<void> {
     if (indices.length < 2 || indices.length > 4) throw Error('Invalid network group');
@@ -416,7 +378,7 @@ export class RoomPdfCache {
       const piece = data.slice(offset, Math.min(offset + CHUNK_BYTES, data.byteLength));
       this.putMemory(key, piece);
       const writingSince = perf.enabled ? performance.now() : 0;
-      const saving = this.persistChunk({
+      const saving = saveChunk({
         key, room: this.roomId, document: this.roomId + '/' + file.fileId,
         index, data: piece.slice().buffer,
       });

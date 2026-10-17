@@ -274,28 +274,3 @@ PDF and device pair over the actual network, alternating packet sizes.
 After real-device A/B tests, 256 KiB is the default; 64/128 KiB remain opt-in fallbacks.
 WebRTC is outside the planned architecture: FlashView prioritizes a relay that
 works across different networks.
-
-## Performance 3.0 — Phase 2 IndexedDB write-batching experiment
-
-The relay path remains **256 KiB by default** (same 64 KiB stored blocks).
-Phase 2 varies only how many existing 64 KiB cache-block `put()` calls share
-one atomic IndexedDB transaction. All blocks are counted as durably cached
-only after their transaction completes. Viewer and PDF previews are untouched.
-
-Set the **host's** URL query *before creating a room*:
-- Original writes: no batch flag or `?batch=1` (baseline, one transaction each)
-- Experimental: `?batch=4`, `?batch=8`, or `?batch=16`
-- Explicit network fallback: combine with `&packet=64` or `&packet=128`
-
-Student URLs do not need these flags. Batching has a short maximum wait for
-a partial final batch, so small PDFs cannot stall awaiting 16 blocks. A
-failed atomic transaction marks NONE of its constituent blocks persisted.
-Transfers can still resume using previously completed 64 KiB cache blocks.
-Memory remains bounded by the pre-existing request concurrency limit.
-
-The CI `flashview-indexeddb-batch-comparison` artifact contains three-run
-Node and Cloudflare-local comparisons for batch=1,4,8,16 with packet=256.
-For a real-device A/B test, use the same phone, host, PDF and network,
-alternate trial order, and compare **time to fully cached**, not first slide.
-Keep batch=1 as the default until real-device results establish a reliable
-winner. This is a storage optimization only; sender streaming is a later phase.

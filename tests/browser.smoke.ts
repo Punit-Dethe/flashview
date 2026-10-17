@@ -691,7 +691,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
   const root = 'http://127.0.0.1:' + port;
   let presentation: Page | null = null;
   try {
-    await host.goto(root);
+    await host.goto(root + '?packet=64');
     await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
     const code = await host.locator('.room-code').innerText();

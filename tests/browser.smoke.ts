@@ -95,6 +95,15 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     const firstCode = (await first.locator('.room-code').textContent())?.trim();
     assert.match(firstCode ?? '', /^\d{6}$/);
     assert.equal(await first.locator('.qr-plate svg').count(), 1);
+    const sidebarWordmark = first.locator('.sidebar-brand');
+    assert.equal((await sidebarWordmark.innerText()).trim(), 'flashview.');
+    const wordmarkBox = await sidebarWordmark.boundingBox();
+    const qrBox = await first.locator('.qr-plate').boundingBox();
+    assert.ok(wordmarkBox && qrBox && qrBox.y > wordmarkBox.y + wordmarkBox.height,
+      'FlashView branding should sit above the QR code');
+    assert.ok(wordmarkBox && qrBox && qrBox.y - (wordmarkBox.y + wordmarkBox.height) >= 14 &&
+      qrBox.y - (wordmarkBox.y + wordmarkBox.height) <= 54,
+      'Wordmark and QR should have calm but compact visual separation');
     const left = first.locator('.workspace-left');
     const right = first.getByTestId('documents-scroll-region');
     const leftBefore = await left.boundingBox();

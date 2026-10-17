@@ -258,7 +258,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
         !Number.isSafeInteger(msg.part) || !Number.isSafeInteger(msg.total) ||
         Number(msg.part) < 0 || Number(msg.total) < 1 || Number(msg.total) > 80 ||
         Number(msg.part) >= Number(msg.total) ||
-        typeof msg.data !== 'string' || msg.data.length < 1 || (msg.data.length > 50000 || (msg.data.length > 5000 && Number(msg.total) > 8)) ||
+        typeof msg.data !== 'string' || msg.data.length < 1 || (msg.data.length > 7000 || (msg.data.length > 5000 && Number(msg.total) > 16)) ||
         !/^[a-zA-Z0-9+/=]+$/.test(msg.data)) return;
     notifyHost(room, {
       type: 'preview.chunk', fileId: file.fileId,

@@ -172,6 +172,9 @@ export async function cleanExpiredRoomCaches(activeRoom?: string): Promise<void>
 export class RoomPdfCache {
   private stopped = false;
   private inFlight = new Map<string, Promise<Uint8Array>>();
+  // Passive presentation readers subscribe to the cache. Only the
+  // background scheduler may create network range requests.
+  private cacheWaiters = new Map<string, Set<() => void>>();
   private memory = new Map<string, Uint8Array>();
   private pendingWrites = new Set<Promise<void>>();
   private memoryBytes = 0;
@@ -324,10 +327,13 @@ export class RoomPdfCache {
         const state = completion(file, set);
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
         this.onProgress(state);
+        this.notifyCacheWaiters(key);
       } catch {
         this.warning();
         this.storageFailedFiles.add(file.fileId);
         this.jobs.delete(file.fileId);
+        // Storage can fail while an in-memory copy remains viewable.
+        this.notifyCacheWaiters(key);
       }
       finally { this.pendingWrites.delete(saving); }
       return data;
@@ -335,6 +341,81 @@ export class RoomPdfCache {
     this.inFlight.set(key, promise);
     return promise;
   }
+  private notifyCacheWaiters(key: string): void {
+    const waiting = this.cacheWaiters.get(key);
+    if (!waiting) return;
+    this.cacheWaiters.delete(key);
+    for (const wake of waiting) wake();
+  }
+
+  /**
+   * Read-only, demand-independent presentation path. Never requests phone
+   * bytes, changes transfer concurrency or prioritizes a PDF.js page. A
+   * missing chunk is satisfied ONLY by the continuously running background
+   * transfer, or by bytes already present in IndexedDB/memory.
+   */
+  private async cachedChunk(file: PdfManifest, index: number, signal?: AbortSignal): Promise<Uint8Array> {
+    const key = this.key(file.fileId, index);
+    const expected = Math.min(CHUNK_BYTES, file.size - index * CHUNK_BYTES);
+    while (!this.stopped) {
+      if (signal?.aborted) throw Error('Presentation range cancelled');
+      const memory = this.memory.get(key);
+      if (memory?.byteLength === expected) return memory;
+      const indexed = await this.indexSet(file.fileId);
+      if (indexed.has(index)) {
+        try {
+          const bytes = await readChunk(key);
+          if (bytes?.byteLength === expected) {
+            const result = new Uint8Array(bytes);
+            this.putMemory(key, result);
+            return result;
+          }
+          indexed.delete(index);
+        } catch { this.warning(); indexed.delete(index); }
+      }
+      // Subscribe before rechecking memory to avoid missing completion between
+      // the asynchronous IndexedDB read and listener registration.
+      await new Promise<void>((resolve, reject) => {
+        const wake = () => { cleanup(); resolve(); };
+        const abort = () => { cleanup(); reject(Error('Presentation range cancelled')); };
+        const cleanup = () => {
+          const listeners = this.cacheWaiters.get(key);
+          listeners?.delete(wake);
+          if (listeners?.size === 0) this.cacheWaiters.delete(key);
+          signal?.removeEventListener('abort', abort);
+        };
+        let listeners = this.cacheWaiters.get(key);
+        if (!listeners) { listeners = new Set(); this.cacheWaiters.set(key, listeners); }
+        listeners.add(wake);
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+        else if (this.memory.has(key)) wake();
+      });
+    }
+    throw Error('Classroom cache closed');
+  }
+
+  async cachedRange(file: PdfManifest, begin: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
+    if (!Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
+        begin < 0 || end <= begin || end > file.size || end - begin > MAX_RANGE_BYTES) {
+      throw Error('Invalid PDF byte request');
+    }
+    const first = Math.floor(begin / CHUNK_BYTES);
+    const last = Math.floor((end - 1) / CHUNK_BYTES);
+    const parts = await Promise.all(
+      Array.from({ length: last - first + 1 }, (_, i) => this.cachedChunk(file, first + i, signal)),
+    );
+    if (signal?.aborted) throw Error('Presentation range cancelled');
+    const result = new Uint8Array(end - begin);
+    for (let i = first; i <= last; i++) {
+      const offset = i * CHUNK_BYTES;
+      const from = Math.max(begin, offset);
+      const to = Math.min(end, offset + parts[i - first].length);
+      result.set(parts[i - first].subarray(from - offset, to - offset), from - begin);
+    }
+    return result;
+  }
+
   async range(file: PdfManifest, begin: number, end: number): Promise<Uint8Array> {
     if (!Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
       begin < 0 || end <= begin || end > file.size || end - begin > MAX_RANGE_BYTES) {
@@ -493,6 +574,7 @@ export class RoomPdfCache {
     this.memory.clear();
     this.memoryBytes = 0;
     this.indices.clear();
+    for (const key of [...this.cacheWaiters.keys()]) this.notifyCacheWaiters(key);
     this.reserved.clear();
     this.nextIndex.clear();
     this.cooldown.clear();

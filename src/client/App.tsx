@@ -522,7 +522,6 @@ export function App() {
   }
 
   const joinLink = hostSession ? window.location.origin + '/?join=' + encodeURIComponent(hostSession.joinToken) : '';
-  const approvedStudents = students.filter(s => s.approved).length;
 
   return (
     <div className={'app premium-app' + (mode === 'host' && hostSession ? ' is-host-workspace' : '')}>
@@ -606,6 +605,8 @@ export function App() {
                   <div className="sidebar-participants-heading">
                     <h2>Participants</h2>
                     <span className="sidebar-participant-count">{students.length}</span>
+                    <span className={'connection sidebar-connection ' + socketStatus} title={statusText(socketStatus)}
+                      aria-label={statusText(socketStatus)}><span className="status-dot"/></span>
                   </div>
                   <div className="sidebar-participants-scroll">
                     {students.length === 0 &&

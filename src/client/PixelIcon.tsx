@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { tintParticipantColor } from './participantColors';
 
 /** Pixel shapes and gradients transcribed from the supplied FlashView v8 HTML. */
 type PixelKind = 'folder' | 'doc' | 'pdf' | 'ppt' | 'img' | 'vid' | 'gen';
@@ -36,17 +37,20 @@ export function pixelKindForName(name: string): PixelKind {
   return 'gen';
 }
 
-export function PixelIcon({kind,className}: {kind:PixelKind;className?:string}) {
+export function PixelIcon({kind,className,color}: {kind:PixelKind;className?:string;color?:string}) {
   const id=useId().replace(/:/g,'');
   const map=pixels[kind], width=map[0].length;
+  const gradientStart=color?tintParticipantColor(color,.2):'#4a5062';
+  const gradientEnd=color?tintParticipantColor(color,-.3):'#0e0f14';
+  const foldedCorner=color?tintParticipantColor(color,.5):'#9097a8';
   return <svg className={className} aria-hidden="true"
     viewBox={`0 0 ${width} ${map.length}`} shapeRendering="crispEdges" focusable="false">
     <defs><linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stopColor="#4a5062"/><stop offset="1" stopColor="#0e0f14"/>
+      <stop offset="0" stopColor={gradientStart}/><stop offset="1" stopColor={gradientEnd}/>
     </linearGradient></defs>
     {map.flatMap((row,y)=>[...row].map((cell,x)=>cell==='.'?null:
       <rect key={y+'-'+x} x={x} y={y} width="1.04" height="1.04"
-        fill={cell==='w'?'#fff':cell==='o'?'#9097a8':`url(#${id})`}
+        fill={cell==='w'?'#fff':cell==='o'?foldedCorner:`url(#${id})`}
         opacity={cell==='#'&&(x+y)%5===0?0.9:1}/>))}
   </svg>;
 }

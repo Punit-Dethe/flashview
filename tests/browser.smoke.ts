@@ -1300,3 +1300,85 @@ test('universal binary transfer preserves APK, EXE, PPTX, XLSX, GIF, ZIP, DEB, S
     child.kill('SIGTERM');
   }
 });
+
+
+test('reference UI assigns one color per real participant, including two students with the same name', {timeout:85000}, async()=>{
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage();
+  const first=await browser.newPage();
+  const second=await browser.newPage();
+  const root='http://127.0.0.1:'+port;
+  try {
+    await host.goto(root);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    for(const page of [first,second]) {
+      await page.goto(root);
+      await page.locator('#code').fill(code);
+      // Both people intentionally share the default display name "Student".
+      await page.getByRole('button',{name:/Join room/}).click();
+      await page.locator('.student-add-fab:not([disabled])').waitFor();
+    }
+    await host.locator('.participant-row').nth(1).waitFor();
+    await first.locator('input[type=file]').setInputFiles([
+      {name:'slides-one.pptx',mimeType:'application/octet-stream',buffer:Buffer.alloc(12_288,1)},
+      {name:'archive-one.zip',mimeType:'application/octet-stream',buffer:Buffer.alloc(13_000,2)},
+    ]);
+    await second.locator('input[type=file]').setInputFiles({
+      name:'installer-two.apk',mimeType:'application/octet-stream',buffer:Buffer.alloc(15_000,3),
+    });
+    await host.locator('.document-row').nth(2).waitFor({timeout:30000});
+    await host.waitForFunction(()=>{
+      const avatars=[...document.querySelectorAll<HTMLElement>('.participant-row .participant-avatar')];
+      const cards=[...document.querySelectorAll<HTMLElement>('.document-row')];
+      return avatars.length===2 && avatars.every(a=>a.style.getPropertyValue('--participant-color')) &&
+        cards.length===3 && cards.every(c=>Boolean(c.querySelector('.document-owner-dot')) &&
+          Boolean(c.querySelector('.document-pdf-symbol svg linearGradient stop')));
+    });
+    const ui=await host.evaluate(()=>{
+      const avatars=[...document.querySelectorAll<HTMLElement>('.participant-row')].map(row=>({
+        id:row.dataset.participantId,
+        name:row.querySelector('.participant-info strong')?.textContent,
+        color:row.querySelector<HTMLElement>('.participant-avatar')?.style.getPropertyValue('--participant-color'),
+      }));
+      const cards=[...document.querySelectorAll<HTMLElement>('.document-row')].map(card=>({
+        name:card.querySelector('h3')?.textContent,
+        ownerId:card.dataset.ownerId,
+        displayName:card.querySelector('.document-file-owner')?.textContent?.trim(),
+        dot:getComputedStyle(card.querySelector('.document-owner-dot')!).backgroundColor,
+        gradient:card.querySelector('linearGradient stop')?.getAttribute('stop-color'),
+      }));
+      return {avatars,cards};
+    });
+    assert.equal(ui.avatars.length,2);
+    assert.ok(ui.avatars.every(a=>a.name==='Student'),'Both people have the same display name');
+    assert.notEqual(ui.avatars[0].id,ui.avatars[1].id);
+    assert.notEqual(ui.avatars[0].color,ui.avatars[1].color,'Different people must get different hues');
+    const colorFor=(id:string|undefined)=>ui.avatars.find(a=>a.id===id)?.color;
+    const rgb=(hex:string)=>{
+      const num=Number.parseInt(hex.slice(1),16);
+      return 'rgb('+((num>>16)&255)+', '+((num>>8)&255)+', '+(num&255)+')';
+    };
+    for(const card of ui.cards){
+      const color=colorFor(card.ownerId);
+      assert.ok(color,'Every file must refer to a real participant');
+      assert.equal(card.displayName,'Student');
+      assert.equal(card.dot,rgb(color!),'The owner dot must match the avatar color');
+      assert.ok(card.gradient && card.gradient!=='#4a5062','The pixel icon must not be gray');
+    }
+    const [a,b,c]=['slides-one.pptx','archive-one.zip','installer-two.apk'].map(
+      name=>ui.cards.find(card=>card.name===name)!);
+    assert.equal(a.ownerId,b.ownerId,'Two files from the same student share one participant ID');
+    assert.equal(a.gradient,b.gradient,'Every icon from one student has an identical gradient');
+    assert.notEqual(a.ownerId,c.ownerId);
+    assert.notEqual(a.gradient,c.gradient,'Different students get different icon gradients');
+    await host.getByRole('button',{name:/End room/}).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button',{name:/End & clear cache/}).click();
+  } finally {
+    await host.close();await first.close();await second.close();await browser.close();
+    child.kill('SIGTERM');
+  }
+});

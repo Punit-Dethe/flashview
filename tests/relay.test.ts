@@ -162,3 +162,42 @@ test('different devices exchange metadata, approvals and byte-range PDF data via
     child.kill('SIGTERM');
   }
 });
+
+
+test('open admission is an explicit room creation choice and preserves sender-only manifests', { timeout: 20000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' });
+    assert.equal(response.status, 201);
+    const room = await response.json() as {
+      code: string; roomId: string; hostToken: string; joinToken: string; autoApprove: boolean;
+    };
+    assert.equal(room.autoApprove, true);
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken });
+    peers.push(host);
+    const snapshot = await host.wait('room.state');
+    assert.equal(snapshot.autoApprove, true);
+    const alice = await connect(port, { role: 'student', joinToken: room.joinToken, name: 'Alice' });
+    peers.push(alice);
+    const bob = await connect(port, { role: 'student', joinToken: room.joinToken, name: 'Bob' });
+    peers.push(bob);
+    const joinedAlice = await alice.wait('join.accepted');
+    const joinedBob = await bob.wait('join.accepted');
+    assert.ok(joinedAlice.resumeToken);
+    assert.ok(joinedBob.resumeToken);
+    alice.send({ type: 'file.offer', fileId: 'aliceprivatepdf', name: 'Alice-private.pdf', size: 180 });
+    await alice.wait('file.approved');
+    await host.wait('file.announced');
+    alice.send({ type: 'file.sync' });
+    bob.send({ type: 'file.sync' });
+    const own = await alice.wait('file.manifest');
+    const other = await bob.wait('file.manifest');
+    assert.equal((own.files as unknown[]).length, 1);
+    assert.equal((other.files as unknown[]).length, 0,
+      'Only the owner should see private file metadata; the host sees all');
+  } finally {
+    for (const peer of peers) peer.close();
+    child.kill('SIGTERM');
+  }
+});

@@ -1,9 +1,12 @@
-export const MAX_PDF_BYTES = 50 * 1024 * 1024;
+// Initial safety cap; file format is unrestricted.
+export const MAX_FILE_BYTES = 200 * 1024 * 1024;
+// Backwards-compatible name for older PDF-only integrations.
+export const MAX_PDF_BYTES = MAX_FILE_BYTES;
 export const MAX_RANGE_BYTES = 256 * 1024;
 export const ROOM_TTL_MS = 2 * 60 * 60 * 1000;
 export const RANGE_TIMEOUT_MS = 20_000;
 
-export interface PdfManifest {
+export interface FileManifest {
   fileId: string;
   name: string;
   size: number;
@@ -27,10 +30,13 @@ export interface RangeHeader {
   begin: number;
 }
 
+/** Compatibility alias while the PDF-only presenter keeps its original types. */
+export type PdfManifest = FileManifest;
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/** Two-byte big-endian JSON header length, followed by UTF-8 header + binary PDF bytes. */
+/** Two-byte big-endian JSON header length, followed by UTF-8 header + arbitrary binary file bytes. */
 export function encodeRangePacket(header: RangeHeader, data: ArrayBuffer | Uint8Array): ArrayBuffer {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   const headerBytes = encoder.encode(JSON.stringify(header));

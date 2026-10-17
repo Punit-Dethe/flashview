@@ -591,3 +591,15 @@ html, body { background: var(--canvas); }
 @media (prefers-reduced-motion: reduce) {
   .premium-app.is-host-workspace button { transition: none; }
 }
+
+.premium-app .sidebar-participants-heading .sidebar-connection.connection {
+  margin-left: auto;
+  min-width: 0;
+  display: inline-flex;
+  padding: 3px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+.premium-app .sidebar-participants-heading .sidebar-connection .status-dot { width: 7px; height: 7px; }

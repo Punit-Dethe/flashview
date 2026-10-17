@@ -1338,3 +1338,96 @@ html, body { background: #f7f9fc; }
 
 /* Native inputs, scrollbars and picker chrome should match the light room. */
 :root { color-scheme: light; }
+
+
+/* Phone: one discreet action row. Text-only animation does not send messages,
+   repaint the file grid, poll storage, or touch the transfer scheduler. */
+.premium-app .student-drive-body { padding-top: 22px; }
+.premium-app .student-drive .student-drive-content { margin: 0; }
+.premium-app .student-transfer-actions {
+  position: fixed;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(22px, env(safe-area-inset-bottom));
+  z-index: 55;
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: calc(100vw - 28px);
+  pointer-events: none;
+}
+.premium-app .student-transfer-actions > * { pointer-events: auto; }
+.premium-app .student-transfer-actions .student-add-fab {
+  position: relative; bottom: auto; right: auto; z-index: auto;
+  flex: none; min-width: 94px; height: 55px;
+  border-radius: 19px;
+}
+.premium-app .student-transfer-actions .student-status-pill {
+  position: relative;
+  inset: auto;
+  transform: none;
+  animation: none;
+  min-width: 0;
+  width: clamp(165px, 52vw, 245px);
+  max-width: 100%;
+  height: 55px;
+  min-height: 55px;
+  flex: 0 1 auto;
+  border: 1px solid #c1d5ef;
+  border-radius: 19px;
+  padding: 0 15px;
+  background: #24539a;
+  color: #fff;
+  box-shadow: 0 4px 17px #1e4e9130;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.premium-app .student-status-pill.is-done { background: #1f7352; border-color: #1c704c; }
+.premium-app .student-status-pill .transfer-pill-spinner {
+  margin: 0; width: 19px; height: 19px;
+  border-color: #ffffff59; border-top-color: #fff;
+}
+.premium-app .student-pill-check {
+  display: grid; place-items: center; flex: none;
+  width: 21px; height: 21px; border: 1.6px solid #fff;
+  border-radius: 50%; font-size: 15px; font-weight: 650; line-height: 1;
+}
+.premium-app .student-pill-single { font-size: 12px; font-weight: 630; white-space: nowrap; }
+.premium-app .student-pill-message {
+  position: relative; height: 18px; flex: 1; min-width: 0;
+  overflow: hidden; font-size: 12px; font-weight: 615;
+}
+.premium-app .student-pill-message > span {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  white-space: nowrap; transform: translateY(0); opacity: 0;
+}
+.premium-app .student-pill-stay { animation: flashview-stay-message 9s ease-in-out infinite; }
+.premium-app .student-pill-upload { animation: flashview-upload-message 9s ease-in-out infinite; }
+@keyframes flashview-stay-message {
+  0%, 31%, 94%, 100% { opacity: 1; transform: translateY(0); }
+  39%, 86% { opacity: 0; transform: translateY(-7px); }
+}
+@keyframes flashview-upload-message {
+  0%, 31%, 94%, 100% { opacity: 0; transform: translateY(7px); }
+  39%, 86% { opacity: 1; transform: translateY(0); }
+}
+@media(max-width:580px) {
+  .premium-app .student-transfer-actions {
+    right: max(17px, env(safe-area-inset-right));
+    bottom: max(20px, env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+  .premium-app .student-transfer-actions .student-add-fab {
+    min-width: 82px; padding: 0 12px; height: 52px;
+  }
+  .premium-app .student-transfer-actions .student-status-pill {
+    width: min(53vw, 245px); height: 52px; min-height: 52px; padding: 0 11px; gap: 8px;
+  }
+  .premium-app .student-pill-message { font-size: 11px; }
+}
+@media(prefers-reduced-motion: reduce) {
+  .premium-app .student-pill-stay { animation: none; opacity: 1; transform: none; }
+  .premium-app .student-pill-upload { animation: none; opacity: 0; }
+  .premium-app .student-status-pill .transfer-pill-spinner { animation: none; }
+}

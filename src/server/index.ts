@@ -181,25 +181,26 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     send(ws, {
       type: 'file.manifest', files: [...room.files.values()].filter(file => file.ownerId === peer.id),
     });
-    notifyHost(room, { type: 'cache.progress.request' });
     return;
   }
   if (peer.role === 'host') {
     if (msg.type === 'cache.progress') {
       const file = typeof msg.fileId === 'string' ? room.files.get(msg.fileId) : undefined;
       const bytes = msg.bytes;
-      if (file && Number.isSafeInteger(bytes) && Number(bytes) >= 0 && Number(bytes) <= file.size) {
-        // Retain tiny progress METADATA with the file manifest, so a phone
-        // that misses a live event can recover via file.sync on reconnect.
-        // Only the authenticated classroom host can publish this value.
-        const next = msg.snapshot === true ? Number(bytes) :
-          Math.max(file.cachedBytes ?? 0, Number(bytes));
-        file.cachedBytes = next;
-        const student = room.students.get(file.ownerId);
-        if (student && student.approved) send(student.ws, {
-          type: 'cache.progress', fileId: file.fileId, bytes: next,
-          size: file.size, complete: next === file.size,
-        });
+      // Only a finished PDF deserves network metadata. Older hosts may
+      // still send intermediate cache.progress events: ignore them entirely.
+      // Explicit zero snapshots repair a stale completion after host storage loss.
+      if (file && Number.isSafeInteger(bytes) &&
+          (bytes === file.size || (msg.snapshot === true && bytes === 0))) {
+        const next = Number(bytes);
+        if (file.cachedBytes !== next) {
+          file.cachedBytes = next;
+          const student = room.students.get(file.ownerId);
+          if (student && student.approved) send(student.ws, {
+            type: 'cache.progress', fileId: file.fileId, bytes: next,
+            size: file.size, complete: next === file.size,
+          });
+        }
       }
       return;
     }

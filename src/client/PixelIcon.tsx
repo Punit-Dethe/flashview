@@ -14,7 +14,7 @@ function labelRows(word: 'PDF' | 'PPT'): string[] {
   return [0,1,2,3,4].map(y=>[...word].map(c=>FONT[c][y]).join('.'));
 }
 function documentPixels(glyph: string[]): string[] {
-  const grid=Array.from({length:16},(_,y)=>Array.from({length:13},(_,x)=>
+  const grid: string[][]=Array.from({length:16},(_,y)=>Array.from({length:13},(_,x)=>
     y<4&&x>=9 ? ((x-9)>y ? '.' : 'o') : '#'));
   glyph.forEach((line,y)=>[...line].forEach((c,x)=>{if(c==='#'&&grid[8+y]?.[1+x]) grid[8+y][1+x]='w';}));
   return grid.map(row=>row.join(''));

@@ -1062,7 +1062,7 @@ export function App() {
               <h2 id="end-title">End this room?</h2>
               <p>This will close all presentation tabs, disconnect students, and delete the files
                 and previews FlashView has cached on <strong>this computer</strong> for this room.</p>
-              <p>Original PDFs on students' devices won't be touched. This action cannot be undone.</p>
+              <p>Original files on students' devices won't be touched. This action cannot be undone.</p>
               <label className="end-check">
                 <input type="checkbox" checked={endAcknowledged}
                   onChange={event => setEndAcknowledged(event.target.checked)}/>

@@ -35,6 +35,8 @@ function savedSession(): HostSession | null {
 }
 const initialSession = savedSession();
 const initialJoin = new URLSearchParams(window.location.search).get('join') || '';
+// Open the upload workspace on the first render, before QR authentication.
+const initialJoinRoomCode = /^\d{6}(?=\.|$)/.exec(initialJoin)?.[0] ?? '';
 
 function statusText(status: SocketStatus): string {
   if (status === 'connected') return 'Connected';
@@ -65,13 +67,13 @@ export function App() {
   const [error, setError] = useState('');
   const [joinCode, setJoinCode] = useState(initialJoin);
   const [studentName, setStudentName] = useState('');
-  const [joinState, setJoinState] = useState<'idle' | 'pending' | 'accepted' | 'rejected'>('idle');
+  const [joinState, setJoinState] = useState<'idle' | 'connecting' | 'pending' | 'accepted' | 'rejected'>(initialJoin ? 'connecting' : 'idle');
   const [students, setStudents] = useState<StudentInfo[]>([]);
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
   const [autoApprove, setAutoApprove] = useState(true);
-  const [currentRoomCode, setCurrentRoomCode] = useState('');
+  const [currentRoomCode, setCurrentRoomCode] = useState(initialJoinRoomCode);
   const [cacheProgress, setCacheProgress] = useState<Record<string, CacheProgress>>({});
   const [studentCacheProgress, setStudentCacheProgress] = useState<Record<string, CacheProgress>>({});
   const [phonePreviews, setPhonePreviews] = useState<Record<string, string>>({});
@@ -436,7 +438,10 @@ export function App() {
             item.fileId === file.fileId ? { ...item, status: file.status } : item));
         }
       }
-      if (type === 'join.rejected') { setJoinState('rejected'); setError('The teacher declined this connection.'); }
+      if (type === 'join.rejected') {
+        returnHome();
+        setError('The teacher declined this connection.');
+      }
       if (type === 'file.pending' || type === 'file.approved' || type === 'file.rejected') {
         const status = type === 'file.pending' ? 'pending' : type === 'file.approved' ? 'approved' : 'rejected';
         const id = String(message.fileId);
@@ -455,15 +460,16 @@ export function App() {
       }
       if (type === 'room.closed') {
         if (modeRef.current === 'host') void presentation.clearRoom().catch(() => {});
-        setError('This classroom session has ended.');
-        setHostSession(null);
-        sessionStorage.removeItem('flashview-host');
-        setJoinState('idle');
-        presentation.closeAll();
+        returnHome();
       }
       if (type === 'error') {
         const text = normalizedMessage(message);
-        if (modeRef.current === 'student' && /host is offline|classroom connection interrupted|temporarily unavailable/i.test(text)) {
+        if (modeRef.current === 'student' &&
+            /room not found|room expired|room is full|host is offline|invalid join/i.test(text)) {
+          returnHome();
+          setError(text);
+        } else if (modeRef.current === 'student' &&
+            /classroom connection interrupted|temporarily unavailable/i.test(text)) {
           // The teacher can briefly leave or reconnect; this is an expected
           // recoverable state and belongs in the bottom status pill.
           setHostAvailable(false);
@@ -540,7 +546,7 @@ export function App() {
   function connectStudent(): void {
     if (!joinCode.trim()) return setError('Enter a code or use the QR code link.');
     setError('');
-    setJoinState('idle');
+    setJoinState('connecting');
     filesOnPhone.current.clear();
     firstPageImages.current.clear();
     previewRendering.current.clear();
@@ -549,11 +555,11 @@ export function App() {
     setSentFiles([]);
     setStudentCacheProgress({});
     setPhonePreviews({});
-    setCurrentRoomCode('');
+    const key = joinCode.trim();
+    setCurrentRoomCode(/^\d{6}(?=\.|$)/.exec(key)?.[0] ?? '');
     setHostAvailable(true);
     modeRef.current = 'student';
     setMode('student');
-    const key = joinCode.trim();
     const identifier = /^\d{6}$/.test(key) ? { code: key } : { joinToken: key };
     socket.connect({ role: 'student', name: studentName.trim() || 'Student', ...identifier });
   }
@@ -645,11 +651,7 @@ export function App() {
       setCacheProgress({});
       setDownloadSpeed({});
       transferSamples.current.clear();
-      setEndConfirm(false);
-      setEndAcknowledged(false);
-      modeRef.current = 'welcome';
-      setMode('welcome');
-      socket.close();
+      returnHome();
     } catch {
       setError('Could not clear this room’s local PDF cache. Please retry before ending the room.');
     } finally { setEnding(false); }
@@ -663,25 +665,57 @@ export function App() {
     } catch { setError('Could not copy invitation. Check your clipboard permissions.'); }
   }
 
-  function startFresh(): void {
-    if (modeRef.current === 'host' && hostSession) { setEndConfirm(true); return; }
+  function returnHome(): void {
+    // Prevent stale socket notifications or QR invitations surviving an exit.
+    modeRef.current = 'welcome';
     socket.close();
+    presentation.closeAll();
     sessionStorage.removeItem('flashview-host');
+    setMode('welcome');
     setHostSession(null);
     setJoinState('idle');
-    presentation.closeAll();
+    setJoinCode('');
+    setStudentName('');
+    setCurrentRoomCode('');
+    setHostAvailable(true);
     setError('');
-    modeRef.current = 'welcome';
-    setMode('welcome');
+    setStudents([]);
+    setDocuments([]);
+    setSentFiles([]);
+    setCacheProgress({});
+    setStudentCacheProgress({});
+    setPhonePreviews({});
+    setDocumentPreviews({});
+    setDownloadSpeed({});
+    setEndConfirm(false);
+    setEndAcknowledged(false);
+    setCopied(false);
+    setShowDonePill(false);
+    hostFilesRef.current = [];
+    completionAcks.current.clear();
+    transferSamples.current.clear();
+    filesOnPhone.current.clear();
+    firstPageImages.current.clear();
+    previewRendering.current.clear();
+    previewDelivered.current.clear();
+    previewFailed.current.clear();
+    incomingPreviews.current.clear();
+    previewLookups.current.clear();
+    previewRoom.current = '';
     window.history.replaceState({}, '', '/');
+  }
+
+  function startFresh(): void {
+    if (modeRef.current === 'host' && hostSession) { setEndConfirm(true); return; }
+    returnHome();
   }
 
   const joinLink = hostSession ? window.location.origin + '/?join=' + encodeURIComponent(hostSession.joinToken) : '';
 
   return (
     <div className={'app premium-app' + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
-      (mode === 'student' && (joinState === 'accepted' || joinState === 'pending') ? ' is-student-room' : '')}>
-      {!(mode === 'host' && hostSession) && !(mode === 'student' && (joinState === 'accepted' || joinState === 'pending')) && (
+      (mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending') ? ' is-student-room' : '')}>
+      {!(mode === 'host' && hostSession) && !(mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending')) && (
       <header className="site-header">
         <div className="brand" onClick={startFresh} role="button" tabIndex={0}
           onKeyDown={e => { if (e.key === 'Enter') startFresh(); }} aria-label="FlashView home">
@@ -840,7 +874,7 @@ export function App() {
         )}
 
         {mode === 'student' && (
-          <div className={'student-screen' + (joinState === 'accepted' || joinState === 'pending' ? ' room-files-screen' : '')}>
+          <div className={'student-screen' + (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending' ? ' room-files-screen' : '')}>
             {(joinState === 'idle' || joinState === 'rejected') && (
               <div className="room-entry">
                 <div className="room-entry-kicker">JOIN A ROOM</div>
@@ -858,7 +892,7 @@ export function App() {
                 ) : <button type="button" className="outline-button" onClick={startFresh}>Back home</button>}
               </div>
             )}
-            {(joinState === 'accepted' || joinState === 'pending') && (
+            {(joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending') && (
               <div className="student-drive">
                 <header className="student-drive-header">
                   <div className="student-drive-header-copy">
@@ -896,13 +930,14 @@ export function App() {
                             <path d="M18 32h36M24 24h17" stroke="#91a8c9" strokeWidth="3" strokeLinecap="round"/>
                             <path d="M26 42h20M26 49h13" stroke="#b1c2d8" strokeWidth="2.5" strokeLinecap="round"/>
                           </svg>
-                          <h2>No files yet</h2>
-                          <p>Tap New to share a PDF.</p>
+                          <h2>{joinState === 'connecting' ? 'Ready to share' : 'No files yet'}</h2>
+                          <p>{joinState === 'connecting' ? 'Connecting to your room…' : 'Tap New to share a PDF.'}</p>
                         </div>
                       )}
                       <div className="student-transfer-actions">
                         {transferPhase && <TransferPill phase={transferPhase}/>}
                         <button type="button" className="student-add-fab" onClick={browseFiles}
+                          disabled={joinState !== 'accepted'}
                           aria-label="Add PDFs" title="Add PDFs"><span aria-hidden="true">+</span><span>New</span></button>
                       </div>
                     </>

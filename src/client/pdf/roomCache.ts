@@ -211,19 +211,9 @@ export class RoomPdfCache {
   // Phase 2 opt-in: group 64 KiB cache block writes into one IDB transaction.
   // ?batch=1 preserves the exact Phase 1 storage behavior.
   private readonly writeBatchSize = writeBatchSizeFromQuery(location.search);
-  private readonly writeBatcher = this.writeBatchSize === 1 ? null :
-    new ChunkWriteBatcher<ChunkRecord>(this.writeBatchSize, async records => {
-      const started = perf.enabled ? performance.now() : 0;
-      try {
-        await saveChunkBatch(records);
-        if (perf.enabled) perf.record('cache_batch_tx_ms',
-          performance.now() - started, { bytes: records.reduce((sum, r) => sum + r.data.byteLength, 0) });
-      } catch (error) {
-        if (perf.enabled) perf.record('cache_batch_tx_ms',
-          performance.now() - started, { outcome: 'error' });
-        throw error;
-      }
-    });
+  // Keep student files independent: a failed multi-put transaction must not
+  // roll back cache blocks belonging to a different student.
+  private readonly writeBatchers = new Map<string, ChunkWriteBatcher<ChunkRecord>>();
   private storageFailedFiles = new Set<string>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
@@ -233,7 +223,24 @@ export class RoomPdfCache {
     void writeRoom(roomId).catch(() => this.warning());
   }
   private persistChunk(record: ChunkRecord): Promise<void> {
-    return this.writeBatcher ? this.writeBatcher.enqueue(record) : saveChunk(record);
+    if (this.writeBatchSize === 1) return saveChunk(record);
+    let writer = this.writeBatchers.get(record.document);
+    if (!writer) {
+      writer = new ChunkWriteBatcher<ChunkRecord>(this.writeBatchSize, async records => {
+        const started = perf.enabled ? performance.now() : 0;
+        try {
+          await saveChunkBatch(records);
+          if (perf.enabled) perf.record('cache_batch_tx_ms',
+            performance.now() - started, { bytes: records.reduce((sum, r) => sum + r.data.byteLength, 0) });
+        } catch (error) {
+          if (perf.enabled) perf.record('cache_batch_tx_ms',
+            performance.now() - started, { outcome: 'error' });
+          throw error;
+        }
+      });
+      this.writeBatchers.set(record.document, writer);
+    }
+    return writer.enqueue(record);
   }
   private warning(): void {
     if (this.warned) return;

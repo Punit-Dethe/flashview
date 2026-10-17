@@ -1161,7 +1161,7 @@ test('QR joins open the upload workspace immediately; leaving or ending a room r
       const saved=sessionStorage.getItem('flashview-host');
       return saved ? (JSON.parse(saved) as {joinToken:string}).joinToken : '';
     });
-    assert.ok(invite.includes('.'),'QR link must include an authorized invite token');
+    assert.ok(invite.length >= 20,'QR link must include an authorized invite token');
 
     await student.goto(root+'/?join='+encodeURIComponent(invite));
     await student.locator('.student-drive').waitFor();

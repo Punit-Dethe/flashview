@@ -69,13 +69,11 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [autoApprove, setAutoApprove] = useState(false);
   const [currentRoomCode, setCurrentRoomCode] = useState('');
-  const [fileSearch, setFileSearch] = useState('');
   const [cacheProgress, setCacheProgress] = useState<Record<string, CacheProgress>>({});
   const [studentCacheProgress, setStudentCacheProgress] = useState<Record<string, CacheProgress>>({});
   const [phonePreviews, setPhonePreviews] = useState<Record<string, string>>({});
   const [hostAvailable, setHostAvailable] = useState(true);
   const hostFilesRef = useRef<PdfManifest[]>([]);
-  const progressSentRef = useRef(new Map<string, { bytes: number; at: number }>());
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
   const previewLookups = useRef(new Set<string>());
   const previewRoom = useRef(initialSession?.code ?? '');
@@ -89,13 +87,24 @@ export function App() {
   const [switchCode, setSwitchCode] = useState('');
   const [copied, setCopied] = useState(false);
   const transferSummary = summarizeTransfers(sentFiles, studentCacheProgress);
-  // The bottom dock communicates connection state ONLY. The PDF cards show
-  // transfer progress and verified completion independently.
-  const showTransferPill = mode === 'student' && (
-    socketStatus === 'connecting' ||
-    ((joinState === 'accepted' || joinState === 'pending') &&
-      (socketStatus !== 'connected' || !hostAvailable))
-  );
+  const [showDonePill, setShowDonePill] = useState(false);
+  // The host confirms whole files, not incremental byte counts.
+  useEffect(() => {
+    if (mode !== 'student' || !transferSummary.complete) {
+      setShowDonePill(false);
+      return;
+    }
+    setShowDonePill(true);
+    const timer = setTimeout(() => setShowDonePill(false), 3300);
+    return () => clearTimeout(timer);
+  }, [mode, transferSummary.complete, transferSummary.count]);
+  const connectionInterrupted = socketStatus !== 'connected' || !hostAvailable;
+  const transferPhase: 'connecting' | 'uploading' | 'done' | null =
+    mode !== 'student' || joinState !== 'accepted' ? null :
+      !transferSummary.complete && transferSummary.count > 0 ?
+        (connectionInterrupted ? 'connecting' : 'uploading') :
+      showDonePill && transferSummary.complete ? 'done' :
+      connectionInterrupted ? 'connecting' : null;
 
   useEffect(() => {
     // Abandoned rooms expire automatically; delete their old browser-stored PDFs
@@ -110,9 +119,9 @@ export function App() {
         setCacheProgress(existing => ({
           ...existing, [file.fileId]: retainNewestProgress(existing[file.fileId], progress),
         }));
-        if (socket.connected) socket.send({
-          type: 'cache.progress', fileId: file.fileId, bytes: progress.bytes,
-          snapshot: true,
+        // Only finished PDFs need an acknowledgement during host restoration.
+        if (socket.connected && progress.complete) socket.send({
+          type: 'cache.progress', fileId: file.fileId, bytes: file.size,
         });
       }).catch(() => {});
     }
@@ -240,15 +249,10 @@ export function App() {
       setCacheProgress(existing => ({
         ...existing, [progress.fileId]: retainNewestProgress(existing[progress.fileId], progress),
       }));
-      // Only the classroom's completed IndexedDB writes count as uploaded.
-      // The relay forwards this small acknowledgement to the file's owner.
-      if (modeRef.current === 'host' && socket.connected) {
-        const now = performance.now();
-        const last = progressSentRef.current.get(progress.fileId);
-        if (!last || progress.complete || now - last.at >= 850) {
-          socket.send({ type: 'cache.progress', fileId: progress.fileId, bytes: progress.bytes });
-          progressSentRef.current.set(progress.fileId, { bytes: progress.bytes, at: now });
-        }
+      // Single acknowledgement AFTER IndexedDB confirms the entire PDF.
+      // Intermediate progress stays local; it cannot slow PDF byte delivery.
+      if (modeRef.current === 'host' && socket.connected && progress.complete) {
+        socket.send({ type: 'cache.progress', fileId: progress.fileId, bytes: progress.size });
       }
       const now = performance.now();
       const sample = transferSamples.current.get(progress.fileId);
@@ -326,9 +330,11 @@ export function App() {
         // Fresh snapshots after a phone rejoins; old completed transfers stay done.
         for (const file of hostFilesRef.current) {
           void presentation.progress(file).then(progress => {
+            // A reconnect asks for an authoritative complete/zero snapshot,
+            // never the intermediate byte counts.
             if (socket.connected) socket.send({
-              type: 'cache.progress', fileId: file.fileId, bytes: progress.bytes,
-              snapshot: true,
+              type: 'cache.progress', fileId: file.fileId,
+              bytes: progress.complete ? file.size : 0, snapshot: true,
             });
           }).catch(() => {});
         }
@@ -512,7 +518,6 @@ export function App() {
       setCacheProgress({});
       setDownloadSpeed({});
       hostFilesRef.current = [];
-      progressSentRef.current.clear();
       transferSamples.current.clear();
       presentation.setRoom(newSession.code);
       socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });
@@ -533,7 +538,6 @@ export function App() {
     setSentFiles([]);
     setStudentCacheProgress({});
     setPhonePreviews({});
-    setFileSearch('');
     setCurrentRoomCode('');
     setHostAvailable(true);
     modeRef.current = 'student';
@@ -658,7 +662,6 @@ export function App() {
       setCacheProgress({});
       setDownloadSpeed({});
       hostFilesRef.current = [];
-      progressSentRef.current.clear();
       setStudentCacheProgress({});
       setPhonePreviews({});
       setJoinDialogOpen(false);
@@ -897,13 +900,6 @@ export function App() {
                     aria-label="Leave room">Leave</button>
                 </header>
                 <div className="student-drive-body">
-                  <div className="student-drive-heading">
-                    <div>
-                      <h1>My files</h1>
-                      <p>Only you and the room host can see these files.</p>
-                    </div>
-                    <span className="student-file-count">{sentFiles.filter(f => f.status !== 'rejected').length} files</span>
-                  </div>
                   {joinState === 'pending' ? (
                     <div className="student-drive-pending" role="status">
                       <span className="spinner" aria-hidden="true"/>
@@ -912,30 +908,17 @@ export function App() {
                     </div>
                   ) : (
                     <>
-                      <label className="student-drive-search">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-                          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                          <circle cx="10.8" cy="10.8" r="6.6"/>
-                          <path d="m16 16 4 4"/>
-                        </svg>
-                        <input type="search" aria-label="Search my files" placeholder="Search your files"
-                          value={fileSearch} onChange={e => setFileSearch(e.target.value)}/>
-                      </label>
                       <input ref={fileInputRef} type="file" accept=".pdf,application/pdf"
                         multiple hidden onChange={addPdf}/>
-                      {sentFiles.filter(f => f.status !== 'rejected' &&
-                          f.name.toLowerCase().includes(fileSearch.trim().toLowerCase())).length ? (
+                      {sentFiles.some(f => f.status !== 'rejected') ? (
                         <section className="student-drive-content" aria-label="Your uploads">
                           <div className="student-files-grid">
-                            {sentFiles.filter(f => f.status !== 'rejected' &&
-                              f.name.toLowerCase().includes(fileSearch.trim().toLowerCase())).map(f =>
+                            {sentFiles.filter(f => f.status !== 'rejected').map(f =>
                               <StudentTransferCard key={f.fileId} file={f}
                                 progress={studentCacheProgress[f.fileId]} preview={phonePreviews[f.fileId]}
                                 onStop={() => revoke(f.fileId)}/>)}
                           </div>
-                          {!fileSearch && <p className="student-transfer-hint">{transferSummary.complete ?
-                            'All your PDFs are saved on the host computer.' :
-                            'Keep this page open until your PDFs show a checkmark.'}</p>}
+
                         </section>
                       ) : (
                         <div className="student-drive-empty">
@@ -944,19 +927,20 @@ export function App() {
                             <path d="M18 32h36M24 24h17" stroke="#91a8c9" strokeWidth="3" strokeLinecap="round"/>
                             <path d="M26 42h20M26 49h13" stroke="#b1c2d8" strokeWidth="2.5" strokeLinecap="round"/>
                           </svg>
-                          <h2>{fileSearch ? 'No matching files' : 'Your room is ready'}</h2>
-                          <p>{fileSearch ? 'Try another name.' :
-                            'Add a PDF to share it with the host. Your files stay private from other participants.'}</p>
+                          <h2>No files yet</h2>
+                          <p>Tap New to share a PDF.</p>
                         </div>
                       )}
-                      <button type="button" className="student-add-fab" onClick={browseFiles}
-                        aria-label="Add PDFs" title="Add PDFs"><span aria-hidden="true">+</span><span>New</span></button>
+                      <div className="student-transfer-actions">
+                        {transferPhase && <TransferPill phase={transferPhase}/>}
+                        <button type="button" className="student-add-fab" onClick={browseFiles}
+                          aria-label="Add PDFs" title="Add PDFs"><span aria-hidden="true">+</span><span>New</span></button>
+                      </div>
                     </>
                   )}
                 </div>
               </div>
             )}
-            {showTransferPill && <TransferPill/>}
           </div>
         )}
         {joinDialogOpen && mode === 'host' && hostSession && (

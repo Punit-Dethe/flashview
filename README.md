@@ -73,6 +73,14 @@ The floating bottom pill is reserved for **Connecting…** only, and disappears 
 
 The fullscreen PDF view also disables an inherited backdrop-filter on its invisible full-viewport toolbar. It previously blurred the presentation pixels underneath the overlay, most conspicuously on the left side.
 
+## Light room browser and admission mode
+
+FlashView uses a familiar light, document-first room interface: the **host** keeps a compact dark QR/participants utility sidebar and a light, larger-file-tile gallery; joined **sharers** see only the PDFs they selected, in a two-column phone grid with search and a floating **+ New** file-picker button. Text truncates at a comfortable right inset instead of spilling across cards. Other students never receive one another's file manifests, previews or range access; only the room host sees everyone's submissions.
+
+At room creation the host can choose **Let people join without approval**. This defaults **off**, preserving the existing waiting-room workflow. When enabled the Node or Cloudflare relay creates an already-approved session for anyone possessing the room code or link. This preference is stored with the room (Cloudflare persists it in the Durable Object) and applies to new joins, not just the UI. Share only with the intended participants when an open room is enabled. This is not an account-authenticated or confidential document-sharing service.
+
+Sharing remains PDF-only (up to 50 MB). Images, slides, archives, video and other files are deliberately not accepted by this redesign; general-file transfer and host download require a separately tested protocol/UX phase. The phone's completed rings report bytes cached on the teacher's computer, not merely the filename appearing on the host.
+
 ## Room cache and cleanup
 
 - The teacher can open/close individual presentation tabs without losing the classroom queue.

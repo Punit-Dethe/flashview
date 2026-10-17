@@ -253,8 +253,8 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       await student.screenshot({ path: 'test-artifacts/ui/student.png', fullPage: true });
     }
     // Student approval also approves each new PDF automatically.
-    await student.locator('.sent-row').filter({ hasText: 'smoke.pdf' })
-      .getByText('Shared — caching on classroom computer').waitFor();
+    await student.locator('.student-file-card').filter({ hasText: 'smoke.pdf' })
+      .locator('.transfer-ring').waitFor();
     // Cache starts before presenting and its ring is readable to assistive technology.
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
       .locator('.cache-ring[role="progressbar"]').waitFor({ timeout: 15000 });
@@ -265,6 +265,10 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     // Teacher's queue remains available while the PDF is projected.
     assert.equal(await host.locator('.document-row').count(), 1);
     // Projector view must be truly black around the actual PDF.
+    const toolbarBlur = await presentation.locator('.viewer-toolbar')
+      .evaluate(element => getComputedStyle(element).backdropFilter);
+    assert.equal(toolbarBlur, 'none',
+      'Full-screen overlay header must not blur PDF pixels on the left side');
     const stageColor = await presentation.locator('.page-stage')
       .evaluate(element => getComputedStyle(element).backgroundColor);
     assert.equal(stageColor, 'rgb(0, 0, 0)');
@@ -426,9 +430,9 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       const sockets = record.__flashviewSockets ?? [];
       return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN &&
         document.querySelector('.connection.connected') !== null &&
-        (document.querySelector('.sent-row')?.textContent ?? '').includes('Shared — caching on classroom computer');
+        (document.querySelector('.student-file-card')?.textContent ?? '').includes('smoke.pdf');
     }, null, { timeout: 20000 });
-    assert.match(await student.locator('.sent-row').innerText(), /smoke\.pdf/);
+    assert.match(await student.locator('.student-file-card').first().innerText(), /smoke\.pdf/);
 
     // Drop exactly ONE student announcement while the WebSocket still reports OPEN.
     // The sender must not claim server acceptance; sync repairs the lost offer.
@@ -452,14 +456,14 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await student.locator('input[type=file]').setInputFiles({
       name: 'lost-announcement.pdf', mimeType: 'application/pdf', buffer: makePdf(),
     });
-    await student.locator('.sent-row').filter({ hasText: 'lost-announcement.pdf' })
-      .getByText('Sending announcement…').waitFor();
+    await student.locator('.student-file-card').filter({ hasText: 'lost-announcement.pdf' })
+      .getByText('Preparing to share…').waitFor();
     assert.equal(await host.locator('.document-row').count(), 1);
     // A tab returning online asks the server for its authoritative manifest.
     await student.evaluate(() => window.dispatchEvent(new Event('online')));
     await host.locator('.document-row').filter({ hasText: 'lost-announcement.pdf' }).waitFor({ timeout: 15000 });
-    await student.locator('.sent-row').filter({ hasText: 'lost-announcement.pdf' })
-      .getByText('Shared — caching on classroom computer').waitFor();
+    await student.locator('.student-file-card').filter({ hasText: 'lost-announcement.pdf' })
+      .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
     // The host refreshes all server-persisted submissions after missed broadcasts.
     await host.getByRole('button', { name: /Refresh submissions/ }).click();
     assert.equal(await host.locator('.document-row').count(), 2);

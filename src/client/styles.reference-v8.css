@@ -1,0 +1,437 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@500&family=Instrument+Serif:ital@0;1&display=swap');
+
+/* FlashView v8 — a faithful React styling port of the supplied HTML.
+   The projector / PDF canvas styles deliberately stay untouched. */
+:root { color-scheme:light; --reference-ink:#0b1230; --reference-mute:#5d6685;
+  --reference-page:#f3f7fe; --reference-line:#e0e7f5; font-family:"DM Sans",system-ui,sans-serif; }
+html,body { background:var(--reference-page); color:var(--reference-ink); }
+.premium-app { min-height:100vh; background:var(--reference-page); color:var(--reference-ink);
+  font-family:"DM Sans",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+.premium-app button,.premium-app input { font-family:inherit; }
+.premium-app button:focus-visible,.premium-app input:focus-visible,.premium-app a:focus-visible {
+  outline:3px solid #15161c; outline-offset:3px; }
+.premium-app .app-content { padding:0; margin:0; max-width:none; }
+.premium-app:has(.reference-welcome) .site-footer { display:none; }
+.premium-app .reference-serif { font-family:"Instrument Serif",Georgia,serif; font-weight:400; }
+
+/* The floating translucent pill nav sits over the gradient, like the original. */
+.premium-app:has(.reference-welcome) .site-header.reference-nav {
+  position:absolute; z-index:11; left:50%; top:30px; transform:translateX(-50%);
+  width:min(1080px,calc(100% - 74px)); max-width:none; min-width:0;
+  height:auto; margin:0; padding:9px 10px 9px 22px;
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  border:0; border-radius:99px;
+  background:rgba(255,255,255,.8);
+  box-shadow:0 8px 30px -12px rgba(14,20,40,.35);
+  backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+}
+.premium-app .reference-nav .brand { display:flex; gap:10px; color:#0b1230;
+  font-size:20px; font-weight:700; letter-spacing:-.03em; white-space:nowrap; }
+.premium-app .reference-logo-mark,.premium-app .reference-logo-mark svg { display:block; width:26px; height:26px; }
+.premium-app .reference-nav nav { display:flex; align-items:center; gap:30px;
+  color:#5d6685; font-size:15px; }
+.premium-app .reference-nav nav a { color:inherit; text-decoration:none; }
+.premium-app .reference-nav nav a:hover { color:#0b1230; }
+.premium-app .primary-button.reference-pill,.premium-app .outline-button.reference-pill {
+  min-height:0; padding:15px 24px; width:auto;
+  border-radius:99px; font-size:16px; font-weight:600; letter-spacing:0;
+  box-shadow:none; gap:8px; transform:none;
+}
+.premium-app .primary-button.reference-pill { background:#0e0f14; color:#fff; border:1.5px solid #0e0f14; }
+.premium-app .primary-button.reference-pill:hover:not(:disabled) { background:#262830; border-color:#262830; transform:none; }
+.premium-app .outline-button.reference-pill { border:1.5px solid #0b1230; color:#0b1230; background:#fff; }
+.premium-app .outline-button.reference-pill:hover:not(:disabled) { border-color:#0b1230; background:#f6f7fa; transform:none; }
+.premium-app .reference-nav .nav-start { padding:10px 18px; font-size:15px; white-space:nowrap; }
+
+/* Sky, clouds, hero and side-by-side actions are direct matches for v8. */
+.premium-app .welcome.reference-welcome { max-width:none; margin:0; padding:0 0 0; color:#0b1230; }
+.premium-app .reference-sky {
+  position:relative; isolation:isolate; overflow:hidden; margin:14px; min-height:calc(100vh - 28px);
+  border-radius:34px; padding:16px 18px 190px;
+  background:
+    radial-gradient(55% 45% at 82% 32%,rgba(120,230,190,.75),transparent 70%),
+    radial-gradient(50% 50% at 12% 48%,rgba(183,155,255,.7),transparent 70%),
+    radial-gradient(40% 30% at 55% 70%,rgba(255,176,200,.5),transparent 70%),
+    linear-gradient(180deg,#1f4fe8 0%,#4f88ff 42%,#a9c8ff 75%,#eaf2ff 100%);
+}
+.premium-app .reference-sky::before {
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E");
+  mix-blend-mode:soft-light; opacity:.8;
+}
+.premium-app .reference-sky::after { content:""; position:absolute; left:0; right:0; bottom:0; height:260px;
+  pointer-events:none; background:
+    radial-gradient(28% 70% at 12% 100%,#fff 40%,transparent 72%),
+    radial-gradient(30% 80% at 40% 108%,#fff 45%,transparent 72%),
+    radial-gradient(26% 70% at 68% 105%,#fff 40%,transparent 72%),
+    radial-gradient(30% 75% at 95% 100%,#fff 40%,transparent 72%); }
+.premium-app .reference-hero { position:relative; z-index:2; text-align:center; padding-top:76px; }
+.premium-app .reference-hero h1.reference-serif {
+  color:#fff; font-size:clamp(52px,7.6vw,112px); line-height:.94;
+  letter-spacing:-.025em; font-weight:400; max-width:11.5em;
+  margin:0 auto; text-shadow:0 2px 30px rgba(14,20,40,.25);
+}
+.premium-app .reference-actions {
+  position:relative; z-index:3; width:min(940px,100%); margin:44px auto 0;
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px;
+  text-align:left; padding:10px; border-radius:30px; background:#fff;
+  box-shadow:0 40px 90px -24px rgba(14,20,40,.55);
+}
+.premium-app .reference-pane {
+  display:flex; flex-direction:column; min-width:0; padding:26px 26px 24px;
+  border-radius:21px; background:#fff; color:#0b1230; border:0; box-shadow:none;
+}
+.premium-app .reference-pane+.reference-pane { background:#f5f6f9; }
+.premium-app .reference-pane-icon { margin-bottom:20px; }
+.premium-app .reference-pane-icon svg { width:56px; height:56px; display:block; }
+.premium-app .reference-pane h2.reference-serif {
+  margin:0 0 8px; font-size:36px; line-height:1; letter-spacing:-.02em;
+  color:#0b1230; font-weight:400;
+}
+.premium-app .reference-pane>p {
+  margin:0 0 20px; color:#5d6685; font-size:15px; line-height:1.5; max-width:23em;
+}
+.premium-app .reference-pane-bottom { margin-top:auto; display:flex; flex-direction:column; }
+.premium-app .reference-toggle {
+  position:relative; margin:0 0 14px; padding:12px 16px; border-radius:14px; border:0;
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  background:#f5f7fb; cursor:pointer;
+}
+.premium-app .reference-toggle strong,.premium-app .room-admission-status strong {
+  display:block; color:#0b1230; font-size:15px; font-weight:700; }
+.premium-app .reference-toggle small,.premium-app .room-admission-status small {
+  display:block; color:#5d6685; font-size:13px; }
+.premium-app .reference-toggle input { position:absolute; opacity:0; width:1px; height:1px; }
+.premium-app .reference-toggle:has(input:focus-visible) { outline:3px solid #15161c; }
+.premium-app .reference-switch { position:relative; display:block; flex:0 0 44px; width:44px; height:26px;
+  background:#cbd3e6; border-radius:99px; transition:background .2s; }
+.premium-app .reference-switch::after { content:""; position:absolute; top:3px; left:3px; width:20px; height:20px;
+  border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s; }
+.premium-app .reference-toggle input:checked+.reference-switch,.premium-app .reference-switch.is-on {
+  background:#15161c; }
+.premium-app .reference-toggle input:checked+.reference-switch::after,.premium-app .reference-switch.is-on::after {
+  left:21px; }
+.premium-app .reference-switch.visual-only { opacity:.85; }
+.premium-app .reference-pane .reference-pill { width:100%; margin-top:auto; }
+.premium-app .reference-join-form { display:flex; flex-direction:column; gap:0; margin-top:auto; }
+.premium-app .reference-join-form .reference-digits { display:grid; grid-template-columns:repeat(6,minmax(0,1fr));
+  gap:8px; margin-bottom:12px; }
+.premium-app .reference-join-form .reference-digits input,
+.premium-app .reference-join-form .reference-name-input {
+  border:1.5px solid #e0e7f5; background:#f8faff; border-radius:14px; color:#0b1230;
+  outline:none; box-shadow:none; height:auto; min-width:0; width:100%;
+}
+.premium-app .reference-join-form .reference-digits input {
+  padding:15px 0; text-align:center; font:500 24px "DM Mono",monospace; }
+.premium-app .reference-join-form .reference-name-input {
+  padding:15px 16px; text-align:left; font:400 16px "DM Sans",sans-serif; margin-bottom:12px; }
+.premium-app .reference-join-form input::placeholder { color:#5d6685; }
+.premium-app .reference-join-form input:focus { border-color:#15161c; background:#fff;
+  box-shadow:0 0 0 4px rgba(14,15,20,.1); }
+.premium-app .reference-join-form .reference-pill { width:100%; }
+
+/* Below-the-fold explanation, trust band and footer. */
+.premium-app .reference-section { max-width:1080px; margin:0 auto; padding:90px 22px 0; }
+.premium-app .reference-section h2.reference-serif { margin:0 0 36px; max-width:14em;
+  font-size:clamp(38px,5vw,62px); line-height:1; letter-spacing:-.02em; color:#0b1230; }
+.premium-app .reference-steps { display:grid; grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:18px; margin:0; padding:0; list-style:none; }
+.premium-app .reference-steps li { background:#fff; border-radius:26px; padding:26px;
+  box-shadow:0 20px 40px -30px rgba(14,20,40,.35); }
+.premium-app .reference-steps li svg { width:56px; height:56px; margin-bottom:34px; }
+.premium-app .reference-steps h3 { font-size:22px; letter-spacing:-.025em; margin:0 0 4px; }
+.premium-app .reference-steps p { margin:0; color:#5d6685; }
+.premium-app .reference-trust { display:grid; grid-template-columns:repeat(3,minmax(0,1fr));
+  padding:46px; background:#0e0f14; color:#fff; border-radius:30px; position:relative; overflow:hidden; }
+.premium-app .reference-trust>div { position:relative; padding:0 26px; }
+.premium-app .reference-trust>div+div { border-left:1px solid rgba(255,255,255,.2); }
+.premium-app .reference-trust>div:first-child { padding-left:0; }
+.premium-app .reference-trust h3 { color:#fff; font-size:24px; letter-spacing:-.02em; margin:0 0 6px; }
+.premium-app .reference-trust p { color:#fff; opacity:.8; margin:0; }
+.premium-app .reference-footer { max-width:1080px; margin:0 auto; padding:44px 22px 50px;
+  color:#5d6685; font-size:14px; display:flex; justify-content:space-between; gap:16px; }
+
+/* Host: v8 pastel full-window gradient, roomy white panels. */
+.premium-app.is-host-workspace { height:100vh; height:100dvh; min-height:0; overflow:hidden;
+  background:radial-gradient(50% 40% at 95% 0,#c5d9ff,transparent),
+   radial-gradient(45% 40% at 0 100%,rgba(205,190,255,.6),transparent),
+   radial-gradient(35% 30% at 60% 100%,rgba(170,240,210,.4),transparent),
+   linear-gradient(180deg,#e2ecff,#f6f9ff); }
+.premium-app.is-host-workspace .premium-workspace.reference-room {
+  flex:1 1 auto; min-height:0; width:100%; max-width:none; margin:0; padding:22px;
+  overflow:hidden; display:flex; background:transparent; }
+.premium-app .reference-room .workspace-split {
+  display:grid; width:100%; min-height:0; height:100%; min-width:0;
+  grid-template-columns:390px minmax(0,1fr); gap:22px; overflow:visible;
+}
+.premium-app .reference-room .workspace-left {
+  display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden;
+  gap:20px; padding:26px; border:1px solid #fff; border-radius:30px;
+  background:rgba(255,255,255,.82); color:#0b1230;
+  box-shadow:0 30px 60px -36px rgba(14,20,40,.4);
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+}
+.premium-app .reference-room .sidebar-brand {
+  flex:none; align-self:stretch; margin:4px 0 0; padding:0; color:#0e0f14;
+  font-size:42px; font-weight:700; letter-spacing:-.045em; line-height:1; text-align:center;
+}
+.premium-app .reference-room .premium-invite {
+  display:flex; flex-direction:column; gap:0; width:100%; margin:0; max-width:none;
+  padding:0; min-height:0; overflow:visible; background:transparent; border:0; box-shadow:none;
+}
+.premium-app .reference-room .qr-side { margin:0; padding:0; background:transparent; border:0; }
+.premium-app .reference-room .qr-plate {
+  width:100%; max-width:none; height:auto; aspect-ratio:1;
+  padding:18px; background:#fff; border:1px solid #e0e7f5; border-radius:22px;
+  box-shadow:none;
+}
+.premium-app .reference-room .qr-plate svg { width:100%; height:100%; }
+.premium-app .reference-room .invite-content { padding:0; width:100%; display:flex; flex-direction:column;
+  align-items:stretch; margin:0; }
+.premium-app .reference-room .room-code-label {
+  margin:18px 0 4px; text-align:center; color:#5d6685; font-size:14px;
+  font-weight:400; letter-spacing:0; }
+.premium-app .reference-room .room-code {
+  color:#0e0f14; text-align:center; font-size:64px; font-weight:600; line-height:1;
+  letter-spacing:.1em; padding-left:.1em; font-variant-numeric:tabular-nums; margin:0 0 20px; }
+.premium-app .reference-room .invite-actions { display:flex; gap:10px; margin:0; padding:0; }
+.premium-app .reference-room .invite-actions .reference-pill {
+  flex:1; min-width:0; width:auto; min-height:0; height:43px; padding:10px 10px;
+  color:#0b1230; border:1.5px solid #0b1230; font-size:15px;
+  background:#fff; border-radius:99px; white-space:nowrap; }
+.premium-app .reference-room .invite-actions .end-room-button {
+  background:#fff; border-color:#0b1230; color:#0b1230; }
+.premium-app .reference-room .room-admission-status {
+  display:flex; justify-content:space-between; align-items:center; gap:16px;
+  margin:0; padding:12px 16px; border:0; border-radius:14px; text-align:left;
+  background:#f5f7fb; color:#0b1230; font-size:15px; }
+.premium-app .reference-room .sidebar-participants {
+  display:flex; flex:1 1 auto; min-height:0; flex-direction:column; padding:0;
+  margin:8px 0 0; border:0; background:transparent; }
+.premium-app .reference-room .sidebar-participants-heading { padding:0 0 8px; }
+.premium-app .reference-room .sidebar-participants-heading h2 { color:#5d6685; font-size:14px;
+  font-weight:400; letter-spacing:0; }
+.premium-app .reference-room .sidebar-participants-scroll {
+  padding:0; overflow-y:auto; scrollbar-width:thin; min-height:0; }
+.premium-app .reference-room .sidebar-participants-empty { margin:8px 0; color:#5d6685; font-size:14px; }
+.premium-app .reference-room .sidebar-approval,.premium-app .reference-room .participant-row {
+  padding:6px 0; margin:0; border:0; background:transparent; color:#0b1230; gap:10px;
+  animation:reference-pop .4s; }
+.premium-app .reference-room .participant-avatar { flex:0 0 30px; width:30px; height:30px; display:grid;
+  place-items:center; border-radius:50%; background:#e4e8f0; color:#0e0f14; font-size:13px; font-weight:700; }
+.premium-app .reference-room .participant-info strong { color:#0b1230; font-size:15px; font-weight:500; }
+.premium-app .reference-room .participant-info small { color:#5d6685; font-size:12px; }
+.premium-app .reference-room .mini-accept { background:#0e0f14; color:#fff; border-radius:99px; padding:8px 13px; }
+.premium-app .reference-room .mini-reject { color:#5d6685; background:#fff; border:1px solid #e2e6ef; }
+@keyframes reference-pop {from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+.premium-app .reference-room .workspace-right {
+  padding:26px 28px; min-width:0; min-height:0;
+  overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; scrollbar-gutter:auto;
+  background:rgba(255,255,255,.62); backdrop-filter:blur(14px); color:#0b1230;
+  border:1px solid rgba(255,255,255,.9); border-radius:30px;
+  box-shadow:0 30px 60px -40px rgba(14,20,40,.35);
+}
+.premium-app .reference-room .document-column {
+  width:100%; max-width:none; min-height:100%; margin:0; padding:0;
+  display:flex; flex-direction:column; }
+.premium-app .reference-room .list-heading { margin:0 0 30px; padding:0; display:flex;
+  align-items:flex-end; justify-content:space-between; gap:14px; }
+.premium-app .reference-room .list-heading-title h1.reference-serif {
+  font-family:"Instrument Serif",Georgia,serif; color:#0b1230; font-size:78px;
+  font-weight:400; line-height:.9; letter-spacing:-.03em; margin:0; }
+.premium-app .reference-room .list-heading-title h1 sup {
+  position:relative; top:10px; display:inline-block; vertical-align:top; margin-left:10px;
+  padding:3px 11px; background:#0e0f14; border:0; border-radius:99px;
+  color:#fff; font:600 16px "DM Sans",sans-serif; letter-spacing:0; }
+.premium-app .reference-room-tools { display:flex; align-items:center; gap:10px; }
+.premium-app .reference-view-selector { display:flex; background:#fff; border:1px solid #e2e6ef;
+  border-radius:12px; padding:3px; }
+.premium-app .reference-view-selector button {
+  display:grid; place-items:center; width:36px; height:32px; border:0; border-radius:9px;
+  background:transparent; color:#5d6685; padding:0; }
+.premium-app .reference-view-selector button.is-active { background:#eceff5; color:#0b1230; }
+.premium-app .reference-view-selector svg { display:block; width:16px; height:16px;
+  fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; }
+.premium-app .reference-live.connection {
+  display:flex; align-items:center; gap:9px; padding:10px 16px; border:0; border-radius:99px;
+  background:rgba(255,255,255,.85); color:#0b1230; font-size:14px; font-weight:500;
+  box-shadow:0 6px 20px -10px rgba(14,20,40,.4); white-space:nowrap; }
+.premium-app .reference-live.connection .status-dot {
+  width:9px; height:9px; border:0; border-radius:50%; background:#2fcf91;
+  box-shadow:0 0 0 0 rgba(47,207,145,.6); animation:reference-pulse 2s infinite; }
+.premium-app .reference-live.connection:not(.connected) .status-dot { background:#e0a062; animation:none; }
+@keyframes reference-pulse {70%{box-shadow:0 0 0 10px rgba(47,207,145,0)}100%{box-shadow:0 0 0 0 rgba(47,207,145,0)}}
+
+.premium-app .reference-room .workspace-right .document-list.document-grid {
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,210px),1fr));
+  gap:14px; padding:0; margin:0; border:0; border-radius:0; background:transparent;
+  overflow:visible; align-items:start; }
+.premium-app .reference-room .workspace-right .document-grid .document-card {
+  position:relative; display:flex; flex-direction:column; width:100%; min-width:0;
+  height:auto; aspect-ratio:auto; min-height:0; gap:0; padding:0; margin:0;
+  border:1px solid #e2e6ef; border-radius:16px; background:#fff; overflow:hidden;
+  box-shadow:none; animation:reference-pop .5s; }
+.premium-app .reference-room .workspace-right .document-grid .document-card:hover {
+  border-color:#c5ccdb; background:#fff; transform:none; box-shadow:none; }
+.premium-app .reference-room .document-card-visual {
+  position:relative; width:100%; flex:0 0 118px; height:118px; min-height:118px; background:#f4f5f8; }
+.premium-app .reference-room .document-thumb {
+  position:absolute; inset:0; display:grid; place-items:center; background:#f4f5f8; }
+.premium-app .reference-room .document-thumb-image { object-fit:contain; }
+.premium-app .reference-room .document-thumb-placeholder { background:transparent; display:grid; place-items:center; }
+.premium-app .reference-room .document-pdf-symbol {
+  width:auto; height:auto; min-height:0; padding:0; display:grid; place-items:center;
+  background:transparent; color:#0e0f14; border:0; box-shadow:none; border-radius:0; }
+.premium-app .reference-room .document-pdf-symbol:after { content:none; }
+.premium-app .reference-room .document-pdf-symbol svg { display:block; height:60px; width:auto; max-width:75px; }
+.premium-app .reference-room .document-thumb-spinner { border-top-color:#5d6685; border-color:#dce2ed; border-top-color:#15161c; }
+.premium-app .reference-room .document-card-info {
+  flex:none; height:auto; min-height:0; gap:0; padding:14px 16px 12px;
+  background:#fff; border:0; color:#0b1230; }
+.premium-app .reference-room .document-card-info h3 {
+  width:100%; font-size:14.5px; line-height:1.3; font-weight:600; letter-spacing:-.01em;
+  color:#0b1230; margin:0; padding:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.premium-app .reference-room .document-card-info p { display:flex; gap:6px; margin:3px 0 0; color:#5d6685; font-size:12.5px; }
+.premium-app .reference-room .document-card-info p span:first-child { color:#5d6685; }
+.premium-app .reference-room .document-card .cache-ring {
+  /* Preserve the progressbar for assistive technology and existing transfer tests.
+     Reference v8 paints active progress within the action button, not a corner ring. */
+  position:absolute; width:1px; height:1px; clip-path:inset(50%); overflow:hidden;
+  white-space:nowrap; padding:0; border:0; opacity:0; pointer-events:none; }
+.premium-app .reference-room .reference-card-action {
+  position:relative; inset:auto; flex:none; display:flex; align-items:center; justify-content:center;
+  gap:8px; overflow:hidden; width:calc(100% - 24px); min-height:42px; height:42px;
+  margin:0 12px 12px; padding:0 9px; background:#f1f3f8; border:1px solid #cfd5e3;
+  border-radius:99px; color:#0b1230; text-align:center; cursor:pointer;
+  box-shadow:none; font:600 14px "DM Sans",sans-serif;
+  transition:background .25s,border-color .2s; }
+.premium-app .reference-room .reference-card-action::before {
+  content:""; position:absolute; top:0; bottom:0; left:0; width:var(--p,0%);
+  background:#dfe5f1; transition:width .25s linear,opacity .3s; pointer-events:none; }
+.premium-app .reference-room .reference-card-action>span {
+  position:relative; z-index:1; display:inline; color:inherit; background:none; border:0;
+  opacity:1; transform:none; padding:0; min-height:0; font-size:14px; font-weight:600;
+  box-shadow:none; transition:none; }
+.premium-app .reference-room .reference-card-action.busy { color:#5d6685; cursor:progress; }
+.premium-app .reference-room .reference-card-action.ready { background:#fff; }
+.premium-app .reference-room .reference-card-action.ready::before { opacity:0; }
+.premium-app .reference-room .reference-card-action.ready:hover:not(:disabled) {
+  border-color:#0e0f14; background:#f6f7fa; }
+.premium-app .reference-room .reference-card-action:disabled { cursor:default; opacity:1; }
+.premium-app .reference-room .reference-card-action.document-card-open {
+  /* The former PDF action was an absolute overlay; it is a real footer button now. */
+  position:relative; top:auto; left:auto; right:auto; bottom:auto; }
+.premium-app .reference-room .workspace-right .document-grid .empty-list {
+  grid-column:1/-1; width:100%; min-height:0; margin:0; padding:70px 30px;
+  display:flex; flex-direction:column; justify-content:center; align-items:center;
+  border:1.5px dashed #b9c8ea; border-radius:28px; background:rgba(255,255,255,.5); }
+.premium-app .reference-room .empty-list>svg { width:84px; height:84px; margin:0 auto 14px; }
+.premium-app .reference-room .empty-list h3 { color:#0b1230; font-size:20px; font-weight:700; margin:0; }
+.premium-app .reference-room .empty-list p { color:#5d6685; font-size:14px; margin:0; }
+.premium-app .reference-room .reference-room-hint { margin:auto 0 0; padding-top:30px;
+  color:#5d6685; font-size:14px; }
+
+/* Reference v8 list mode — a proper alternate layout, no change to file order. */
+.premium-app .reference-room .workspace-right .document-list.document-grid.is-list {
+  display:grid; grid-template-columns:minmax(0,1fr); gap:0;
+  border:1px solid #e2e6ef; border-radius:16px; overflow:hidden; background:#fff; }
+.premium-app .reference-room .workspace-right .document-grid.is-list .document-card {
+  display:flex; flex-direction:row; align-items:center; width:100%; min-height:0;
+  border:0; border-bottom:1px solid #eef1f6; border-radius:0;
+  padding:10px 14px 10px 18px; gap:14px; }
+.premium-app .reference-room .workspace-right .document-grid.is-list .document-card:last-child { border-bottom:0; }
+.premium-app .reference-room .document-grid.is-list .document-card-visual {
+  flex:0 0 40px; width:40px; height:40px; min-height:40px; background:transparent; }
+.premium-app .reference-room .document-grid.is-list .document-thumb { background:transparent; }
+.premium-app .reference-room .document-grid.is-list .document-pdf-symbol svg { height:32px; }
+.premium-app .reference-room .document-grid.is-list .document-card-info {
+  flex:1 1 auto; min-width:0; padding:0; background:transparent; }
+.premium-app .reference-room .document-grid.is-list .reference-card-action {
+  flex:0 0 158px; width:158px; height:42px; margin:0; }
+.premium-app .reference-room .workspace-right .document-grid.is-list .empty-list {
+  border:0; background:transparent; }
+
+/* Student interface did not exist in v8. Reframe the existing functional phone
+   upload workspace in the same off-white, cobalt and ink design vocabulary. */
+.premium-app.is-student-room { background:#f3f7fe; }
+.premium-app.is-student-room .student-drive { background:#f3f7fe; color:#0b1230; }
+.premium-app.is-student-room .student-drive-header { background:rgba(255,255,255,.9);
+  border-color:#e0e7f5; }
+.premium-app.is-student-room .student-drive-logo { color:#0e0f14; }
+.premium-app.is-student-room .student-drive-room { color:#5d6685; }
+.premium-app.is-student-room .student-leave-button { color:#0b1230; background:#fff;
+  border:1px solid #d0d8e8; border-radius:99px; }
+.premium-app.is-student-room .student-drive-empty { color:#0b1230; }
+.premium-app.is-student-room .student-drive-empty h2 { font-family:"Instrument Serif",Georgia,serif;
+  color:#0b1230; font-size:40px; font-weight:400; }
+.premium-app.is-student-room .student-drive-empty p { color:#5d6685; }
+.premium-app.is-student-room .student-add-fab { background:#0e0f14; color:#fff; border-radius:99px; }
+.premium-app.is-student-room .student-add-fab:hover { background:#262830; }
+
+/* Mobile and reduced-motion implementation follow the supplied breakpoints. */
+@media(max-width:900px){
+ .premium-app .reference-nav nav { display:none; }
+ .premium-app .reference-actions,.premium-app .reference-steps,.premium-app .reference-trust { grid-template-columns:1fr; }
+ .premium-app .reference-trust>div+div { border:0; padding:20px 0 0; }
+ .premium-app .reference-trust>div { padding:0; }
+ .premium-app .reference-sky { padding-bottom:140px; }
+ .premium-app .reference-room .workspace-split { grid-template-columns:minmax(0,1fr); gap:20px; }
+ .premium-app .reference-room .list-heading-title h1.reference-serif { font-size:56px; }
+ .premium-app.is-host-workspace { height:auto; min-height:100dvh; overflow:visible; }
+ .premium-app.is-host-workspace .app-content { display:block; overflow:visible; }
+ .premium-app.is-host-workspace .premium-workspace.reference-room { display:block; overflow:visible; height:auto; }
+ .premium-app .reference-room .workspace-split { display:grid; height:auto; overflow:visible; }
+ .premium-app .reference-room .workspace-left { overflow:visible; }
+ .premium-app .reference-room .sidebar-participants { flex:initial; }
+ .premium-app .reference-room .sidebar-participants-scroll { max-height:260px; overflow-y:auto; }
+ .premium-app .reference-room .workspace-right { overflow:visible; }
+}
+@media(max-width:600px) {
+ .premium-app:has(.reference-welcome) .site-header.reference-nav { top:23px; width:calc(100% - 44px);
+   padding:8px 9px 8px 14px; gap:8px; }
+ .premium-app .reference-nav .brand { font-size:17px; }
+ .premium-app .reference-nav .reference-logo-mark,.premium-app .reference-nav .reference-logo-mark svg { width:22px; height:22px; }
+ .premium-app .reference-nav .nav-start { padding:9px 12px; font-size:13px; }
+ .premium-app .reference-sky { margin:8px; border-radius:25px; padding:16px 11px 120px; min-height:calc(100vh - 16px); }
+ .premium-app .reference-hero { padding-top:100px; }
+ .premium-app .reference-hero h1.reference-serif { font-size:clamp(49px,13.4vw,72px); }
+ .premium-app .reference-actions { margin:32px auto 0; border-radius:23px; gap:5px; padding:7px; }
+ .premium-app .reference-pane { padding:22px 19px; border-radius:18px; }
+ .premium-app .reference-pane h2.reference-serif { font-size:33px; }
+ .premium-app .reference-pane-icon { margin-bottom:13px; }
+ .premium-app .reference-pane-icon svg { width:49px; height:49px; }
+ .premium-app .reference-section { padding:65px 18px 0; }
+ .premium-app .reference-trust { padding:29px; }
+ .premium-app .reference-footer { padding:30px 18px; flex-direction:column; }
+ .premium-app.is-host-workspace .premium-workspace.reference-room { padding:12px; }
+ .premium-app .reference-room .workspace-left { padding:22px; border-radius:24px; }
+ .premium-app .reference-room .sidebar-brand { font-size:38px; }
+ .premium-app .reference-room .qr-plate { max-width:320px; margin:auto; }
+ .premium-app .reference-room .room-code { font-size:48px; }
+ .premium-app .reference-room .workspace-right { padding:20px; border-radius:24px; }
+ .premium-app .reference-room .list-heading { align-items:flex-start; }
+ .premium-app .reference-room .list-heading-title h1.reference-serif { font-size:56px; }
+ .premium-app .reference-live.connection { display:none; }
+ .premium-app .reference-room .workspace-right .document-list.document-grid {
+   grid-template-columns:repeat(auto-fill,minmax(min(100%,155px),1fr)); gap:12px; }
+ .premium-app .reference-room .document-grid.is-list .reference-card-action { flex-basis:110px; width:110px; font-size:12px; }
+ .premium-app .reference-room .reference-card-action>span { font-size:12px; }
+}
+@media(prefers-reduced-motion:reduce) {
+ .premium-app *, .premium-app *::before, .premium-app *::after { animation:none!important; transition:none!important; }
+}
+
+/* The HTML reference assumes a tall display; classroom projectors/laptops can
+   be only 600–800px high. Keep a clickable participant list rather than letting
+   the large QR card consume all available room. Normal-height layout is exact. */
+@media (min-width:901px) and (max-height:850px) {
+ .premium-app .reference-room .workspace-left { gap:16px; padding:17px 24px; }
+ .premium-app .reference-room .sidebar-brand { font-size:38px; }
+ .premium-app .reference-room .qr-plate { width:min(100%,232px); max-width:232px; margin:auto; padding:12px; }
+ .premium-app .reference-room .room-code-label { margin:10px 0 3px; font-size:12px; }
+ .premium-app .reference-room .room-code { font-size:48px; margin:0 0 12px; }
+ .premium-app .reference-room .room-admission-status { padding:8px 12px; }
+ .premium-app .reference-room .sidebar-participants { margin:0; }
+ .premium-app .reference-room .sidebar-participants-scroll { flex:1 1 auto; min-height:60px; }
+}

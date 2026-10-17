@@ -6,6 +6,7 @@ import './styles.css';
 import './styles.refined.css';
 import './styles.immersive.css';
 import './styles.premium.css';
+import './styles.reference-v8.css';
 
 createRoot(document.getElementById('root')!).render(
   window.location.pathname === '/present' ? <Presenter/> : <React.StrictMode><App/></React.StrictMode>,

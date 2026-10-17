@@ -6,6 +6,9 @@ import { formatBytes } from './pdf/Viewer';
 import { makeFirstPagePreview } from './pdf/firstPagePreview';
 import { PresentationHost } from './presentation';
 import { DocumentCard } from './DocumentCard';
+import { StudentTransferCard } from './StudentTransferCard';
+import { TransferPill } from './TransferPill';
+import { summarizeTransfers } from './transferProgress';
 import { cleanExpiredRoomCaches, type CacheProgress } from './pdf/roomCache';
 import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
@@ -65,6 +68,12 @@ export function App() {
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
   const [cacheProgress, setCacheProgress] = useState<Record<string, CacheProgress>>({});
+  const [studentCacheProgress, setStudentCacheProgress] = useState<Record<string, CacheProgress>>({});
+  const [phonePreviews, setPhonePreviews] = useState<Record<string, string>>({});
+  const [hostAvailable, setHostAvailable] = useState(true);
+  const [pillDismissed, setPillDismissed] = useState(false);
+  const hostFilesRef = useRef<PdfManifest[]>([]);
+  const progressSentRef = useRef(new Map<string, { bytes: number; at: number }>());
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
   const previewLookups = useRef(new Set<string>());
   const previewRoom = useRef(initialSession?.code ?? '');
@@ -77,6 +86,20 @@ export function App() {
   const [switchingRoom, setSwitchingRoom] = useState(false);
   const [switchCode, setSwitchCode] = useState('');
   const [copied, setCopied] = useState(false);
+  const transferSummary = summarizeTransfers(sentFiles, studentCacheProgress);
+  const studentNeedsConnection = socketStatus !== 'connected' || !hostAvailable || joinState === 'pending';
+  const showTransferPill = mode === 'student' && (
+    (transferSummary.count > 0 && (!transferSummary.complete || !pillDismissed)) ||
+    ((joinState === 'accepted' || joinState === 'pending') && studentNeedsConnection && !transferSummary.complete)
+  );
+
+  useEffect(() => {
+    if (mode !== 'student' || !transferSummary.complete) return;
+    // A completion is acknowledged by the classroom cache and should be
+    // visible briefly before the dock retires itself.
+    const timeout = setTimeout(() => setPillDismissed(true), 3200);
+    return () => clearTimeout(timeout);
+  }, [mode, transferSummary.complete, transferSummary.count]);
 
   useEffect(() => {
     // Abandoned rooms expire automatically; delete their old browser-stored PDFs
@@ -91,9 +114,12 @@ export function App() {
         setCacheProgress(existing => ({
           ...existing, [file.fileId]: retainNewestProgress(existing[file.fileId], progress),
         }));
+        if (socket.connected && progress.bytes > 0) socket.send({
+          type: 'cache.progress', fileId: file.fileId, bytes: progress.bytes,
+        });
       }).catch(() => {});
     }
-  }, [hostSession?.code, documents, presentation]);
+  }, [hostSession?.code, documents, presentation, socket]);
 
   // The host already stores each phone-produced first-page JPEG for the presenter.
   // Reload thumbnails from that cache when a room recovers, with no new transfer.
@@ -167,6 +193,7 @@ export function App() {
       perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
       if (!filesOnPhone.current.has(fileId)) return;
       firstPageImages.current.set(fileId, url);
+      setPhonePreviews(current => ({ ...current, [fileId]: url }));
       sendPreview(fileId, url);
     }).catch(() => {
       // If preview generation fails, emit an explicit error sample.
@@ -182,7 +209,10 @@ export function App() {
   useEffect(() => {
     socket.onStatus = status => {
       setSocketStatus(status);
-      if (status === 'connected') presentation.resume();
+      if (status === 'connected') {
+        presentation.resume();
+        if (modeRef.current === 'student') socket.send({ type: 'file.sync' });
+      }
       // Only after a genuine drop is a preview eligible for retransmission.
       if (status === 'disconnected' && modeRef.current === 'student') {
         previewDelivered.current.clear();
@@ -192,6 +222,16 @@ export function App() {
       setCacheProgress(existing => ({
         ...existing, [progress.fileId]: retainNewestProgress(existing[progress.fileId], progress),
       }));
+      // Only the classroom's completed IndexedDB writes count as uploaded.
+      // The relay forwards this small acknowledgement to the file's owner.
+      if (modeRef.current === 'host' && socket.connected) {
+        const now = performance.now();
+        const last = progressSentRef.current.get(progress.fileId);
+        if (!last || progress.complete || now - last.at >= 850) {
+          socket.send({ type: 'cache.progress', fileId: progress.fileId, bytes: progress.bytes });
+          progressSentRef.current.set(progress.fileId, { bytes: progress.bytes, at: now });
+        }
+      }
       const now = performance.now();
       const sample = transferSamples.current.get(progress.fileId);
       if (!sample) {
@@ -244,6 +284,7 @@ export function App() {
         setStudents(Array.isArray(message.students) ? message.students as StudentInfo[] : []);
         const files = Array.isArray(message.files) ? message.files as PdfManifest[] : [];
         setDocuments(files);
+        hostFilesRef.current = files;
         for (const file of files) presentation.queue(file);
         setError('');
       }
@@ -257,12 +298,45 @@ export function App() {
         const file = message.file as PdfManifest;
         if (!file?.fileId) return;
         setDocuments(existing => [...existing.filter(f => f.fileId !== file.fileId), file]);
+        hostFilesRef.current = [...hostFilesRef.current.filter(f => f.fileId !== file.fileId), file];
         presentation.queue(file);
+      }
+      if (type === 'cache.progress.request' && modeRef.current === 'host') {
+        // Fresh snapshots after a phone rejoins; old completed transfers stay done.
+        for (const file of hostFilesRef.current) {
+          void presentation.progress(file).then(progress => {
+            if (socket.connected && progress.bytes > 0) socket.send({
+              type: 'cache.progress', fileId: file.fileId, bytes: progress.bytes,
+            });
+          }).catch(() => {});
+        }
+      }
+      if (type === 'cache.progress' && modeRef.current === 'student' &&
+          typeof message.fileId === 'string' && Number.isSafeInteger(message.bytes) &&
+          Number.isSafeInteger(message.size)) {
+        const local = filesOnPhone.current.get(message.fileId);
+        if (local && local.file.size === message.size && message.bytes >= 0 &&
+            message.bytes <= local.file.size) {
+          const update: CacheProgress = {
+            fileId: message.fileId, size: local.file.size, bytes: message.bytes,
+            complete: message.complete === true && message.bytes === local.file.size,
+          };
+          setStudentCacheProgress(current => ({
+            ...current, [update.fileId]: retainNewestProgress(current[update.fileId], update),
+          }));
+        }
+      }
+      if (type === 'host.offline') setHostAvailable(false);
+      if (type === 'host.online') {
+        setHostAvailable(true);
+        if (modeRef.current === 'student') socket.send({ type: 'file.sync' });
       }
       if (type === 'join.pending') setJoinState('pending');
       if (type === 'join.accepted' || type === 'join.resumed') {
         setJoinState('accepted');
+        setHostAvailable(true);
         setError('');
+        socket.send({ type: 'file.sync' });
         if (Array.isArray(message.files)) reconcileFiles(message.files as PdfManifest[]);
         else socket.send({ type: 'file.sync' });
       }
@@ -319,7 +393,6 @@ export function App() {
         }
       }
       if (type === 'join.rejected') { setJoinState('rejected'); setError('The teacher declined this connection.'); }
-      if (type === 'host.offline') setError('The teacher disconnected. Waiting for the host to return.');
       if (type === 'file.pending' || type === 'file.approved' || type === 'file.rejected') {
         const status = type === 'file.pending' ? 'pending' : type === 'file.approved' ? 'approved' : 'rejected';
         const id = String(message.fileId);
@@ -403,6 +476,8 @@ export function App() {
       setDocuments([]);
       setCacheProgress({});
       setDownloadSpeed({});
+      hostFilesRef.current = [];
+      progressSentRef.current.clear();
       transferSamples.current.clear();
       presentation.setRoom(newSession.code);
       socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });
@@ -421,6 +496,10 @@ export function App() {
     previewDelivered.current.clear();
     previewFailed.current.clear();
     setSentFiles([]);
+    setStudentCacheProgress({});
+    setPhonePreviews({});
+    setPillDismissed(false);
+    setHostAvailable(true);
     modeRef.current = 'student';
     setMode('student');
     const key = joinCode.trim();
@@ -450,9 +529,9 @@ export function App() {
       filesOnPhone.current.set(fileId, entry);
       perf.mark('offer:' + fileId);
       setSentFiles(current => [...current, { fileId, name: file.name, size: file.size, status: 'announcing' }]);
-      if (!socket.connected) {
-        setError('You are offline. The PDF is saved in this tab and will be announced when the connection returns.');
-      } else offerLocalFile(fileId, entry);
+      setPillDismissed(false);
+      if (!socket.connected || !hostAvailable) socket.wake();
+      else offerLocalFile(fileId, entry);
     }
   }
 
@@ -528,6 +607,11 @@ export function App() {
       setDocuments([]);
       setCacheProgress({});
       setDownloadSpeed({});
+      hostFilesRef.current = [];
+      progressSentRef.current.clear();
+      setStudentCacheProgress({});
+      setPhonePreviews({});
+      setPillDismissed(false);
       setJoinDialogOpen(false);
       setJoinCode(identifier);
       setJoinState('idle');

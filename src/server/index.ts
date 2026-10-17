@@ -184,10 +184,16 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
       const file = typeof msg.fileId === 'string' ? room.files.get(msg.fileId) : undefined;
       const bytes = msg.bytes;
       if (file && Number.isSafeInteger(bytes) && Number(bytes) >= 0 && Number(bytes) <= file.size) {
+        // Retain tiny progress METADATA with the file manifest, so a phone
+        // that misses a live event can recover via file.sync on reconnect.
+        // Only the authenticated classroom host can publish this value.
+        const next = msg.snapshot === true ? Number(bytes) :
+          Math.max(file.cachedBytes ?? 0, Number(bytes));
+        file.cachedBytes = next;
         const student = room.students.get(file.ownerId);
         if (student && student.approved) send(student.ws, {
-          type: 'cache.progress', fileId: file.fileId, bytes: Number(bytes),
-          size: file.size, complete: Number(bytes) === file.size,
+          type: 'cache.progress', fileId: file.fileId, bytes: next,
+          size: file.size, complete: next === file.size,
         });
       }
       return;

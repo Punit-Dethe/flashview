@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-  MAX_PDF_BYTES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
+  MAX_FILE_BYTES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
 } from '../shared/protocol';
 
@@ -321,7 +321,7 @@ export class ClassroomRoom extends DurableObject<Env> {
             !Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
             Number(begin) < 0 || Number(end) <= Number(begin) || Number(end) > file.size ||
             Number(end) - Number(begin) > MAX_RANGE_BYTES || this.ranges.size >= 48) {
-          return void send(ws, { type: 'range.error', requestId, message: 'Invalid or unavailable PDF range' });
+          return void send(ws, { type: 'range.error', requestId, message: 'Invalid or unavailable file range' });
         }
         const student = this.student(file.ownerId);
         if (!student || !student.peer.approved) {
@@ -361,13 +361,13 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
     if (msg.type === 'file.offer') {
       if (!validId(msg.fileId) || !Number.isSafeInteger(msg.size) ||
-          Number(msg.size) < 1 || Number(msg.size) > MAX_PDF_BYTES ||
+          Number(msg.size) < 1 || Number(msg.size) > MAX_FILE_BYTES ||
           [...this.files.values()].filter(f => f.ownerId === peer.id).length >= 10 &&
             !this.files.has(msg.fileId)) {
-        return void send(ws, { type: 'error', message: 'Invalid PDF or file limit reached' });
+        return void send(ws, { type: 'error', message: 'Invalid file size or room file limit reached' });
       }
       const name = cleanText(msg.name, 130);
-      if (!name.toLowerCase().endsWith('.pdf')) return void send(ws, { type: 'error', message: 'PDF files only' });
+      if (!name || name === '.' || name === '..') return void send(ws, { type: 'error', message: 'File name required' });
       const existing = this.files.get(msg.fileId);
       if (existing) {
         if (existing.status === 'pending' && peer.approved) {

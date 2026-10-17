@@ -217,15 +217,14 @@ html, body { background: var(--canvas); }
 .premium-app .simple-state { background: #1a1b21; border-color: #383942; }
 .premium-app .waiting-card h2 { color: #f0f0f5; }
 
-/* Room workspace v2 — pinned invitation on the left, independently scrollable documents.
-   There is deliberately no global page scroll when a desktop classroom is open. */
+/* FlashView room workspace / Full-height utility sidebar, zero page chrome. */
 .premium-app.is-host-workspace {
   height: 100vh;
   height: 100dvh;
   min-height: 0;
   overflow: hidden;
+  background: #101115;
 }
-.premium-app.is-host-workspace .site-header { flex: 0 0 66px; }
 .premium-app.is-host-workspace .site-footer { display: none; }
 .premium-app.is-host-workspace .app-content {
   display: flex;
@@ -235,277 +234,360 @@ html, body { background: var(--canvas); }
   overflow: hidden;
 }
 .premium-app.is-host-workspace .premium-workspace {
-  display: flex;
-  flex-direction: column;
   flex: 1 1 auto;
-  width: 100%;
   min-height: 0;
-  max-width: 1320px;
-  margin: 0 auto;
-  padding: 0 29px 0;
-}
-.premium-app .workspace-topline {
-  flex: 0 0 auto;
-  padding: 19px 0 17px;
-  border-bottom: 1px solid #282a31;
-}
-.premium-app .workspace-live-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: #aab5b1;
-  font-size: 11px;
-  font-weight: 520;
+  display: flex;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
 }
 .premium-app .workspace-split {
   display: grid;
-  grid-template-columns: minmax(302px, 348px) minmax(0, 1fr);
-  gap: clamp(30px, 4vw, 63px);
-  flex: 1 1 auto;
+  grid-template-columns: clamp(314px, 27.5vw, 380px) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
   min-height: 0;
+  min-width: 0;
+  gap: 0;
   overflow: hidden;
 }
 .premium-app .workspace-left {
+  min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  min-height: 0;
   overflow: hidden;
-  padding: 27px 0 24px;
-}
-.premium-app .workspace-invite-heading { flex: 0 0 auto; }
-.premium-app .workspace-invite-heading .eyebrow {
-  font-size: 10px;
-  letter-spacing: .12em;
-  color: #a9abb9;
-}
-.premium-app .workspace-invite-heading h1 {
-  font-size: clamp(26px, 2.55vw, 35px);
-  line-height: 1.18;
-  font-weight: 585;
-  letter-spacing: -.055em;
-  color: #f4f4f8;
-  margin: 11px 0 10px;
-}
-.premium-app .workspace-invite-heading p {
-  color: #898c9b;
-  font-size: 12px;
-  line-height: 1.62;
-  max-width: 315px;
-  margin: 0;
+  padding: 29px 26px 0;
+  background: #17181d;
+  border-right: 1px solid #303139;
 }
 .premium-app .premium-invite {
+  flex: 0 0 auto;
+  width: 100%;
+  align-self: stretch;
   display: flex;
   flex-direction: column;
-  align-self: stretch;
-  width: 100%;
-  flex: 0 0 auto;
-  min-height: 0;
-  margin-top: 23px;
+  margin: 0;
   padding: 0;
-  border: 1px solid #32343d;
-  border-radius: 16px;
-  background: linear-gradient(160deg,#1e2027,#1a1b21);
-  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 0;
+  overflow: visible;
 }
 .premium-app .qr-side {
+  padding: 0;
+  margin: 0 0 20px;
+  background: transparent;
+  border: none;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
   align-items: center;
-  gap: 12px;
-  border-left: none;
-  border-bottom: 1px solid #30313a;
-  background: rgba(255,255,255,.016);
-  padding: 21px 20px 16px;
+  justify-content: center;
 }
 .premium-app .qr-plate {
-  width: min(100%, 216px);
+  display: grid;
+  place-items: center;
+  width: min(100%, 248px);
   height: auto;
   aspect-ratio: 1;
-  padding: 12px;
-  border-radius: 13px;
+  padding: 13px;
   margin: 0;
-  background: #fff;
+  background: white;
+  border: none;
+  border-radius: 13px;
+  box-shadow: 0 6px 28px rgba(0,0,0,.16);
 }
 .premium-app .qr-plate svg { width: 100%; height: 100%; display: block; }
-.premium-app .qr-side > span {
-  color: #9293a0;
-  font-size: 10px;
-  letter-spacing: .105em;
-}
 .premium-app .invite-content {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 20px 21px 19px;
+  padding: 0 2px;
+  margin: 0;
   min-width: 0;
 }
 .premium-app .room-code-label {
   text-align: center;
-  color: #9b9ba8;
+  color: #898b98;
   font-size: 10px;
-  letter-spacing: .14em;
+  letter-spacing: .13em;
+  font-weight: 590;
 }
 .premium-app .room-code {
-  color: #f6f6fa;
+  font-size: 47px;
+  font-weight: 570;
   text-align: center;
-  font-size: clamp(39px,3.2vw,50px);
-  line-height: 1.14;
-  font-weight: 545;
-  letter-spacing: .14em;
-  margin: 7px 0 18px;
+  line-height: 1.18;
+  color: #f4f4f7;
+  letter-spacing: .11em;
   font-variant-numeric: tabular-nums;
+  margin: 7px 0 19px;
 }
 .premium-app .invite-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(0,1fr);
+  gap: 9px;
   padding: 0;
   margin: 0;
 }
 .premium-app .invite-actions .primary-button,
 .premium-app .invite-actions .outline-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   min-width: 0;
-  font-size: 11px;
+  min-height: 42px;
   gap: 8px;
-  padding: 11px 8px;
-  min-height: 40px;
+  padding: 10px 9px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 590;
   white-space: nowrap;
 }
 .premium-app .invite-actions .end-room-button {
-  background: #282931;
-  border-color: #42434c;
-  color: #dedee8;
+  background: #26272e;
+  border: 1px solid #3a3c45;
+  color: #c8c9d2;
 }
 .premium-app .invite-actions .end-room-button:hover:not(:disabled) {
-  background: #352b30;
-  border-color: #5b454a;
-  color: #fff1ef;
+  background: #37292d;
+  border-color: #604247;
+  color: #fff0ee;
 }
 .premium-app .join-another-button {
   width: 100%;
-  margin-top: 9px;
-  min-height: 41px;
-  display: flex;
+  min-height: 42px;
   justify-content: center;
+  margin-top: 9px;
   font-size: 11px;
-  color: #d7d8e4;
-  background: #22232b;
-  border: 1px solid #373943;
+  font-weight: 550;
+  background: #212229;
+  border-color: #373840;
+  color: #d2d2dd;
 }
-.premium-app .workspace-invite-footer {
+.premium-app .sidebar-participants {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 29px;
+  padding: 0;
+  border-top: 1px solid #34353d;
+}
+.premium-app .sidebar-participants-heading {
   flex: 0 0 auto;
-  margin-top: 19px;
-  padding: 0 7px;
-}
-.premium-app .workspace-invite-footer > div {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #b9c0c0;
-  font-size: 11px;
-  font-weight: 530;
+  padding: 20px 2px 11px;
 }
-.premium-app .workspace-invite-footer p {
-  color: #717581;
-  line-height: 1.55;
+.premium-app .sidebar-participants-heading h2 {
+  color: #e7e7ec;
+  font-size: 13px;
+  font-weight: 590;
+  line-height: 1;
+  letter-spacing: -.018em;
+  margin: 0;
+}
+.premium-app .sidebar-participant-count {
+  border: 1px solid #3a3b44;
+  background: #26272e;
+  color: #a8aab8;
+  border-radius: 5px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+}
+.premium-app .sidebar-participants-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #454650 transparent;
+  padding: 0 0 20px;
+}
+.premium-app .sidebar-participants-empty {
+  color: #737580;
   font-size: 11px;
-  margin: 9px 0 0 16px;
+  margin: 8px 2px;
+}
+.premium-app .sidebar-approval, .premium-app .participant-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 1px;
+  border-top: 1px solid #2c2d34;
+  border-radius: 0;
+  background: transparent;
+  margin: 0;
+  min-width: 0;
+}
+.premium-app .participant-avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #dadcec;
+  background: #30313d;
+  border: 1px solid #404250;
+  font-size: 12px;
+  font-weight: 620;
+}
+.premium-app .participant-info {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.premium-app .participant-info strong {
+  color: #e3e4ec;
+  font-size: 11px;
+  font-weight: 570;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.premium-app .participant-info small {
+  color: #858797;
+  font-size: 10px;
+  font-weight: 440;
+}
+.premium-app .participant-online { flex: 0 0 auto; color: #8bbb9f; font-size: 10px; }
+.premium-app .participant-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+.premium-app .sidebar-approval .mini-accept {
+  font-size: 10px;
+  min-height: 29px;
+  padding: 6px 7px;
+  border-radius: 6px;
+  background: #353849;
+  border-color: #44495f;
+}
+.premium-app .sidebar-approval .mini-reject {
+  font-size: 14px;
+  min-width: 27px;
+  min-height: 29px;
+  padding: 4px 6px;
+  border-radius: 6px;
 }
 .premium-app .workspace-right {
   min-height: 0;
   min-width: 0;
-  overflow-x: hidden;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 27px 9px 42px 0;
+  padding: 39px clamp(28px,4.5vw,70px) 64px;
+  background: #101115;
   scrollbar-width: thin;
-  scrollbar-color: #444651 transparent;
-}
-.premium-app .workspace-right::-webkit-scrollbar { width: 8px; }
-.premium-app .workspace-right::-webkit-scrollbar-thumb {
-  background: #444651;
-  border-radius: 99px;
+  scrollbar-color: #444650 transparent;
 }
 .premium-app .workspace-right .document-column {
+  max-width: 1100px;
+  width: 100%;
   margin: 0;
   padding: 0;
   background: transparent;
-  width: 100%;
 }
 .premium-app .workspace-right .list-heading {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  padding: 0 0 30px;
   margin: 0;
-  padding: 6px 0 22px;
+  gap: 12px;
 }
-.premium-app .workspace-right .list-heading-title .eyebrow {
-  color: #9092a0;
-  margin-bottom: 12px;
-}
-.premium-app .workspace-right .list-heading-title h2 {
-  font-size: clamp(24px, 2.6vw, 34px);
+.premium-app .workspace-right .list-heading-title h1 {
+  color: #f0f0f4;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -.05em;
   line-height: 1.2;
-  letter-spacing: -.047em;
+  margin: 0;
 }
-.premium-app .workspace-right .list-heading-title p {
-  color: #8d8f9d;
-  margin-top: 9px;
+.premium-app .workspace-right .list-heading-title h1 sup {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  color: #9496a5;
+  border-radius: 6px;
+  border: 1px solid #35363e;
+  background: #202127;
+  font-size: 11px;
+  font-weight: 570;
+  margin-left: 9px;
+  padding: 3px 8px;
+  letter-spacing: 0;
 }
-.premium-app .workspace-right .pending-panel {
-  margin: 5px 0 21px;
+.premium-app .workspace-right .list-heading .subtle-link {
+  flex: 0 0 auto;
+  font-size: 20px;
+  min-width: 35px;
+  height: 35px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #9d9eaa;
+  text-decoration: none;
+  padding: 0;
 }
+.premium-app .workspace-right .list-heading .subtle-link:hover { background: #23242b; color: #fafafa; }
 .premium-app .workspace-right .document-list {
+  border: 1px solid #2e3037;
   border-radius: 12px;
-  border-color: #2d2f37;
+  background: #17181d;
+  overflow: hidden;
 }
-.premium-app .workspace-right .empty-list {
-  min-height: 260px;
-}
-.premium-app .workspace-right .document-row {
-  padding: 17px 18px;
-}
+.premium-app .workspace-right .empty-list { min-height: 270px; }
+.premium-app .workspace-right .document-row { padding: 19px 20px; }
 .premium-app .workspace-right .document-row .file-meta { min-width: 0; }
 .premium-app .workspace-right .open-button { flex: 0 0 auto; align-self: center; }
-@media (max-height: 820px) and (min-width: 761px) {
-  .premium-app .workspace-left { padding-top: 20px; padding-bottom: 12px; }
-  .premium-app .workspace-invite-heading h1 { font-size: 27px; margin: 7px 0 6px; }
-  .premium-app .workspace-invite-heading p { line-height: 1.4; }
-  .premium-app .premium-invite { margin-top: 14px; }
-  .premium-app .qr-side { padding: 14px 13px 10px; gap: 8px; }
-  .premium-app .qr-plate { width: min(100%, 175px); }
-  .premium-app .invite-content { padding: 14px 18px 15px; }
-  .premium-app .room-code { font-size: 42px; margin-bottom: 11px; }
-  .premium-app .workspace-invite-footer { margin-top: 12px; }
-  .premium-app .workspace-invite-footer p { display: none; }
+
+/* Compact display heights preserve room controls and keep approvals scrollable. */
+@media (max-height: 780px) and (min-width: 761px) {
+  .premium-app .workspace-left { padding: 20px 23px 0; }
+  .premium-app .qr-plate { width: min(100%, 201px); padding: 11px; }
+  .premium-app .qr-side { margin-bottom: 13px; }
+  .premium-app .room-code { font-size: 40px; margin: 5px 0 12px; }
+  .premium-app .sidebar-participants { margin-top: 20px; }
+  .premium-app .sidebar-participants-heading { padding-top: 14px; }
 }
-@media (max-height: 620px) and (min-width: 761px) {
-  .premium-app .workspace-invite-heading p { display: none; }
-  .premium-app .qr-plate { width: min(100%, 132px); }
-  .premium-app .qr-side { padding: 8px; }
-  .premium-app .room-code { font-size: 32px; margin: 5px 0 8px; }
-  .premium-app .invite-content { padding: 10px 15px; }
-  .premium-app .workspace-invite-footer p { display: none; }
-  .premium-app .workspace-invite-footer { margin-top: 8px; }
-  .premium-app .invite-actions .primary-button, .premium-app .invite-actions .outline-button { min-height: 34px; padding: 7px 6px; }
-  .premium-app .join-another-button { min-height: 34px; }
+@media (max-height: 600px) and (min-width: 761px) {
+  .premium-app .workspace-left { padding: 13px 18px 0; }
+  .premium-app .qr-plate { width: min(100%, 143px); padding: 8px; }
+  .premium-app .qr-side { margin-bottom: 8px; }
+  .premium-app .room-code { font-size: 33px; margin: 4px 0 9px; }
+  .premium-app .invite-actions .primary-button, .premium-app .invite-actions .outline-button { min-height: 35px; padding: 7px 6px; }
+  .premium-app .join-another-button { min-height: 35px; }
+  .premium-app .sidebar-participants { margin-top: 12px; }
 }
 @media (max-width: 760px) {
   .premium-app.is-host-workspace { height: auto; min-height: 100dvh; overflow: visible; }
   .premium-app.is-host-workspace .app-content { display: block; overflow: visible; }
-  .premium-app.is-host-workspace .site-header { flex-basis: auto; }
-  .premium-app.is-host-workspace .premium-workspace { display: block; padding: 0 19px 48px; overflow: visible; }
-  .premium-app .workspace-split { display: flex; flex-direction: column; gap: 0; overflow: visible; }
-  .premium-app .workspace-left { padding: 26px 0 0; overflow: visible; }
-  .premium-app .workspace-invite-heading h1 { font-size: 32px; }
-  .premium-app .premium-invite { max-width: 420px; width: 100%; margin: 19px auto 0; }
-  .premium-app .qr-plate { width: min(100%, 210px); }
-  .premium-app .workspace-invite-footer { max-width: 420px; width: 100%; margin: 15px auto 0; }
-  .premium-app .workspace-right { overflow: visible; padding: 36px 0 20px; scrollbar-gutter: auto; }
-  .premium-app .workspace-right .list-heading { align-items: flex-start; }
-  .premium-app .workspace-right .list-heading-title h2 { font-size: 27px; }
+  .premium-app.is-host-workspace .premium-workspace { display: block; height: auto; overflow: visible; }
+  .premium-app .workspace-split { display: flex; flex-direction: column; height: auto; overflow: visible; }
+  .premium-app .workspace-left { padding: 24px 22px 0; overflow: visible; border-right: none; border-bottom: 1px solid #33343c; }
+  .premium-app .premium-invite { max-width: 440px; margin: 0 auto; }
+  .premium-app .qr-plate { width: min(100%, 226px); }
+  .premium-app .sidebar-participants { flex: initial; width: 100%; margin-top: 24px; }
+  .premium-app .sidebar-participants-scroll { max-height: 245px; min-height: 0; overflow-y: auto; padding-bottom: 19px; }
+  .premium-app .workspace-right { overflow: visible; padding: 34px 20px 50px; scrollbar-gutter: auto; }
+  .premium-app .workspace-right .list-heading-title h1 { font-size: 27px; }
+  .premium-app .workspace-right .document-row { padding: 15px 12px; gap: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .premium-app.is-host-workspace button { transition: none; }
 }

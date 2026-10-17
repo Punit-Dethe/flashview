@@ -296,7 +296,9 @@ the **teacher host** URL to test a different network transport:
 4. The classroom splits each frame into original 64 KiB IndexedDB blocks.
    Only after all blocks in a frame commit does the host send a new
    `stream.credit` message. This keeps memory and in-flight bytes bounded.
-5. If a stream fails, disconnects or is cancelled, previously committed cache
+5. Durable writes replenish four credits per control message while the
+   credit window stays capped at eight outstanding 256 KiB frames.
+6. If a stream fails, disconnects or is cancelled, previously committed cache
    blocks remain available. The next session starts at a missing 64 KiB block,
    without changing viewer behavior or file format.
 

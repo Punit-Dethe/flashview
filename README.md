@@ -57,11 +57,19 @@ The teacher's document list uses a responsive grid of square cards. A card has a
 
 A circular ring in the top-right of each image shows background PDF cache progress and becomes a checkmark at 100%. Details remain accessible as a progressbar/tooltip but are intentionally not repeated as percentage, throughput, or cache-status text in the card. Presentation can start before the entire PDF has cached; the preview state and cache status are independent.
 
+## Reliability and phone background behavior
+
+FlashView's classroom and student sockets reconnect with their existing session credentials as long as their browser page stays alive. The phone's file picker may temporarily suspend JavaScript: FlashView pauses its application heartbeat during selection, and resumes validation immediately when the tab regains focus or a file is selected. Room authentication is acknowledged before the socket is marked ready, and stalled network or room handshakes time out and retry.
+
+A pending PDF page range now retries transient sender-disconnect, relay-error and timeout responses rather than permanently failing the PDF.js range reader. Attempts reuse the teacher's persistent chunk cache, so previously received bytes are not fetched again. Individual retries back off to avoid flooding the relay, are cancelled when the viewer closes or switches pages, and the PDF viewer automatically restarts stalled openings and page renderings. Invalid files and password errors still surface normally.
+
+**Browser limitation:** A mobile OS can still freeze, kill or unload a background browser page. Its previously selected `File` objects are then no longer available, and client-side heartbeats cannot override that restriction. A complete 50 MB PDF already cached at the teacher is independent of the phone. For guaranteed delivery after the phone is fully closed, FlashView would need an optional resumable cloud-upload mode with server-side storage, quota controls and clear privacy tradeoffs; that is intentionally not part of this peer-sourced reliability pass.
+
 ## Room cache and cleanup
 
 - The teacher can open/close individual presentation tabs without losing the classroom queue.
 - FlashView saves received original PDF bytes in **IndexedDB on the teacher's computer**, not Cloudflare.
-- The dashboard shows each PDF's saved bytes; a fully cached document remains presentable after the sender disconnects.
+- The dashboard's circular cache ring shows download progress (checkmark at 100%); a fully cached document remains presentable after the sender disconnects.
 - As soon as an approved student shares a PDF, FlashView starts a room-owned background download before any presentation is opened. The teacher approves students only; there is **no separate file approval**.
 - The downloader rotates fairly across students and uses up to three chunks per file batch; current-page requests take priority.
 - Once complete, the presenter reconstructs the PDF from IndexedDB and gives PDF.js the entire Uint8Array directly, avoiding the custom byte-range transport during rendering.

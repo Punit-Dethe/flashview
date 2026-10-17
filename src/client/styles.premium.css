@@ -369,16 +369,6 @@ html, body { background: var(--canvas); }
   border-color: #604247;
   color: #fff0ee;
 }
-  width: 100%;
-  min-height: 42px;
-  justify-content: center;
-  margin-top: 9px;
-  font-size: 11px;
-  font-weight: 550;
-  background: #212229;
-  border-color: #373840;
-  color: #d2d2dd;
-}
 .premium-app .sidebar-participants {
   flex: 1 1 auto;
   display: flex;

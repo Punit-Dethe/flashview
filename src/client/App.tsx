@@ -51,6 +51,9 @@ export function App() {
   const filesOnPhone = useRef(new Map<string, SharedFile>());
   const firstPageImages = useRef(new Map<string, string>());
   const previewRendering = useRef(new Set<string>());
+  // Serialize thumbnail rendering on low-powered phones. Upload requests are
+  // offered first and handled independently of this cosmetic work.
+  const previewRenderQueue = useRef<Promise<void>>(Promise.resolve());
   const previewDelivered = useRef(new Set<string>());
   const previewFailed = useRef(new Set<string>());
   const incomingPreviews = useRef(new Map<string, { parts: string[]; received: number; created: number }>());
@@ -205,7 +208,9 @@ export function App() {
     const base64 = dataUrl.split(',')[1];
     if (!base64 || base64.length > 380000 || !socket.connected ||
         previewDelivered.current.has(fileId)) return;
-    const size = 4900;
+    // Cloudflare incurs one wake/handler dispatch per WebSocket message.
+    // A small JPEG and 48 KB frames cut 50-75 relay messages to 1-3.
+    const size = 48_000;
     const total = Math.ceil(base64.length / size);
     if (total > 80) return;
     for (let part = 0; part < total; part++) {
@@ -217,30 +222,39 @@ export function App() {
     previewDelivered.current.add(fileId);
   }
 
+  function prepareLocalPreview(fileId: string): void {
+    const shared = filesOnPhone.current.get(fileId);
+    if (!shared || shared.status === 'offline' || shared.status === 'rejected' ||
+        previewFailed.current.has(fileId) || firstPageImages.current.has(fileId) ||
+        previewRendering.current.has(fileId)) return;
+    previewRendering.current.add(fileId);
+    // Local thumbnail generation is separate from admission and delivery.
+    // Only one phone canvas/PDF.js render is active at a time; the network
+    // sender remains free to serve bytes concurrently.
+    previewRenderQueue.current = previewRenderQueue.current.catch(() => {}).then(async () => {
+      if (!filesOnPhone.current.has(fileId)) return;
+      perf.mark('preview:' + fileId);
+      try {
+        const url = await makeFirstPagePreview(shared.file);
+        perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
+        if (!filesOnPhone.current.has(fileId)) return;
+        firstPageImages.current.set(fileId, url);
+        // This is the phone's own File, not a JPEG sent back from the host.
+        setPhonePreviews(current => ({ ...current, [fileId]: url }));
+        if (shared.status === 'approved') sendPreview(fileId, url);
+      } catch {
+        if (perf.enabled) perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
+        previewFailed.current.add(fileId);
+      }
+    }).finally(() => previewRendering.current.delete(fileId));
+  }
+
   function preparePreview(fileId: string): void {
     const shared = filesOnPhone.current.get(fileId);
-    if (!shared || shared.status !== 'approved' ||
-        previewFailed.current.has(fileId) || previewDelivered.current.has(fileId)) return;
+    if (!shared || shared.status !== 'approved' || previewDelivered.current.has(fileId)) return;
     const saved = firstPageImages.current.get(fileId);
     if (saved) { sendPreview(fileId, saved); return; }
-    if (previewRendering.current.has(fileId)) return;
-    previewRendering.current.add(fileId);
-    perf.mark('preview:' + fileId);
-    void makeFirstPagePreview(shared.file).then(url => {
-      perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
-      if (!filesOnPhone.current.has(fileId)) return;
-      firstPageImages.current.set(fileId, url);
-      setPhonePreviews(current => ({ ...current, [fileId]: url }));
-      sendPreview(fileId, url);
-    }).catch(() => {
-      // If preview generation fails, emit an explicit error sample.
-      // A failed preview must not block the original PDF transfer.
-      if (perf.enabled) {
-        perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
-      }
-      // Never repeatedly run an expensive failed decoder on every 20s sync.
-      previewFailed.current.add(fileId);
-    }).finally(() => previewRendering.current.delete(fileId));
+    prepareLocalPreview(fileId);
   }
 
   useEffect(() => {
@@ -383,7 +397,8 @@ export function App() {
         if (typeof id !== 'string' || !Number.isSafeInteger(part) ||
             !Number.isSafeInteger(total) || typeof data !== 'string' ||
             Number(part) < 0 || Number(total) < 1 || Number(total) > 80 ||
-            Number(part) >= Number(total) || data.length > 5000) return;
+            Number(part) >= Number(total) || data.length > 50000 ||
+            (data.length > 5000 && Number(total) > 8)) return;
         let current = incomingPreviews.current.get(id);
         if (!current || current.parts.length !== total || Date.now() - current.created > 90_000) {
           perf.mark('preview-receive:' + id);
@@ -582,8 +597,13 @@ export function App() {
     setSentFiles(current => [...current, ...batch.map(({ fileId, entry }) => ({
       fileId, name: entry.file.name, size: entry.file.size, status: entry.status,
     }))]);
+    // Announce the files before doing any decoding. Start a low-resolution
+    // local preview shortly afterward; it never awaits host-side reception.
     if (!socket.connected || !hostAvailable) socket.wake();
     else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
+    setTimeout(() => {
+      for (const { fileId } of batch) prepareLocalPreview(fileId);
+    }, 90);
   }
 
   // The native file input fires 'cancel' when a picker is dismissed without

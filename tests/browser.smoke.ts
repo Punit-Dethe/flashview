@@ -119,10 +119,10 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.ok(docHeading && leftBefore && docHeading.x >= leftBefore.x + leftBefore.width,
       'Documents should occupy the area to the right of the full-height sidebar');
     const copy = await first.getByRole('button', { name: /Copy link/ }).boundingBox();
-    const end = await first.getByRole('button', { name: /End session/ }).boundingBox();
+    const end = await first.getByRole('button', { name: /End room/ }).boundingBox();
     const join = await first.getByRole('button', { name: /Join another room/ }).boundingBox();
     assert.ok(copy && end && join && Math.abs(copy.y - end.y) < 4 && join.y > copy.y + 30,
-      'Copy link and End session share a row; Join another room sits underneath');
+      'Copy link and End room share a row; Join another room sits underneath');
 
     await right.evaluate(el => {
       const list = el.querySelector('.document-list')!;
@@ -587,7 +587,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       request.onerror = () => reject(request.error);
     }), roomCode!);
     assert.ok(await countRoomChunks() >= 3, 'Expected cached PDF chunks');
-    await host.getByRole('button', { name: /End session/ }).click();
+    await host.getByRole('button', { name: /End room/ }).click();
     await host.getByRole('button', { name: /End & clear cache/ }).isDisabled().then(x => assert.equal(x, true));
     await host.getByRole('checkbox', { name: /I understand/ }).check();
     await host.getByRole('button', { name: /End & clear cache/ }).click();

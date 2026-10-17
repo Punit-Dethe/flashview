@@ -149,7 +149,9 @@ test('different devices exchange metadata, approvals and byte-range PDF data via
     const saved = manifest.files as Array<{ fileId: string; cachedBytes?: number }>;
     assert.equal(saved.find(f => f.fileId === fileId)?.cachedBytes, pdf.length,
       'The relay must keep the last host-acknowledged bytes for phone resync');
-    await host.wait('cache.progress.request');
+    // File manifests now carry completed-cache metadata directly; the
+    // student sync must NOT cause another host IndexedDB scan or a progress
+    // broadcast while the fast transfer lane is active.
 
     // Students cannot request ranges: this belongs exclusively to the teacher.
     student.send({ type: 'range.request', requestId: 'badstudent123', fileId, begin: 0, end: 4 });

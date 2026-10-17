@@ -87,6 +87,33 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.equal(await first.locator('.room-code').count(), 0,
       'Reloading the welcome page must not create a classroom either');
 
+    // The supplied v8 HTML places its 60px nav in normal flow before 76px
+    // headline padding. The React nav floats, so its headline must compensate.
+    const heroGeometry = await first.evaluate(() => {
+      const nav = document.querySelector('.reference-nav')!.getBoundingClientRect();
+      const title = document.querySelector('.reference-hero h1')!.getBoundingClientRect();
+      const sky = document.querySelector('.reference-sky')!;
+      return {
+        gap: title.top - nav.bottom,
+        background: getComputedStyle(sky).backgroundImage,
+      };
+    });
+    assert.ok(heroGeometry.gap >= 65 && heroGeometry.gap <= 95,
+      'Landing title should retain the original generous 76px gap below nav');
+    assert.match(heroGeometry.background, /linear-gradient/);
+    assert.match(heroGeometry.background, /31, 79, 232|#1f4fe8/i,
+      'The supplied cobalt-to-pastel sky gradient should remain intact');
+
+    await first.setViewportSize({ width: 390, height: 844 });
+    const mobileHeroGap = await first.evaluate(() => {
+      const nav = document.querySelector('.reference-nav')!.getBoundingClientRect();
+      const title = document.querySelector('.reference-hero h1')!.getBoundingClientRect();
+      return title.top - nav.bottom;
+    });
+    assert.ok(mobileHeroGap >= 68,
+      'On phones the hero title should not crowd the floating nav');
+    await first.setViewportSize({ width: 1280, height: 760 });
+
     await first.getByRole('button', { name: /Create a room/ }).click();
     await first.locator('.connection.connected').waitFor();
     assert.equal(await first.locator('.site-header').count(), 0, 'Room workspace must have no header');

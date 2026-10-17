@@ -3,6 +3,7 @@ import type { PdfManifest } from '../shared/protocol';
 import type { CacheProgress } from './pdf/roomCache';
 import { formatBytes } from './pdf/Viewer';
 import { fileAccentStyle } from './fileAccent';
+import { THUMBNAILS_ENABLED } from './thumbnailExperiment';
 
 type Props = {
   file: PdfManifest;
@@ -19,7 +20,7 @@ export function DocumentCard({ file, previewUrl, progress, bytesPerSecond = 0, o
   const [imageState, setImageState] = useState({ url: '', ready: false, failed: false });
   const [fallbackTimeout, setFallbackTimeout] = useState(false);
   useEffect(() => {
-    if (previewUrl) return;
+    if (previewUrl || !THUMBNAILS_ENABLED) return;
     setFallbackTimeout(false);
     const timeout = setTimeout(() => setFallbackTimeout(true), 6_000);
     return () => clearTimeout(timeout);
@@ -34,7 +35,7 @@ export function DocumentCard({ file, previewUrl, progress, bytesPerSecond = 0, o
     imageState.ready && !imageFailed;
   // Avoid showing an icon just because the PDF cache completed before the JPEG.
   // Keep the stable spinner briefly, then fall back if no thumbnail arrives.
-  const showFallback = imageFailed || (!previewUrl && (fallbackTimeout || file.status === 'offline'));
+  const showFallback = !THUMBNAILS_ENABLED || imageFailed || (!previewUrl && (fallbackTimeout || file.status === 'offline'));
   const progressLabel = cached ? 'Fully cached' :
     Math.round(percent) + '% cached' + (bytesPerSecond > 0 ? ' · ' + formatBytes(bytesPerSecond) + '/s' : '');
 

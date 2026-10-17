@@ -115,14 +115,14 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.ok(leftBefore && leftBefore.width > 250);
     assert.ok(leftBefore && Math.abs(leftBefore.y) < 2,
       'Sidebar must begin at the top edge of the viewport without header chrome');
-    const docHeading = await right.getByRole('heading', { name: /Documents/ }).boundingBox();
+    const docHeading = await right.getByRole('heading', { name: /Files/ }).boundingBox();
     assert.ok(docHeading && leftBefore && docHeading.x >= leftBefore.x + leftBefore.width,
       'Documents should occupy the area to the right of the full-height sidebar');
     const copy = await first.getByRole('button', { name: /Copy link/ }).boundingBox();
-    const end = await first.getByRole('button', { name: /End session/ }).boundingBox();
+    const end = await first.getByRole('button', { name: /End room/ }).boundingBox();
     const join = await first.getByRole('button', { name: /Join another room/ }).boundingBox();
     assert.ok(copy && end && join && Math.abs(copy.y - end.y) < 4 && join.y > copy.y + 30,
-      'Copy link and End session share a row; Join another room sits underneath');
+      'Copy link and End room share a row; Join another room sits underneath');
 
     await right.evaluate(el => {
       const list = el.querySelector('.document-list')!;
@@ -161,9 +161,78 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     await second.locator('.sidebar-participants .approval').waitFor();
     assert.equal(await second.locator('.workspace-right .approval').count(), 0,
       'Student approval rows belong in the sidebar, not in the document panel');
-    assert.ok(await first.getByText('Waiting for the teacher.').isVisible());
+    assert.ok(await first.getByText('Waiting to join').isVisible());
     assert.equal(await first.evaluate(() => sessionStorage.getItem('flashview-host')), null,
       'Switching rooms must remove the previous host credentials');
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});
+
+test('open rooms auto-admit guests, show only their own PDFs, and expose a light two-column grid', { timeout: 85000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ viewport: { width: 1360, height: 850 } });
+  const first = await browser.newPage({ viewport: { width: 390, height: 820 } });
+  const second = await browser.newPage({ viewport: { width: 390, height: 820 } });
+  const root = 'http://127.0.0.1:' + port;
+  try {
+    await host.goto(root);
+    await host.getByLabel('Let people join without approval').check();
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    await host.getByText('Open room · No approval needed').waitFor();
+    const code = (await host.locator('.room-code').innerText()).trim();
+    for (const [page, username] of [[first,'Alice'],[second,'Bob']] as const) {
+      await page.goto(root);
+      await page.locator('#code').fill(code);
+      await page.locator('#student-name').fill(username);
+      await page.getByRole('button', { name: /Join room/ }).click();
+      await page.getByRole('heading', { name: 'My files' }).waitFor();
+      assert.equal(await page.locator('.student-drive').count(), 1);
+      assert.equal(await page.locator('.upload-target').count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'Add PDFs' }).count(), 1);
+    }
+    assert.equal(await host.locator('.sidebar-participants .approval').count(), 0,
+      'Open room guests should not require host approval');
+    await first.locator('input[type=file]').setInputFiles([
+      { name: 'private-alice.pdf', mimeType: 'application/pdf', buffer: makePdf(250) },
+      { name: 'another-alice.pdf', mimeType: 'application/pdf', buffer: makePdf(150) },
+    ]);
+    await first.locator('.student-file-card').nth(1).waitFor();
+    assert.equal(await first.locator('.student-file-card').count(), 2);
+    const widthInfo = await first.locator('.student-files-grid').evaluate(element => ({
+      columns: getComputedStyle(element).gridTemplateColumns.split(' ').length,
+      background: getComputedStyle(document.querySelector('.student-drive')!).backgroundColor,
+    }));
+    assert.equal(widthInfo.columns, 2, 'Mobile view should fit exactly two cards per row');
+    assert.equal(widthInfo.background, 'rgb(255, 255, 255)', 'Student room must be a light surface');
+    await host.locator('.document-row').filter({ hasText: 'private-alice.pdf' }).waitFor();
+    assert.equal(await second.locator('.student-file-card').count(), 0,
+      'A different student must not see Alice’s files');
+    await first.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').first()
+      .waitFor({ timeout: 25000 });
+    await first.waitForFunction(() =>
+      document.querySelectorAll('.student-file-card .transfer-ring[aria-valuenow="100"]').length === 2,
+      null, { timeout: 25000 });
+    const hostBg = await host.locator('.workspace-right').evaluate(e => getComputedStyle(e).backgroundColor);
+    assert.notEqual(hostBg, 'rgb(16, 17, 21)', 'Host document pane should have a light background');
+    const longName = 'this-is-a-particularly-long-file-name-that-should-not-overflow-the-card.pdf';
+    await first.locator('input[type=file]').setInputFiles({
+      name: longName, mimeType: 'application/pdf', buffer: makePdf(120),
+    });
+    await first.locator('.student-file-card').filter({ hasText: longName }).waitFor();
+    const typography = await first.locator('.student-file-card').filter({ hasText: longName })
+      .locator('.student-file-info strong').evaluate(e => ({
+        whiteSpace: getComputedStyle(e).whiteSpace,
+        overflow: getComputedStyle(e).overflow,
+        textOverflow: getComputedStyle(e).textOverflow,
+        paddingRight: getComputedStyle(e).paddingRight,
+      }));
+    assert.equal(typography.textOverflow, 'ellipsis');
+    assert.equal(typography.overflow, 'hidden');
+    assert.ok(parseFloat(typography.paddingRight) >= 9);
   } finally {
     await browser.close();
     child.kill('SIGTERM');
@@ -218,7 +287,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
 
     await host.locator('.approval').filter({ hasText: 'Chromium Tester' }).waitFor();
     await host.locator('.approval').filter({ hasText: 'Chromium Tester' }).getByRole('button', { name: 'Allow' }).click();
-    await student.getByText('Choose a PDF to share.').waitFor();
+    await student.getByRole('heading', { name: 'My files' }).waitFor();
 
     await student.locator('input[type=file]').setInputFiles({
       name: 'smoke.pdf',
@@ -429,7 +498,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
       const sockets = record.__flashviewSockets ?? [];
       return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN &&
-        document.querySelector('.connection.connected') !== null &&
+        document.querySelector('.student-drive') !== null &&
         (document.querySelector('.student-file-card')?.textContent ?? '').includes('smoke.pdf');
     }, null, { timeout: 20000 });
     assert.match(await student.locator('.student-file-card').first().innerText(), /smoke\.pdf/);
@@ -518,7 +587,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       request.onerror = () => reject(request.error);
     }), roomCode!);
     assert.ok(await countRoomChunks() >= 3, 'Expected cached PDF chunks');
-    await host.getByRole('button', { name: /End session/ }).click();
+    await host.getByRole('button', { name: /End room/ }).click();
     await host.getByRole('button', { name: /End & clear cache/ }).isDisabled().then(x => assert.equal(x, true));
     await host.getByRole('checkbox', { name: /I understand/ }).check();
     await host.getByRole('button', { name: /End & clear cache/ }).click();
@@ -610,7 +679,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').waitFor();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
-    await student.getByText('Choose a PDF to share.').waitFor();
+    await student.getByRole('heading', { name: 'My files' }).waitFor();
 
     const pdfBytes = makePdf(35000);
     await student.locator('input[type=file]').setInputFiles({
@@ -693,7 +762,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     await fastStudent.getByRole('button', { name: /Join room/ }).click();
     const fastApproval = host.locator('.approval').filter({ hasText: 'Student' });
     await fastApproval.last().getByRole('button', { name: 'Allow' }).click();
-    await fastStudent.getByText('Choose a PDF to share.').waitFor();
+    await fastStudent.getByRole('heading', { name: 'My files' }).waitFor();
     await fastStudent.locator('input[type=file]').setInputFiles({
       name: 'fast-peer.pdf', mimeType: 'application/pdf', buffer: makePdf(),
     });
@@ -741,7 +810,7 @@ test('large PDFs still produce a first-slide preview', { timeout: 75000 }, async
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
-    await student.getByText('Choose a PDF to share.').waitFor();
+    await student.getByRole('heading', { name: 'My files' }).waitFor();
     const large = makePdf(110000);
     assert.ok(large.length > 12 * 1024 * 1024);
     await student.locator('input[type=file]').setInputFiles({
@@ -798,7 +867,7 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
-    await student.getByText('Choose a PDF to share.').waitFor();
+    await student.getByRole('heading', { name: 'My files' }).waitFor();
     const pressureApplied = await student.evaluate(() => {
       const w = window as typeof window & {
         __testSocket?: () => WebSocket | undefined;
@@ -876,7 +945,7 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').filter({ hasText: 'Missing Updates' })
       .getByRole('button', { name: 'Allow' }).click();
-    await student.getByText('Choose a PDF to share.').waitFor();
+    await student.getByRole('heading', { name: 'My files' }).waitFor();
     await student.locator('.transfer-pill').waitFor({ state: 'detached' });
 
     // Deliberately lose BOTH forms of progress delivery. The teacher must
@@ -923,8 +992,8 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     await student.waitForFunction(() =>
       document.querySelectorAll('.student-file-card .transfer-ring[aria-valuenow="100"]').length === 2,
       null, { timeout: 20000 });
-    await student.locator('.student-transfer-heading').getByText('2 of 2 ready').waitFor();
-    await student.getByText('All files are saved on the classroom computer. You can leave this page.').waitFor();
+    await student.locator('.student-file-count').getByText('2 files').waitFor();
+    await student.getByText('All your PDFs are saved on the host computer.').waitFor();
     assert.equal(await student.locator('.transfer-pill').count(), 0,
       'Done and Uploading should never produce a status pill');
 
@@ -956,7 +1025,9 @@ test('mobile progress recovers missed events from the relay manifest and pill is
       name: 'late.pdf', mimeType: 'application/pdf', buffer: makePdf(400),
     });
     await student.locator('.student-file-card').filter({ hasText: 'late.pdf' }).waitFor();
-    await student.locator('.student-transfer-heading').getByText('3 of 3 ready').waitFor({ timeout: 25000 });
+    await student.locator('.student-file-count').getByText('3 files').waitFor({ timeout: 25000 });
+    await student.locator('.student-file-card').filter({ hasText: 'late.pdf' })
+      .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
     assert.equal(await student.locator('.transfer-pill').count(), 0);
   } finally {
     await browser.close();

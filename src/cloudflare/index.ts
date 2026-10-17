@@ -10,7 +10,7 @@ interface Env {
 }
 type Role = 'host' | 'student' | null;
 interface Peer { id: string; role: Role; name: string; approved: boolean }
-interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number }
+interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; autoApprove?: boolean }
 interface ResumeSession { id: string; name: string; approved: boolean; token: string }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
 const MAX_STUDENTS = 30;
@@ -118,6 +118,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       const created = Date.now();
       this.config = {
         code: incoming.code!, hostToken: incoming.hostToken, joinToken: incoming.joinToken, created,
+        autoApprove: incoming.autoApprove === true,
       };
       await this.ctx.storage.put('config', this.config);
       await this.ctx.storage.setAlarm(created + ROOM_TTL_MS);
@@ -149,6 +150,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       send(ws, {
         type: 'room.state', id: cfg.code, code: cfg.code, joinToken: cfg.joinToken,
         students: this.students(), files: [...this.files.values()],
+        autoApprove: cfg.autoApprove === true,
       });
       for (const [studentSocket, student] of this.peers)
         if (student.role === 'student') send(studentSocket, { type: 'host.online' });
@@ -191,14 +193,19 @@ export class ClassroomRoom extends DurableObject<Env> {
         return;
       }
       if (this.students().length >= MAX_STUDENTS) return void send(ws, { type: 'error', message: 'Room is full' });
+      const approved = cfg.autoApprove === true;
       const newSession: ResumeSession = {
-        id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved: false, token: token(32),
+        id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved, token: token(32),
       };
       this.sessions.set(newSession.token, newSession);
       await this.persistSessions();
-      this.putPeer(ws, { ...peer, role: 'student', name: newSession.name, approved: false });
-      send(ws, { type: 'join.pending', roomCode: cfg.code, resumeToken: newSession.token });
-      this.sendHost({ type: 'student.pending', student: { id: peer.id, name: newSession.name, approved: false } });
+      this.putPeer(ws, { ...peer, role: 'student', name: newSession.name, approved });
+      send(ws, { type: approved ? 'join.accepted' : 'join.pending',
+        roomCode: cfg.code, resumeToken: newSession.token });
+      this.sendHost({
+        type: approved ? 'student.updated' : 'student.pending',
+        student: { id: peer.id, name: newSession.name, approved },
+      });
       return;
     }
     send(ws, { type: 'error', message: 'Invalid role' });
@@ -439,6 +446,7 @@ export default {
         const code = String(100_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000));
         const config: RoomConfig = {
           code, hostToken: token(32), joinToken: code + '.' + token(24), created: Date.now(),
+          autoApprove: url.searchParams.get('autoApprove') === '1',
         };
         const room = env.ROOMS.getByName(code);
         const initialized = await room.fetch(new Request('https://internal/init', {
@@ -447,6 +455,7 @@ export default {
         if (initialized.status === 201) {
           return json({
             roomId: code, code, joinToken: config.joinToken, hostToken: config.hostToken,
+            autoApprove: config.autoApprove,
           }, 201);
         }
         if (initialized.status !== 409) return json({ error: 'Room creation unavailable' }, 503);

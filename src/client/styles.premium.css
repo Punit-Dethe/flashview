@@ -1103,3 +1103,238 @@ html, body { background: var(--canvas); }
   .premium-app .transfer-pill { animation: none; transition: none; }
   .premium-app .transfer-pill-spinner { animation: none; }
 }
+
+
+/* Drive-inspired room foundation — familiar light surfaces, restrained Material UI.
+   Kept deliberately separate from the dark teacher utility sidebar/presenter. */
+html, body { background: #f7f9fc; }
+.premium-app { background: #f7f9fc; color: #202124; }
+.premium-app .site-header {
+  background: #fff; border-bottom: 1px solid #e2e6ed;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.premium-app .site-header .brand { color: #1f2937; }
+.premium-app .site-header .header-caption { color: #687282; }
+.premium-app .site-header .connection { background: #f3f6fb; border-color: #dee3eb; color: #53657c; }
+.premium-app .site-header .connection.connected { color: #226a49; }
+.premium-app .site-footer { background: #fff; color: #7d8797; border-top-color: #e1e6ee; }
+.premium-app .welcome { padding-top: 72px; }
+.premium-app .welcome h1 { color: #202b3b; }
+.premium-app .welcome h1 em { color: #5275b4; }
+.premium-app .hero-description { color: #697589; }
+.premium-app .eyebrow { color: #687790; }
+.premium-app .action-card { background: #fff; border: 1px solid #e0e5ee; border-radius: 18px; box-shadow: 0 2px 12px #26344906; }
+.premium-app .action-card h2 { color: #263242; }
+.premium-app .action-card p { color: #687586; }
+.premium-app .action-icon { color: #4173bf; }
+.premium-app .card-index { color: #8490a0; }
+.premium-app .micro-footer { color: #7e8999; border-color: #e1e6ed; }
+.premium-app .primary-button { background: #356fce; border-color: #356fce; color: #fff; box-shadow: none; }
+.premium-app .primary-button:hover:not(:disabled) { background: #285baa; }
+.premium-app .outline-button { color: #305da0; background: #f5f8fc; border: 1px solid #d8e1ee; }
+.premium-app .outline-button:hover:not(:disabled) { background: #e9f0fb; border-color: #aac1e3; }
+.premium-app .join-form label { color: #596577; }
+.premium-app .join-form input { background: #fff; border-color: #d9dfe8; color: #253246; }
+.premium-app .join-form input:focus { border-color: #5a87ce; box-shadow: 0 0 0 3px #dce9fb; }
+.premium-app .room-auto-approve {
+  display: flex; align-items: center; gap: 12px;
+  margin: 21px 0 18px; padding: 15px;
+  background: #f6f8fb; border: 1px solid #e0e5ed; border-radius: 13px;
+  cursor: pointer;
+}
+.premium-app .room-auto-approve input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.premium-app .room-auto-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.premium-app .room-auto-text strong { color: #283448; font-size: 12px; font-weight: 620; }
+.premium-app .room-auto-text small { color: #788396; font-size: 11px; line-height: 1.35; }
+.premium-app .room-auto-switch {
+  order: 2; position: relative; width: 42px; height: 24px; flex: 0 0 42px;
+  border-radius: 999px; background: #bac4d3; transition: background .18s ease;
+}
+.premium-app .room-auto-switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; background: #fff; border-radius: 50%;
+  box-shadow: 0 1px 3px #0002; transition: transform .18s ease;
+}
+.premium-app .room-auto-approve input:checked ~ .room-auto-switch { background: #3d73c7; }
+.premium-app .room-auto-approve input:checked ~ .room-auto-switch::after { transform: translateX(18px); }
+.premium-app .room-auto-approve:has(input:focus-visible) { outline: 2px solid #366dcc; outline-offset: 2px; }
+
+/* Host: preserve the recognizable QR/participants dark sidebar, lighten document canvas. */
+.premium-app.is-host-workspace { background: #f7f9fc; }
+.premium-app .workspace-left { background: #17181d; border-right: 1px solid #29303a; }
+.premium-app .workspace-left .outline-button { background: #292b33; border-color: #444753; color: #f1f2f8; }
+.premium-app .workspace-left .primary-button { background: #ecedf5; color: #202433; border-color: #ecedf5; }
+.premium-app .room-admission-status {
+  display: block; margin: 0 0 9px; text-align: center;
+  color: #a4a8b8; font-size: 11px; line-height: 1.5;
+}
+.premium-app .workspace-right {
+  background: #f7f9fc; color: #283243;
+}
+.premium-app .workspace-right .list-heading-title h1 { color: #263447; }
+.premium-app .workspace-right .list-heading-title p { color: #7c899c; }
+.premium-app .workspace-right .list-heading .subtle-link { color: #5d708a; }
+.premium-app .workspace-right .list-heading .subtle-link:hover { color: #245cad; background: #e7eef9; }
+.premium-app .workspace-right .document-list.document-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 236px), 1fr));
+  gap: 21px; padding-bottom: 18px;
+}
+.premium-app .workspace-right .document-grid .document-card {
+  background: #fff; border-color: #dee4ec; border-radius: 14px;
+  box-shadow: 0 1px 3px #202c3e08;
+}
+.premium-app .workspace-right .document-grid .document-card:hover {
+  background: #fff; border-color: #b1c4dc; box-shadow: 0 3px 10px #202c3e10;
+}
+.premium-app .workspace-right .document-grid .empty-list {
+  background: #fff; border: 1px dashed #cdd7e3; min-height: 300px;
+}
+.premium-app .workspace-right .document-grid .empty-list h3 { color: #29374b; }
+.premium-app .workspace-right .document-grid .empty-list p { color: #768297; }
+.premium-app .workspace-right .document-grid .empty-art { background: #edf3fc; border-color: #dfebfa; color: #7696c5; }
+.premium-app .document-thumb { background: #f1f4f8; }
+.premium-app .document-card-info {
+  flex-basis: 83px; background: #fff; border-top: 1px solid #e8edf3; padding: 13px 16px;
+}
+.premium-app .document-card-info h3 {
+  color: #243249; font-size: 13px; padding-right: 9px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.premium-app .document-card-info p { color: #718096; font-size: 11px; }
+.premium-app .document-grid .cache-ring { background: #fff; border-color: #d9e0e8; color: #26764a; }
+.premium-app .document-grid .cache-ring .ring-track { stroke: #e1e7ee; }
+.premium-app .document-grid .cache-ring .ring-fill { stroke: #477dd0; }
+.premium-app .document-grid .cache-ring.is-complete .ring-fill { stroke: #319669; }
+
+/* Student: the joined room IS the home screen. No hero or large upload dropzone. */
+.premium-app.is-student-room {
+  min-height: 100dvh; height: auto; overflow: visible; background: #fff;
+}
+.premium-app.is-student-room .app-content { width: 100%; min-height: 100dvh; padding: 0; }
+.premium-app.is-student-room .site-footer { display: none; }
+.premium-app .room-files-screen {
+  width: 100%; max-width: none; min-height: 100dvh;
+  padding: 0 !important; margin: 0;
+}
+.premium-app .student-drive { min-height: 100dvh; background: #fff; color: #243145; }
+.premium-app .student-drive-header {
+  position: sticky; top: 0; z-index: 8;
+  display: flex; justify-content: space-between; align-items: center;
+  min-height: 72px; padding: 12px clamp(20px, 4vw, 48px);
+  border-bottom: 1px solid #e6ebf0; background: #fff;
+}
+.premium-app .student-drive-header-copy { display: flex; flex-direction: column; gap: 4px; }
+.premium-app .student-drive-logo {
+  font-size: 23px; font-weight: 650; letter-spacing: -.073em; color: #263349; line-height: 1.1;
+}
+.premium-app .student-drive-logo span { color: #427ad1; }
+.premium-app .student-drive-room { color: #768398; font-size: 11px; font-variant-numeric: tabular-nums; }
+.premium-app .student-leave-button {
+  color: #55667e; background: #f5f7fa; border: 1px solid #e5eaf1;
+  border-radius: 20px; min-width: 65px; padding: 10px 14px; font-size: 12px; font-weight: 580;
+}
+.premium-app .student-drive-body {
+  position: relative; max-width: 1100px; margin: auto;
+  padding: 27px clamp(18px, 4vw, 46px) 118px; min-height: calc(100dvh - 73px);
+}
+.premium-app .student-drive-heading {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 15px;
+  margin-bottom: 23px;
+}
+.premium-app .student-drive-heading h1 { margin: 0; color: #253247; font-size: 26px; font-weight: 620; letter-spacing: -.04em; }
+.premium-app .student-drive-heading p {
+  margin: 8px 0 0; color: #798598; font-size: 12px; line-height: 1.5; max-width: 360px;
+}
+.premium-app .student-file-count {
+  flex: none; margin-top: 4px; color: #677c96; background: #f1f5fa; border-radius: 99px;
+  padding: 7px 11px; font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.premium-app .student-drive-search {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; margin: 0 0 25px; padding: 0 16px; height: 47px;
+  border-radius: 24px; background: #edf2f8; color: #6a7b93;
+  border: 1px solid transparent;
+}
+.premium-app .student-drive-search:focus-within { border-color: #a6bede; background: #f3f7fd; }
+.premium-app .student-drive-search input {
+  border: 0; outline: 0; box-shadow: none; background: transparent;
+  color: #29374b; font-size: 13px; width: 100%; height: 100%; min-width: 0;
+}
+.premium-app .student-drive-search input::placeholder { color: #8191a5; }
+.premium-app .student-drive .student-files-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 232px), 1fr));
+  gap: 17px; align-items: start;
+}
+.premium-app .student-drive .student-file-card {
+  background: #fff; border: 1px solid #dde4ee; border-radius: 14px;
+  box-shadow: 0 1px 4px #20334b09;
+}
+.premium-app .student-drive .student-file-visual {
+  background: #edf2f8;
+}
+.premium-app .student-drive .student-file-info {
+  flex: 0 0 87px; border-top: 1px solid #e7ecf2; padding: 11px 14px;
+}
+.premium-app .student-drive .student-file-info strong {
+  color: #27364b; font-size: 13px; line-height: 1.4; padding-right: 11px;
+  display: block; min-width: 0; max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.premium-app .student-drive .student-file-info p { color: #748198; font-size: 11px; margin: 6px 0; }
+.premium-app .student-drive .student-file-status { color: #53739c; font-size: 10.5px; }
+.premium-app .student-drive .student-file-stop { color: #59729a; }
+.premium-app .student-drive .student-transfer-hint { color: #7a8698; margin: 16px 2px; }
+.premium-app .student-drive .transfer-ring { background: #fff; border-color: #d9e1ea; color: #258253; }
+.premium-app .student-drive .transfer-ring .ring-track { stroke: #e1e8f1; }
+.premium-app .student-drive .transfer-ring .ring-fill { stroke: #4d83d0; }
+.premium-app .student-drive .transfer-ring.is-complete .ring-fill { stroke: #278b60; }
+.premium-app .student-drive-empty {
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  gap: 0; text-align: center; min-height: 340px; padding: 45px 18px;
+  border: 1px dashed #dce5ef; border-radius: 16px; background: #fafbfd;
+}
+.premium-app .student-drive-empty h2 { color: #37455b; font-size: 17px; font-weight: 610; margin: 14px 0 7px; }
+.premium-app .student-drive-empty p { color: #7a8798; max-width: 285px; font-size: 12px; line-height: 1.6; margin: 0; }
+.premium-app .student-drive-pending {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 12px; padding: 75px 20px; color: #394a60;
+}
+.premium-app .student-drive-pending p { color: #7c899a; margin: 0; font-size: 12px; }
+.premium-app .student-add-fab {
+  position: fixed; z-index: 15; bottom: max(25px, env(safe-area-inset-bottom));
+  right: max(25px, env(safe-area-inset-right));
+  display: flex; gap: 10px; align-items: center; justify-content: center;
+  height: 58px; min-width: 107px; padding: 0 19px 0 17px;
+  border: none; border-radius: 19px; background: #dceafe; color: #205ba5;
+  font-size: 14px; font-weight: 620; box-shadow: 0 4px 15px #2b486022;
+}
+.premium-app .student-add-fab > span:first-child { font-size: 27px; font-weight: 370; line-height: 1; }
+.premium-app .student-add-fab:hover { background: #c9def9; }
+.premium-app .transfer-pill { background: #293347; border-color: #36445b; }
+.premium-app .room-entry { max-width: 460px; margin: 45px auto; padding: 22px; }
+.premium-app .room-entry-kicker { font-size: 11px; color: #7c889c; letter-spacing: .12em; }
+.premium-app .room-entry h1 { font-size: 30px; color: #27354b; letter-spacing: -.04em; }
+.premium-app .room-entry .join-form { display: flex; flex-direction: column; gap: 10px; }
+.premium-app .room-entry .join-form input { margin-bottom: 9px; }
+@media(max-width:760px) {
+  .premium-app .workspace-right .document-list.document-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px;
+  }
+  .premium-app .workspace-right .document-card-info { flex-basis: 76px; padding: 11px 13px; }
+  .premium-app .student-drive-body { padding: 25px 17px 118px; }
+  .premium-app .student-drive .student-files-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px;
+  }
+  .premium-app .student-drive .student-file-info { padding: 10px 11px; flex-basis: 91px; }
+  .premium-app .student-drive .student-file-info strong { font-size: 12px; }
+  .premium-app .student-drive-heading { margin-bottom: 19px; }
+  .premium-app .student-drive-heading h1 { font-size: 25px; }
+  .premium-app .student-drive-header { min-height: 70px; padding: 11px 18px; }
+  .premium-app .student-add-fab { right: max(18px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .premium-app .room-auto-switch, .premium-app .room-auto-switch::after { transition: none; }
+}
+
+/* Native inputs, scrollbars and picker chrome should match the light room. */
+:root { color-scheme: light; }

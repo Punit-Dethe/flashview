@@ -14,6 +14,7 @@ type ResumeSession = { id: string; name: string; approved: boolean; token: strin
 type Outstanding = { fileId: string; senderId: string; begin: number; end: number; created: number };
 type Room = {
   id: string; code: string; joinToken: string; hostToken: string;
+  autoApprove: boolean;
   created: number; host: Peer | null; students: Map<string, Peer>;
   sessions: Map<string, ResumeSession>;
   files: Map<string, PdfManifest>; outstanding: Map<string, Outstanding>;
@@ -100,7 +101,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     connections.set(ws, peer);
     send(ws, {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
-      students: students(room), files: [...room.files.values()],
+      students: students(room), files: [...room.files.values()], autoApprove: room.autoApprove,
     });
     for (const student of room.students.values()) send(student.ws, { type: 'host.online' });
     return;
@@ -139,16 +140,20 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       return;
     }
     if (room.students.size >= MAX_STUDENTS) return void sendError(ws, 'Room is full');
+    const approved = room.autoApprove;
     const peer: Peer = {
       ws, id: randomUUID(), role: 'student', room,
-      name: acceptableText(msg.name, 32) || 'Student', approved: false,
+      name: acceptableText(msg.name, 32) || 'Student', approved,
     };
     const resumeToken = randomToken(32);
-    room.sessions.set(resumeToken, { id: peer.id, token: resumeToken, name: peer.name, approved: false });
+    room.sessions.set(resumeToken, { id: peer.id, token: resumeToken, name: peer.name, approved });
     room.students.set(peer.id, peer);
     connections.set(ws, peer);
-    send(ws, { type: 'join.pending', roomCode: room.code, resumeToken });
-    notifyHost(room, { type: 'student.pending', student: { id: peer.id, name: peer.name, approved: false } });
+    send(ws, { type: approved ? 'join.accepted' : 'join.pending', roomCode: room.code, resumeToken });
+    notifyHost(room, {
+      type: approved ? 'student.updated' : 'student.pending',
+      student: { id: peer.id, name: peer.name, approved },
+    });
     return;
   }
   sendError(ws, 'Invalid role');
@@ -169,7 +174,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   if (msg.type === 'room.sync' && peer.role === 'host') {
     return void send(ws, {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
-      students: students(room), files: [...room.files.values()],
+      students: students(room), files: [...room.files.values()], autoApprove: room.autoApprove,
     });
   }
   if (msg.type === 'file.sync' && peer.role === 'student' && peer.approved) {
@@ -357,7 +362,10 @@ const http = createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }));
     return;
   }
-  if (req.url === '/api/rooms' && req.method === 'POST') {
+  if (req.url?.startsWith('/api/rooms') && req.method === 'POST') {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname !== '/api/rooms') { res.writeHead(404).end(); return; }
+    const autoApprove = url.searchParams.get('autoApprove') === '1';
     const ip = (req.socket.remoteAddress ?? 'unknown');
     const now = Date.now();
     const usage = roomCreationByIp.get(ip);
@@ -373,14 +381,14 @@ const http = createServer((req, res) => {
     while ([...rooms.values()].some(r => r.code === code));
     const room: Room = {
       id: randomUUID(), code, joinToken: randomToken(20),
-      hostToken: randomToken(32), created: now,
+      hostToken: randomToken(32), created: now, autoApprove,
       host: null, students: new Map(), sessions: new Map(), files: new Map(), outstanding: new Map(),
     };
     rooms.set(room.id, room);
     res.writeHead(201, {
       'Content-Type': 'application/json', 'Cache-Control': 'no-store',
       'Referrer-Policy': 'no-referrer',
-    }).end(JSON.stringify({ roomId: room.id, code, joinToken: room.joinToken, hostToken: room.hostToken }));
+    }).end(JSON.stringify({ roomId: room.id, code, joinToken: room.joinToken, hostToken: room.hostToken, autoApprove }));
     return;
   }
   if (req.url?.startsWith('/api/')) { res.writeHead(404).end(); return; }

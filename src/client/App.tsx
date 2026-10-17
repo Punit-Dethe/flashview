@@ -72,6 +72,7 @@ export function App() {
   const [phonePreviews, setPhonePreviews] = useState<Record<string, string>>({});
   const [hostAvailable, setHostAvailable] = useState(true);
   const [pillDismissed, setPillDismissed] = useState(false);
+  const [pillLeaving, setPillLeaving] = useState(false);
   const hostFilesRef = useRef<PdfManifest[]>([]);
   const progressSentRef = useRef(new Map<string, { bytes: number; at: number }>());
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
@@ -97,8 +98,9 @@ export function App() {
     if (mode !== 'student' || !transferSummary.complete) return;
     // A completion is acknowledged by the classroom cache and should be
     // visible briefly before the dock retires itself.
-    const timeout = setTimeout(() => setPillDismissed(true), 3200);
-    return () => clearTimeout(timeout);
+    const fade = setTimeout(() => setPillLeaving(true), 2900);
+    const hide = setTimeout(() => setPillDismissed(true), 3250);
+    return () => { clearTimeout(fade); clearTimeout(hide); };
   }, [mode, transferSummary.complete, transferSummary.count]);
 
   useEffect(() => {
@@ -499,6 +501,7 @@ export function App() {
     setStudentCacheProgress({});
     setPhonePreviews({});
     setPillDismissed(false);
+    setPillLeaving(false);
     setHostAvailable(true);
     modeRef.current = 'student';
     setMode('student');
@@ -530,6 +533,7 @@ export function App() {
       perf.mark('offer:' + fileId);
       setSentFiles(current => [...current, { fileId, name: file.name, size: file.size, status: 'announcing' }]);
       setPillDismissed(false);
+      setPillLeaving(false);
       if (!socket.connected || !hostAvailable) socket.wake();
       else offerLocalFile(fileId, entry);
     }
@@ -612,6 +616,7 @@ export function App() {
       setStudentCacheProgress({});
       setPhonePreviews({});
       setPillDismissed(false);
+      setPillLeaving(false);
       setJoinDialogOpen(false);
       setJoinCode(identifier);
       setJoinState('idle');
@@ -852,6 +857,7 @@ export function App() {
 
             <button className="subtle-link return-home" onClick={startFresh}>← Back to home</button>
             {showTransferPill && <TransferPill connecting={studentNeedsConnection}
+              leaving={pillLeaving && transferSummary.complete}
               summary={transferSummary} onReconnect={() => {
                 socket.wake();
                 if (socket.connected) socket.send({ type: 'file.sync' });

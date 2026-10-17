@@ -511,7 +511,7 @@ export function App() {
   function acceptStream(message: ServerMessage): void {
     const {streamId,fileId,begin,end,credits} = message;
     if (typeof streamId !== 'string' || typeof fileId !== 'string' ||
-        !Number.isSafeInteger(begin) || !Number.isSafeInteger(end) || credits !== 4 ||
+        !Number.isSafeInteger(begin) || !Number.isSafeInteger(end) || credits !== 8 ||
         senderStreams.current.has(streamId) ||
         (senderStreams.current.size >= 4)) return;
     const file = filesOnPhone.current.get(fileId);
@@ -521,7 +521,7 @@ export function App() {
       return;
     }
     senderStreams.current.set(streamId, {
-      fileId, next:Number(begin), end:Number(end), credits:4, active:false,
+      fileId, next:Number(begin), end:Number(end), credits:8, active:false,
     });
     void pumpStream(streamId);
   }
@@ -535,7 +535,7 @@ export function App() {
              stream.credits > 0 && stream.next < stream.end && socket.connected) {
         const file = filesOnPhone.current.get(stream.fileId);
         if (!file || file.status !== 'approved') throw Error('PDF sharing stopped');
-        // Read the currently authorized frames in parallel, then deliver them
+        // Read the eight authorized frames in parallel, then deliver them
         // in offset order. An artificial slow File.slice must not force a
         // 256 KiB read/response roundtrip for every frame.
         const reads: Array<{ begin:number; read:Promise<ArrayBuffer> }> = [];

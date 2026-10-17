@@ -600,18 +600,11 @@ export function App() {
     // local preview shortly afterward; it never awaits host-side reception.
     if (!socket.connected || !hostAvailable) socket.wake();
     else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
-    let thumbnailWorkStarted = false;
-    const paintLocalThumbnails = () => {
-      if (thumbnailWorkStarted) return;
-      thumbnailWorkStarted = true;
-      for (const { fileId } of batch) prepareLocalPreview(fileId);
-    };
-    // Start after announcing the file, but don't depend solely on idle
-    // callbacks: background Firefox tabs can defer them for a long time.
-    if (typeof window.requestIdleCallback === 'function') {
-      window.requestIdleCallback(paintLocalThumbnails, { timeout: 450 });
-    }
-    setTimeout(paintLocalThumbnails, 450);
+    // Local rendering is queued asynchronously after every file announcement.
+    // Never rely on background-tab timers/idle callbacks here: Firefox can
+    // suspend them, which would also delay the host's first-slide preview.
+    // PDF.js decoding happens off the main thread and thumbnails stay small.
+    for (const { fileId } of batch) prepareLocalPreview(fileId);
   }
 
   // The native file input fires 'cancel' when a picker is dismissed without

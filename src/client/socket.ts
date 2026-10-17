@@ -11,7 +11,7 @@ type RangeCallbacks = {
   reject: (reason: string) => void;
 };
 type StreamCallbacks = {
-  fileId: string; next: number; end: number;
+  fileId: string; next: number; end: number; committedSinceCredit: number;
   timer: ReturnType<typeof setTimeout>;
   processing: Promise<void>;
   onData: (begin: number, data: Uint8Array) => Promise<void>;
@@ -224,8 +224,10 @@ export class RoomSocket {
                 clearTimeout(state.timer);
                 this.streams.delete(id);
                 state.resolve();
-              } else if (!this.send({type:'stream.credit',streamId:id,credits:1})) {
-                this.failStream(id, 'Stream connection interrupted');
+              } else if (++state.committedSinceCredit >= 4) {
+                state.committedSinceCredit = 0;
+                if (!this.send({type:'stream.credit',streamId:id,credits:4}))
+                  this.failStream(id, 'Stream connection interrupted');
               }
             }).catch(error => this.failStream(id, String(error)));
             return;
@@ -362,7 +364,7 @@ export class RoomSocket {
       resolve = ok; reject = bad;
     });
     const state: StreamCallbacks = {
-      fileId, next: begin, end, onData, resolve,
+      fileId, next: begin, end, committedSinceCredit: 0, onData, resolve,
       reject, processing: Promise.resolve(),
       timer: setTimeout(() => this.failStream(streamId, 'Stream stalled'), 25_000),
     };

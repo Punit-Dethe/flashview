@@ -1425,21 +1425,26 @@ test('refined file cards align owner dots, truncate long names and keep phone co
       const name=element.querySelector<HTMLElement>('.document-owner-name')!;
       const dot=element.querySelector<HTMLElement>('.document-owner-dot')!;
       const size=element.querySelector<HTMLElement>('.document-file-size')!;
-      const rect=(e:Element)=>e.getBoundingClientRect();
+      const titleRect=title.getBoundingClientRect();
+      const cardRect=element.getBoundingClientRect();
+      const dotRect=dot.getBoundingClientRect();
+      const nameRect=name.getBoundingClientRect();
+      const sizeRect=size.getBoundingClientRect();
+      const lineRect=line.getBoundingClientRect();
       return {
         filename: title.textContent,
         titleEllipsis:getComputedStyle(title).textOverflow,
         titleHasOverflow:title.scrollWidth>title.clientWidth,
         titleRightPadding:parseFloat(getComputedStyle(title).paddingRight),
-        titleRightEdge:rect(title).right,
-        cardRightEdge:rect(element).right,
+        titleRightEdge:titleRect.right,
+        cardRightEdge:cardRect.right,
         ownerDisplay:getComputedStyle(owner).display,
         metaWrap:getComputedStyle(line).flexWrap,
         nameHasOverflow:name.scrollWidth>name.clientWidth,
-        dotCenter:(rect(dot).top+rect(dot).bottom)/2,
-        nameCenter:(rect(name).top+rect(name).bottom)/2,
-        sizeRightEdge:rect(size).right,
-        metaRightEdge:rect(line).right,
+        dotCenter:(dotRect.top+dotRect.bottom)/2,
+        nameCenter:(nameRect.top+nameRect.bottom)/2,
+        sizeRightEdge:sizeRect.right,
+        metaRightEdge:lineRect.right,
       };
     });
     assert.equal(check.filename,longName,'Long original filename remains intact');

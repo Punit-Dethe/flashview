@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { PixelIcon } from './PixelIcon';
 import { MAX_FILE_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { isPdfName, safeDownloadName } from '../shared/fileTypes';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
@@ -93,6 +94,7 @@ export function App() {
   const transferSamples = useRef(new Map<string, { bytes: number; time: number }>());
   const [downloadSpeed, setDownloadSpeed] = useState<Record<string, number>>({});
   const [savingFiles, setSavingFiles] = useState<Record<string, boolean>>({});
+  const [queueView, setQueueView] = useState<'grid' | 'list'>('grid');
   const [endConfirm, setEndConfirm] = useState(false);
   const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -726,6 +728,7 @@ export function App() {
     setDocumentPreviews({});
     setDownloadSpeed({});
     setSavingFiles({});
+    setQueueView('grid');
     setEndConfirm(false);
     setEndAcknowledged(false);
     setCopied(false);
@@ -754,119 +757,170 @@ export function App() {
   return (
     <div className={'app premium-app' + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
       (mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending') ? ' is-student-room' : '')}>
-      {!(mode === 'host' && hostSession) && !(mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending')) && (
-      <header className="site-header">
-        <div className="brand" onClick={startFresh} role="button" tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter') startFresh(); }} aria-label="FlashView home">
-          <span className="brand-mark">F<span className="brand-asterisk">✳</span></span>
-          <span>flashview<span className="brand-dot">.</span></span>
-        </div>
-        <div className="header-right">
-          <span className="header-caption">An easier way to present.</span>
-          {mode !== 'welcome' && <span className={'connection ' + socketStatus}><span className="status-dot"/>{statusText(socketStatus)}</span>}
-        </div>
-      </header>
+      {mode !== 'host' && !(mode === 'student' && joinState !== 'idle' && joinState !== 'rejected') && (
+        <header className="site-header reference-nav">
+          <div className="brand" onClick={startFresh} role="button" tabIndex={0}
+            onKeyDown={e=>{if(e.key==='Enter')startFresh();}} aria-label="FlashView home">
+            <span className="reference-logo-mark" aria-hidden="true">
+              <svg viewBox="0 0 26 26"><rect width="26" height="26" rx="8" fill="#0e0f14"/>
+                <path d="M14.5 4 7 14.5h5L10.5 22 19 11h-5z" fill="#fff"/></svg>
+            </span>
+            <span>flashview</span>
+          </div>
+          <nav aria-label="Site navigation">
+            <a href="#how">How it works</a>
+            <a href="#privacy">Privacy</a>
+            <a href="#how">Share any file</a>
+          </nav>
+          <button type="button" className="primary-button reference-pill nav-start"
+            onClick={()=>document.getElementById('start-room')?.scrollIntoView({behavior:'smooth',block:'center'})}>
+            Start a room
+          </button>
+        </header>
       )}
-
       <main className="app-content">
         {mode === 'welcome' && (
-          <div className="welcome">
-            <div className="eyebrow"><span className="eyebrow-stroke"/> THE INSTANT CLASSROOM</div>
-            <h1>From your phone.<br/><em>Onto the big screen.</em></h1>
-            <p className="hero-description">Show a PDF on another device in moments. No downloads, no accounts, no unnecessary steps.</p>
-            <div className="action-layout">
-              <div className="action-card host-card">
-                <span className="card-index">01 / PRESENT</span>
-                <div className="action-icon">↗</div>
-                <h2>Create a room</h2>
-                <p>Set up a room on the smartboard and let students connect with a QR code.</p>
-                <div className="room-creation-actions">
-                  <label className="room-auto-approve">
-                    <input type="checkbox" checked={!autoApprove}
-                      onChange={event => setAutoApprove(!event.target.checked)}/>
-                    <span className="room-auto-text">
-                      <strong>Require approval</strong>
-                      <small>{autoApprove ? 'Anyone with the code can join.' : 'Approve each participant.'}</small>
-                    </span>
-                    <span className="room-auto-switch" aria-hidden="true"/>
-                  </label>
-                  <button className="primary-button" disabled={busy} onClick={createRoom}>
-                    {busy ? 'Creating…' : 'Create a room'} <span>→</span>
-                  </button>
+          <div className="welcome reference-welcome">
+            <section className="reference-sky">
+              <div className="reference-hero">
+                <h1 className="reference-serif">From your phone, onto the big screen.</h1>
+                <div className="reference-actions" id="start-room">
+                  <div className="reference-pane host-card">
+                    <div className="reference-pane-icon"><PixelIcon kind="folder"/></div>
+                    <h2 className="reference-serif">Start a room on the board</h2>
+                    <p>Open this on the classroom computer. Students scan the code and share files here.</p>
+                    <div className="reference-pane-bottom">
+                      <label className="reference-toggle">
+                        <span><strong>Approve each person</strong><small>Off: anyone with the code can join</small></span>
+                        <input type="checkbox" checked={!autoApprove}
+                          onChange={event=>setAutoApprove(!event.target.checked)}/>
+                        <span className="reference-switch" aria-hidden="true"/>
+                      </label>
+                      <button type="button" className="primary-button reference-pill"
+                        disabled={busy} onClick={createRoom}>
+                        {busy?'Creating…':'Create a room'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="reference-pane join-card">
+                    <div className="reference-pane-icon"><PixelIcon kind="doc"/></div>
+                    <h2 className="reference-serif">Send from your device</h2>
+                    <p>Enter the six digits shown on the board, then choose your files.</p>
+                    <form onSubmit={e=>{e.preventDefault();connectStudent();}} className="join-form reference-join-form">
+                      <div className="reference-digits" aria-label="Six-digit room code">
+                        {Array.from({length:6},(_,index)=>(
+                          <input key={index} id={index===0?'code':undefined}
+                            type="text" inputMode="numeric" autoComplete="off"
+                            aria-label={index===0?'Room code':'Digit '+(index+1)}
+                            maxLength={index===0?undefined:1}
+                            value={joinCode[index]??''}
+                            onChange={e=>{
+                              const digits=e.target.value.replace(/\D/g,'');
+                              if(digits.length>1){
+                                setJoinCode(digits.slice(0,6));
+                                return;
+                              }
+                              const updated=joinCode.padEnd(6,' ').split('');
+                              updated[index]=digits||' ';
+                              setJoinCode(updated.join('').trimEnd());
+                              if(digits&&index<5)
+                                (e.target.parentElement?.querySelectorAll('input')[index+1] as HTMLInputElement | undefined)?.focus();
+                            }}
+                            onKeyDown={e=>{
+                              if(e.key==='Backspace'&&!e.currentTarget.value&&index>0)
+                                (e.currentTarget.parentElement?.querySelectorAll('input')[index-1] as HTMLInputElement | undefined)?.focus();
+                            }}
+                            onPaste={e=>{
+                              const pasted=e.clipboardData.getData('text').replace(/\D/g,'').slice(0,6);
+                              if(pasted){e.preventDefault();setJoinCode(pasted);}
+                            }}/>
+                        ))}
+                      </div>
+                      <input id="student-name" className="reference-name-input"
+                        placeholder="Your name (optional)" aria-label="Your name (optional)" maxLength={32}
+                        value={studentName} onChange={e=>setStudentName(e.target.value)}/>
+                      <button className="primary-button reference-pill" type="submit">Join room</button>
+                    </form>
+                  </div>
                 </div>
               </div>
-              <div className="action-card join-card">
-                <span className="card-index">02 / SHARE</span>
-                <div className="action-icon">⌁</div>
-                <h2>Join a room</h2>
-                <p>Have a room code? Enter it here and send a PDF straight from your device.</p>
-                <form onSubmit={e => { e.preventDefault(); connectStudent(); }} className="join-form">
-                  <label htmlFor="code">ROOM CODE</label>
-                  <input id="code" placeholder="6-digit room code" autoComplete="off" value={joinCode}
-                    onChange={e => setJoinCode(e.target.value)} required/>
-                  <label htmlFor="student-name">YOUR NAME <span>(optional)</span></label>
-                  <input id="student-name" placeholder="e.g. Punit" maxLength={32} value={studentName}
-                    onChange={e => setStudentName(e.target.value)}/>
-                  <button className="outline-button" type="submit">Join room <span>↗</span></button>
-                </form>
+            </section>
+            <section className="reference-section" id="how">
+              <h2 className="reference-serif">Three steps between a phone and a smartboard.</h2>
+              <ol className="reference-steps">
+                <li><PixelIcon kind="folder"/><h3>Open the board</h3>
+                  <p>The classroom computer shows a QR code and a six-digit code.</p></li>
+                <li><PixelIcon kind="doc"/><h3>Scan, then pick a file</h3>
+                  <p>Up to a whole class can join one room and send files at once.</p></li>
+                <li><PixelIcon kind="folder"/><h3>Present instantly</h3>
+                  <p>Open PDFs directly while their remaining bytes are still arriving.</p></li>
+              </ol>
+            </section>
+            <section className="reference-section" id="privacy">
+              <div className="reference-trust">
+                <div><h3>No server file storage</h3>
+                  <p>Files pass through a live relay and aren't stored on Cloudflare.</p></div>
+                <div><h3>No accounts</h3>
+                  <p>No Drive, email or messaging login on a shared classroom computer.</p></div>
+                <div><h3>Clear when you end</h3>
+                  <p>End the room to erase its browser cache. Save a copy only if you choose to.</p></div>
               </div>
-            </div>
-            <div className="micro-footer"><span>01 — Connect</span><span>02 — Choose your PDF</span><span>03 — Present instantly</span></div>
+            </section>
+            <footer className="reference-footer">
+              <span>Flashview. An easier way to present.</span>
+              <span>Made for classrooms and conference rooms</span>
+            </footer>
           </div>
         )}
 
         {mode === 'host' && hostSession && (
-          <div className="workspace premium-workspace">
+          <div className="workspace premium-workspace reference-room">
             <div className="workspace-split">
               <aside className="workspace-left" aria-label="Room invitation and participants">
-                <div className="sidebar-brand" aria-label="FlashView">
-                  flashview<span className="sidebar-brand-dot" aria-hidden="true">.</span>
-                </div>
+                <div className="sidebar-brand" aria-label="FlashView">flashview</div>
                 <section className="room-card premium-invite" aria-label="Live room QR code">
                   <div className="qr-side">
                     <div className="qr-plate">
-                      <QRCodeSVG value={joinLink} size={244} marginSize={1} bgColor="#ffffff" fgColor="#151619"/>
+                      <QRCodeSVG value={joinLink} size={244} marginSize={1} bgColor="#ffffff" fgColor="#0e0f14"/>
                     </div>
                   </div>
                   <div className="invite-content">
-                    <div className="room-code-label">ROOM CODE</div>
+                    <div className="room-code-label">Or enter this code on FlashView</div>
                     <div className="room-code">{hostSession.code}</div>
                     <div className="invite-actions">
-                      <button type="button" className="primary-button" onClick={() => void copyInvite()}>
-                        {copied ? 'Copied' : 'Copy link'} <span aria-hidden="true">{copied ? '✓' : '↗'}</span>
-                      </button>
-                      <button type="button" className="outline-button end-room-button"
-                        onClick={() => setEndConfirm(true)}>End room</button>
+                      <button type="button" className="outline-button reference-pill"
+                        onClick={()=>void copyInvite()}>{copied?'Link copied':'Copy link'}</button>
+                      <button type="button" className="outline-button reference-pill end-room-button"
+                        onClick={()=>setEndConfirm(true)}>End room</button>
                     </div>
-                    <span className="room-admission-status">{hostSession.autoApprove ?
-                      'Open room · No approval needed' : 'Approval required to join'}</span>
                   </div>
                 </section>
+                <div className="room-admission-status">
+                  <div><strong>Approve each person</strong>
+                    <small>{hostSession.autoApprove?'Anyone with the code can join':'Each person waits for your OK'}</small></div>
+                  <span className={'reference-switch visual-only'+(!hostSession.autoApprove?' is-on':'')} aria-hidden="true"/>
+                </div>
                 <section className="sidebar-participants" aria-label="Participants">
                   <div className="sidebar-participants-heading">
-                    <h2>Participants</h2>
-                    <span className="sidebar-participant-count">{students.length}</span>
-                    <span className={'connection sidebar-connection ' + socketStatus} title={statusText(socketStatus)}
-                      aria-label={statusText(socketStatus)}><span className="status-dot"/></span>
+                    <h2>In the room · {students.length}</h2>
                   </div>
                   <div className="sidebar-participants-scroll">
-                    {students.length === 0 &&
-                      <p className="sidebar-participants-empty">No one has joined yet.</p>}
-                    {students.filter(s => !s.approved).map(s => (
+                    {students.length===0&&<p className="sidebar-participants-empty">No one has joined yet.</p>}
+                    {students.filter(s=>!s.approved).map(s=>(
                       <div className="approval sidebar-approval" key={s.id}>
-                        <span className="participant-avatar" aria-hidden="true">{s.name.trim().charAt(0).toUpperCase() || '?'}</span>
+                        <span className="participant-avatar" aria-hidden="true">{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
                         <span className="participant-info"><strong>{s.name}</strong><small>Waiting for approval</small></span>
                         <div className="participant-actions">
-                          <button className="mini-accept" onClick={() => socket.send({ type: 'student.accept', studentId: s.id })}>Allow</button>
-                          <button className="mini-reject" onClick={() => socket.send({ type: 'student.reject', studentId: s.id })} aria-label={'Decline ' + s.name}>×</button>
+                          <button className="mini-accept" onClick={()=>socket.send({type:'student.accept',studentId:s.id})}>Allow</button>
+                          <button className="mini-reject" onClick={()=>socket.send({type:'student.reject',studentId:s.id})}
+                            aria-label={'Decline '+s.name}>×</button>
                         </div>
                       </div>
                     ))}
-                    {students.filter(s => s.approved).map(s => (
+                    {students.filter(s=>s.approved).map(s=>(
                       <div className="participant-row" key={s.id}>
-                        <span className="participant-avatar" aria-hidden="true">{s.name.trim().charAt(0).toUpperCase() || '?'}</span>
+                        <span className="participant-avatar" aria-hidden="true">{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
                         <span className="participant-info"><strong>{s.name}</strong><small>Connected</small></span>
-                        <span className="participant-online" aria-label="Approved">●</span>
                       </div>
                     ))}
                   </div>
@@ -876,35 +930,47 @@ export function App() {
                 <div className="document-column">
                   <div className="list-heading">
                     <div className="list-heading-title">
-                      <h1>Files <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h1>
-                      <p>Shared with this room</p>
+                      <h1 className="reference-serif">Queue <sup>{documents.filter(f=>f.status!=='rejected').length}</sup></h1>
                     </div>
-                    <button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}
-                      aria-label="Refresh submissions" title="Refresh submissions">↻</button>
+                    <div className="reference-room-tools">
+                      <div className="reference-view-selector" role="group" aria-label="View">
+                        <button type="button" className={queueView==='grid'?'is-active':''}
+                          aria-label="Grid view" aria-pressed={queueView==='grid'} onClick={()=>setQueueView('grid')}>
+                          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+                        </button>
+                        <button type="button" className={queueView==='list'?'is-active':''}
+                          aria-label="List view" aria-pressed={queueView==='list'} onClick={()=>setQueueView('list')}>
+                          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
+                        </button>
+                      </div>
+                      <span className={'connection reference-live '+socketStatus}>
+                        <span className="status-dot"/>{socketStatus==='connected'?'Relay open · nothing stored':statusText(socketStatus)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="document-list document-grid">
-                    {documents.filter(f => f.status !== 'rejected').length === 0 && (
+                  <div className={'document-list document-grid'+(queueView==='list'?' is-list':'')}>
+                    {documents.filter(f=>f.status!=='rejected').length===0&&(
                       <div className="empty-list">
-                        <span className="empty-art" aria-hidden="true">▤</span>
-                        <h3>Nothing shared yet</h3>
-                        <p>Once a participant shares a file, it will appear here.</p>
+                        <PixelIcon kind="folder"/>
+                        <h3>Waiting for the first file</h3>
+                        <p>Scan the code with your phone and send something.</p>
                       </div>
                     )}
-                    {documents.filter(f => f.status !== 'rejected').map(file => (
-                      <DocumentCard key={file.fileId}
-                        file={file} previewUrl={documentPreviews[file.fileId]}
+                    {documents.filter(f=>f.status!=='rejected').map(file=>(
+                      <DocumentCard key={file.fileId} file={file}
+                        previewUrl={documentPreviews[file.fileId]}
                         progress={cacheProgress[file.fileId]}
                         bytesPerSecond={downloadSpeed[file.fileId]}
-                        onPresent={() => {
-                          if (!isPdfName(file.name)) return;
-                          try { presentation.open(file, Boolean(cacheProgress[file.fileId]?.complete)); }
-                          catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
+                        onPresent={()=>{
+                          if(!isPdfName(file.name))return;
+                          try{presentation.open(file,Boolean(cacheProgress[file.fileId]?.complete));}
+                          catch(e){setError(e instanceof Error?e.message:'Unable to open presentation');}
                         }}
-                        onDownload={() => void downloadFile(file)}
+                        onDownload={()=>void downloadFile(file)}
                         saving={Boolean(savingFiles[file.fileId])}/>
                     ))}
                   </div>
-
+                  <p className="reference-room-hint">Files stay only in this room's browser cache until you end the room. Download what you need before ending it.</p>
                 </div>
               </section>
             </div>

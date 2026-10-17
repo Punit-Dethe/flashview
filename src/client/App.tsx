@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
+import { assignParticipantColors } from './participantColors';
 import { MAX_FILE_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { isPdfName, safeDownloadName } from '../shared/fileTypes';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
@@ -72,6 +73,7 @@ export function App() {
   const [joinState, setJoinState] = useState<'idle' | 'connecting' | 'pending' | 'accepted' | 'rejected'>(initialJoin ? 'connecting' : 'idle');
   const [students, setStudents] = useState<StudentInfo[]>([]);
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
+  const [participantColors, setParticipantColors] = useState<Record<string,string>>({});
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
   const [autoApprove, setAutoApprove] = useState(true);
@@ -101,6 +103,14 @@ export function App() {
   const [copied, setCopied] = useState(false);
   const transferSummary = summarizeTransfers(sentFiles, studentCacheProgress);
   const [showDonePill, setShowDonePill] = useState(false);
+  // Assign by participant ID, not by file or display name. Existing colors
+  // never shift when another student joins, leaves, or sends another file.
+  useEffect(() => {
+    if (mode !== 'host') return;
+    const ids = [...students.map(student => student.id),
+      ...documents.map(file => file.ownerId)];
+    setParticipantColors(current => assignParticipantColors(current, ids));
+  }, [mode, students, documents]);
   // The host confirms whole files, not incremental byte counts.
   useEffect(() => {
     if (mode !== 'student' || !transferSummary.complete) {
@@ -721,6 +731,7 @@ export function App() {
     setError('');
     setStudents([]);
     setDocuments([]);
+    setParticipantColors({});
     setSentFiles([]);
     setCacheProgress({});
     setStudentCacheProgress({});
@@ -908,7 +919,8 @@ export function App() {
                     {students.length===0&&<p className="sidebar-participants-empty">No one has joined yet.</p>}
                     {students.filter(s=>!s.approved).map(s=>(
                       <div className="approval sidebar-approval" key={s.id}>
-                        <span className="participant-avatar" aria-hidden="true">{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
+                        <span className="participant-avatar" aria-hidden="true"
+                          style={participantColors[s.id]?{backgroundColor:participantColors[s.id]}:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
                         <span className="participant-info"><strong>{s.name}</strong><small>Waiting for approval</small></span>
                         <div className="participant-actions">
                           <button className="mini-accept" onClick={()=>socket.send({type:'student.accept',studentId:s.id})}>Allow</button>
@@ -919,7 +931,8 @@ export function App() {
                     ))}
                     {students.filter(s=>s.approved).map(s=>(
                       <div className="participant-row" key={s.id}>
-                        <span className="participant-avatar" aria-hidden="true">{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
+                        <span className="participant-avatar" aria-hidden="true"
+                          style={participantColors[s.id]?{backgroundColor:participantColors[s.id]}:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
                         <span className="participant-info"><strong>{s.name}</strong><small>Connected</small></span>
                       </div>
                     ))}
@@ -958,6 +971,7 @@ export function App() {
                     )}
                     {documents.filter(f=>f.status!=='rejected').map(file=>(
                       <DocumentCard key={file.fileId} file={file}
+                        participantColor={participantColors[file.ownerId]}
                         previewUrl={documentPreviews[file.fileId]}
                         progress={cacheProgress[file.fileId]}
                         bytesPerSecond={downloadSpeed[file.fileId]}

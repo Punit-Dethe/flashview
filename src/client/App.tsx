@@ -598,9 +598,16 @@ export function App() {
     // local preview shortly afterward; it never awaits host-side reception.
     if (!socket.connected || !hostAvailable) socket.wake();
     else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
-    setTimeout(() => {
+    const paintLocalThumbnails = () => {
       for (const { fileId } of batch) prepareLocalPreview(fileId);
-    }, 90);
+    };
+    // Give byte transfer the first turn on slow phones; thumbnail rendering
+    // is cosmetic, and must not seize the main thread at upload start.
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(paintLocalThumbnails, { timeout: 1200 });
+    } else {
+      setTimeout(paintLocalThumbnails, 350);
+    }
   }
 
   // The native file input fires 'cancel' when a picker is dismissed without

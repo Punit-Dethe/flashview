@@ -498,7 +498,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
       const sockets = record.__flashviewSockets ?? [];
       return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN &&
-        document.querySelector('.connection.connected') !== null &&
+        document.querySelector('.student-drive') !== null &&
         (document.querySelector('.student-file-card')?.textContent ?? '').includes('smoke.pdf');
     }, null, { timeout: 20000 });
     assert.match(await student.locator('.student-file-card').first().innerText(), /smoke\.pdf/);

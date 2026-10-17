@@ -1425,7 +1425,7 @@ test('refined file cards align owner dots, truncate long names and keep phone co
       const name=element.querySelector<HTMLElement>('.document-owner-name')!;
       const dot=element.querySelector<HTMLElement>('.document-owner-dot')!;
       const size=element.querySelector<HTMLElement>('.document-file-size')!;
-      const rect=(e:HTMLElement)=>e.getBoundingClientRect();
+      const rect=(e:Element)=>e.getBoundingClientRect();
       return {
         filename: title.textContent,
         titleEllipsis:getComputedStyle(title).textOverflow,
@@ -1459,7 +1459,7 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     await list.waitFor();
     const dot=await list.locator('.document-owner-dot').first().boundingBox();
     const name=await list.locator('.document-owner-name').first().boundingBox();
-    assert.ok(dot&&name&&Math.abs((dot.top+dot.bottom)/2-(name.top+name.bottom)/2)<4,
+    assert.ok(dot&&name&&Math.abs((dot.y+dot.height/2)-(name.y+name.height/2))<4,
       'List mode keeps the owner dot beside the name too');
     await host.getByRole('button',{name:'End room'}).click();
     await host.locator('.end-check input').check();

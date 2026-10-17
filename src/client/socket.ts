@@ -130,9 +130,9 @@ export class RoomSocket {
     }, 10_000);
     this.onStatus('connecting');
     ws.onopen = () => {
+      if (this.ws !== ws) return;
       if (this.connectTimer !== null) clearTimeout(this.connectTimer);
       this.connectTimer = null;
-      if (this.ws !== ws) return;
       // Hello must go out before the socket is considered authenticated.
       ws.send(JSON.stringify({ v: 1, type: 'hello', ...this.identity }));
       this.startHeartbeat();

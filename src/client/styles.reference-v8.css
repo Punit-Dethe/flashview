@@ -421,3 +421,17 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 @media(prefers-reduced-motion:reduce) {
  .premium-app *, .premium-app *::before, .premium-app *::after { animation:none!important; transition:none!important; }
 }
+
+/* The HTML reference assumes a tall display; classroom projectors/laptops can
+   be only 600–800px high. Keep a clickable participant list rather than letting
+   the large QR card consume all available room. Normal-height layout is exact. */
+@media (min-width:901px) and (max-height:850px) {
+ .premium-app .reference-room .workspace-left { gap:13px; padding:17px 24px; }
+ .premium-app .reference-room .sidebar-brand { font-size:38px; }
+ .premium-app .reference-room .qr-plate { width:min(100%,232px); max-width:232px; margin:auto; padding:12px; }
+ .premium-app .reference-room .room-code-label { margin:10px 0 3px; font-size:12px; }
+ .premium-app .reference-room .room-code { font-size:48px; margin:0 0 12px; }
+ .premium-app .reference-room .room-admission-status { padding:8px 12px; }
+ .premium-app .reference-room .sidebar-participants { margin:0; }
+ .premium-app .reference-room .sidebar-participants-scroll { flex:1 1 auto; min-height:60px; }
+}

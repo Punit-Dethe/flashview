@@ -704,7 +704,7 @@ export function App() {
                         progress={cacheProgress[file.fileId]}
                         bytesPerSecond={downloadSpeed[file.fileId]}
                         onPresent={() => {
-                          try { presentation.open(file); }
+                          try { presentation.open(file, Boolean(cacheProgress[file.fileId]?.complete)); }
                           catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
                         }}/>
                     ))}

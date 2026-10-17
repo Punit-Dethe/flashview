@@ -274,3 +274,45 @@ PDF and device pair over the actual network, alternating packet sizes.
 After real-device A/B tests, 256 KiB is the default; 64/128 KiB remain opt-in fallbacks.
 WebRTC is outside the planned architecture: FlashView prioritizes a relay that
 works across different networks.
+
+## Performance 3.0 — Phase 3 credited sender streaming A/B (experimental)
+
+Phase 2 IndexedDB batching was reverted after a real-device test found no
+meaningful improvement. **256 KiB network packets remain the default**, with
+manual `?packet=128` and `?packet=64` diagnostic overrides. PDF previews,
+passive presenter, 64 KiB persistent cache blocks, and the one-write-per-block
+storage implementation remain unchanged.
+
+Phase 3 is *off by default*. Start a classroom with `?transfer=stream` on
+the **teacher host** URL to test a different network transport:
+
+1. The host selects a contiguous missing segment of the PDF and sends ONE
+   `stream.open` control message to the room relay.
+2. The relay authorizes an approved student's file and grants a bounded
+   initial window of **4 × 256 KiB**. The phone reads authorized frames
+   concurrently, then sends them sequentially in PDF order.
+3. The relay checks identity, matching file, exact next byte offset, frame
+   size and remaining credits. **No PDF bytes are stored at Cloudflare.**
+4. The classroom splits each frame into original 64 KiB IndexedDB blocks.
+   Only after all blocks in a frame commit does the host send a new
+   `stream.credit` message. This keeps memory and in-flight bytes bounded.
+5. If a stream fails, disconnects or is cancelled, previously committed cache
+   blocks remain available. The next session starts at a missing 64 KiB block,
+   without changing viewer behavior or file format.
+
+The legacy range-request engine remains the ordinary default (no query flag)
+and the immediate rollback option. This experiment intentionally tests only
+network scheduling; **not** IndexedDB batching, extra WebSocket lanes,
+WebRTC/direct peer-to-peer, or relay migration.
+
+Repeatable synthetic localhost examples:
+
+    BENCH_MIB=4 BENCH_RUNS=3 BENCH_FILE_READ_DELAY_MS=40 BENCH_PACKET_KIB=256 npm run bench:baseline
+    BENCH_MIB=4 BENCH_RUNS=3 BENCH_FILE_READ_DELAY_MS=40 BENCH_PACKET_KIB=256 BENCH_STREAM=1 npm run bench:baseline
+
+Repeat both with `FLASHVIEW_BACKEND=cloudflare` and inspect the CI artifact
+`flashview-streaming-ab`. Simulated local browser timing cannot demonstrate
+faster real mobile-internet transfer. Compare at least five real-device paired
+runs at full-file cached completion, same PDF, networks, and device pair.
+Do not make streaming the default until it wins that real-world test and
+reconnection/resume tests remain green.

@@ -75,9 +75,12 @@ export class PresentationHost {
   }
   dispose(): void { this.closeAll(); this.cache?.dispose(); this.cache = null; this.lastProgressPaint.clear(); }
 
-  open(file: PdfManifest): void {
+  open(file: PdfManifest, locallyComplete = false): void {
     if (!this.cache) throw Error('Classroom cache is unavailable. Refresh the dashboard.');
-    if (!this.socket.connected && file.status !== 'offline') throw Error('Classroom connection interrupted.');
+    // A fully downloaded PDF is independent of the original sender and
+    // classroom WebSocket. Allow it to present while the relay reconnects.
+    if (!this.socket.connected && file.status !== 'offline' && !locallyComplete)
+      throw Error('Classroom connection interrupted.');
     if (typeof BroadcastChannel === 'undefined') throw Error('Presentation tabs are unsupported in this browser.');
     const key = crypto.randomUUID().replaceAll('-', '');
     const openedAt = perf.enabled ? performance.now() : 0;

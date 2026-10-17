@@ -88,6 +88,10 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
 
     await first.getByRole('button', { name: /Create a room/ }).click();
     await first.locator('.connection.connected').waitFor();
+    assert.equal(await first.locator('.site-header').count(), 0, 'Room workspace must have no header');
+    assert.equal(await first.locator('.workspace-topline').count(), 0, 'Room breadcrumbs and room-active strip are removed');
+    assert.equal(await first.locator('.workspace-invite-heading').count(), 0, 'Sidebar must not have an introductory hero');
+    assert.equal(await first.getByRole('heading', { name: 'Participants' }).count(), 1);
     const firstCode = (await first.locator('.room-code').textContent())?.trim();
     assert.match(firstCode ?? '', /^\d{6}$/);
     assert.equal(await first.locator('.qr-plate svg').count(), 1);
@@ -95,6 +99,11 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     const right = first.getByTestId('documents-scroll-region');
     const leftBefore = await left.boundingBox();
     assert.ok(leftBefore && leftBefore.width > 250);
+    assert.ok(leftBefore && Math.abs(leftBefore.y) < 2,
+      'Sidebar must begin at the top edge of the viewport without header chrome');
+    const docHeading = await right.getByRole('heading', { name: /Documents/ }).boundingBox();
+    assert.ok(docHeading && leftBefore && docHeading.x >= leftBefore.x + leftBefore.width,
+      'Documents should occupy the area to the right of the full-height sidebar');
     const copy = await first.getByRole('button', { name: /Copy link/ }).boundingBox();
     const end = await first.getByRole('button', { name: /End session/ }).boundingBox();
     const join = await first.getByRole('button', { name: /Join another room/ }).boundingBox();
@@ -135,7 +144,9 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     await first.getByRole('button', { name: /Join another room/ }).click();
     await first.locator('#switch-code').fill(secondCode!);
     await first.getByRole('button', { name: /Join room/ }).click();
-    await second.locator('.approval').waitFor();
+    await second.locator('.sidebar-participants .approval').waitFor();
+    assert.equal(await second.locator('.workspace-right .approval').count(), 0,
+      'Student approval rows belong in the sidebar, not in the document panel');
     assert.ok(await first.getByText('Waiting for the teacher.').isVisible());
     assert.equal(await first.evaluate(() => sessionStorage.getItem('flashview-host')), null,
       'Switching rooms must remove the previous host credentials');

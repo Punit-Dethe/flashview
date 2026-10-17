@@ -16,7 +16,7 @@
 
 FlashView opens to the original **Create a room / Join a room** choices. Room creation happens only after clicking Create a room. Refreshing an existing host room restores the current session in that tab; a student's `?join=` invitation opens the student flow directly.
 
-After creating a room, the teacher sees a dark split-pane workspace. On desktop, the **left invitation panel stays pinned** with the QR code, six-digit room number, Copy link and End session controls side by side, and Join another room below. The **right document column scrolls independently**, keeping the QR accessible even when many students submit PDFs. Pending student approvals live in the document pane. On smaller screens the panels stack and use standard page scrolling.
+After creating a room, the teacher sees a full-height dark workspace **without the top header**. The entire left side is a fixed sidebar with a large QR code, six-digit room code, side-by-side Copy link and End session actions, Join another room below, and a participant list with approval controls. Participant entries scroll within the sidebar when needed, leaving the QR accessible. The **right document pane scrolls independently** and contains the presentations queue without extra introductory labels. On smaller screens the sections stack and use normal page scrolling.
 
 Joining another room ends the current room and removes its cached PDF bytes from that computer after the teacher submits the new code. Ending a session continues to require confirmation and cleanup. The PDF transfer protocol, background caching, and fullscreen presenter are unchanged.
 

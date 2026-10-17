@@ -522,10 +522,10 @@ export function App() {
   }
 
   const joinLink = hostSession ? window.location.origin + '/?join=' + encodeURIComponent(hostSession.joinToken) : '';
-  const approvedStudents = students.filter(s => s.approved).length;
 
   return (
     <div className={'app premium-app' + (mode === 'host' && hostSession ? ' is-host-workspace' : '')}>
+      {!(mode === 'host' && hostSession) && (
       <header className="site-header">
         <div className="brand" onClick={startFresh} role="button" tabIndex={0}
           onKeyDown={e => { if (e.key === 'Enter') startFresh(); }} aria-label="FlashView home">
@@ -537,6 +537,7 @@ export function App() {
           {mode !== 'welcome' && <span className={'connection ' + socketStatus}><span className="status-dot"/>{statusText(socketStatus)}</span>}
         </div>
       </header>
+      )}
 
       <main className="app-content">
         {mode === 'welcome' && (
@@ -576,23 +577,13 @@ export function App() {
 
         {mode === 'host' && hostSession && (
           <div className="workspace premium-workspace">
-            <div className="workspace-topline">
-              <span className="workspace-location">Workspace <span aria-hidden="true">/</span> <strong>Room overview</strong></span>
-              <span className="workspace-live-label"><span className="status-dot"/> Room active</span>
-            </div>
             <div className="workspace-split">
-              <aside className="workspace-left" aria-label="Room invitation and controls">
-                <div className="workspace-invite-heading">
-                  <div className="eyebrow">INVITE PARTICIPANTS</div>
-                  <h1>Share this room.</h1>
-                  <p>Others can scan your code or join using the six-digit number.</p>
-                </div>
+              <aside className="workspace-left" aria-label="Room invitation and participants">
                 <section className="room-card premium-invite" aria-label="Live room QR code">
                   <div className="qr-side">
                     <div className="qr-plate">
-                      <QRCodeSVG value={joinLink} size={218} marginSize={1} bgColor="#ffffff" fgColor="#151619"/>
+                      <QRCodeSVG value={joinLink} size={244} marginSize={1} bgColor="#ffffff" fgColor="#151619"/>
                     </div>
-                    <span>SCAN TO JOIN</span>
                   </div>
                   <div className="invite-content">
                     <div className="room-code-label">ROOM CODE</div>
@@ -610,33 +601,45 @@ export function App() {
                     }}>Join another room <span aria-hidden="true">↗</span></button>
                   </div>
                 </section>
-                <div className="workspace-invite-footer">
-                  <div><span className="status-dot"/> {approvedStudents} participant{approvedStudents === 1 ? '' : 's'} connected</div>
-                  <p>Documents are received in the background. Keep this tab open during the session.</p>
-                </div>
+                <section className="sidebar-participants" aria-label="Participants">
+                  <div className="sidebar-participants-heading">
+                    <h2>Participants</h2>
+                    <span className="sidebar-participant-count">{students.length}</span>
+                    <span className={'connection sidebar-connection ' + socketStatus} title={statusText(socketStatus)}
+                      aria-label={statusText(socketStatus)}><span className="status-dot"/></span>
+                  </div>
+                  <div className="sidebar-participants-scroll">
+                    {students.length === 0 &&
+                      <p className="sidebar-participants-empty">No one has joined yet.</p>}
+                    {students.filter(s => !s.approved).map(s => (
+                      <div className="approval sidebar-approval" key={s.id}>
+                        <span className="participant-avatar" aria-hidden="true">{s.name.trim().charAt(0).toUpperCase() || '?'}</span>
+                        <span className="participant-info"><strong>{s.name}</strong><small>Waiting for approval</small></span>
+                        <div className="participant-actions">
+                          <button className="mini-accept" onClick={() => socket.send({ type: 'student.accept', studentId: s.id })}>Allow</button>
+                          <button className="mini-reject" onClick={() => socket.send({ type: 'student.reject', studentId: s.id })} aria-label={'Decline ' + s.name}>×</button>
+                        </div>
+                      </div>
+                    ))}
+                    {students.filter(s => s.approved).map(s => (
+                      <div className="participant-row" key={s.id}>
+                        <span className="participant-avatar" aria-hidden="true">{s.name.trim().charAt(0).toUpperCase() || '?'}</span>
+                        <span className="participant-info"><strong>{s.name}</strong><small>Connected</small></span>
+                        <span className="participant-online" aria-label="Approved">●</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
               </aside>
-              <section className="workspace-right" aria-label="Shared documents and pending participants" data-testid="documents-scroll-region">
+              <section className="workspace-right" aria-label="Shared documents" data-testid="documents-scroll-region">
                 <div className="document-column">
                   <div className="list-heading">
                     <div className="list-heading-title">
-                      <div className="eyebrow">YOUR CLASSROOM</div>
-                      <h2>Documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2>
-                      <p>Files appear here as soon as they are shared.</p>
+                      <h1>Documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h1>
                     </div>
-                    <button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>
-                      Refresh submissions <span aria-hidden="true">↻</span>
-                    </button>
+                    <button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}
+                      aria-label="Refresh submissions" title="Refresh submissions">↻</button>
                   </div>
-                  {students.some(s => !s.approved) && <section className="pending-panel" aria-label="Pending participants">
-                    <div className="pending-heading"><span className="status-dot"/> Waiting for your approval</div>
-                    {students.filter(s => !s.approved).map(s => <div className="approval" key={s.id}>
-                      <span><strong>{s.name}</strong><small>Requested access to this room</small></span>
-                      <div>
-                        <button className="mini-accept" onClick={() => socket.send({ type: 'student.accept', studentId: s.id })}>Allow</button>
-                        <button className="mini-reject" onClick={() => socket.send({ type: 'student.reject', studentId: s.id })} aria-label={'Decline ' + s.name}>Decline</button>
-                      </div>
-                    </div>)}
-                  </section>}
                   <div className="document-list">
                     {documents.filter(f => f.status !== 'rejected').length === 0 &&
                       <div className="empty-list">
@@ -680,6 +683,7 @@ export function App() {
                       </article>
                     ))}
                   </div>
+
                 </div>
               </section>
             </div>

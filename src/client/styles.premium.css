@@ -1335,3 +1335,6 @@ html, body { background: #f7f9fc; }
 @media (prefers-reduced-motion: reduce) {
   .premium-app .room-auto-switch, .premium-app .room-auto-switch::after { transition: none; }
 }
+
+/* Native inputs, scrollbars and picker chrome should match the light room. */
+:root { color-scheme: light; }

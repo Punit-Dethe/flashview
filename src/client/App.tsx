@@ -730,7 +730,7 @@ export function App() {
               <div className="action-card host-card">
                 <span className="card-index">01 / PRESENT</span>
                 <div className="action-icon">↗</div>
-                <h2>Start a session</h2>
+                <h2>Create a room</h2>
                 <p>Set up a room on the smartboard and let students connect with a QR code.</p>
                 <label className="room-auto-approve">
                   <input type="checkbox" checked={autoApprove}
@@ -749,7 +749,7 @@ export function App() {
               <div className="action-card join-card">
                 <span className="card-index">02 / SHARE</span>
                 <div className="action-icon">⌁</div>
-                <h2>Join a session</h2>
+                <h2>Join a room</h2>
                 <p>Have a room code? Enter it here and send a PDF straight from your device.</p>
                 <form onSubmit={e => { e.preventDefault(); connectStudent(); }} className="join-form">
                   <label htmlFor="code">ROOM CODE</label>
@@ -787,7 +787,7 @@ export function App() {
                         {copied ? 'Copied' : 'Copy link'} <span aria-hidden="true">{copied ? '✓' : '↗'}</span>
                       </button>
                       <button type="button" className="outline-button end-room-button"
-                        onClick={() => setEndConfirm(true)}>End session</button>
+                        onClick={() => setEndConfirm(true)}>End room</button>
                     </div>
                     <span className="room-admission-status">{hostSession.autoApprove ?
                       'Open room · No approval needed' : 'Approval required to join'}</span>
@@ -864,7 +864,7 @@ export function App() {
         )}
 
         {mode === 'host' && !hostSession && (
-          <div className="simple-state"><h1>Session ended.</h1><p>Create a new classroom to continue.</p><button className="primary-button" onClick={startFresh}>Go home →</button></div>
+          <div className="simple-state"><h1>Room ended.</h1><p>Create a new classroom to continue.</p><button className="primary-button" onClick={startFresh}>Go home →</button></div>
         )}
 
         {mode === 'student' && (
@@ -985,8 +985,8 @@ export function App() {
         {endConfirm && mode === 'host' && hostSession && (
           <div className="dialog-backdrop">
             <section className="end-dialog" role="dialog" aria-modal="true" aria-labelledby="end-title">
-              <div className="eyebrow">END SESSION / {hostSession.code}</div>
-              <h2 id="end-title">End this classroom?</h2>
+              <div className="eyebrow">END ROOM / {hostSession.code}</div>
+              <h2 id="end-title">End this room?</h2>
               <p>This will close all presentation tabs, disconnect students, and delete the PDFs
                 and previews FlashView has cached on <strong>this computer</strong> for this room.</p>
               <p>Original PDFs on students' devices won't be touched. This action cannot be undone.</p>

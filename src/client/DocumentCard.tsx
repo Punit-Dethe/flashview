@@ -54,11 +54,15 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
     </div>
     <div className="document-card-info">
       <h3 title={file.name}>{file.name}</h3>
-      <p><span className="document-file-owner" title={file.ownerName}>
-        <span className="document-owner-dot" aria-hidden="true"
-          style={participantColor?{backgroundColor:participantColor}:undefined}/>
-        {file.ownerName}
-      </span><span aria-hidden="true">·</span>{formatBytes(file.size)}</p>
+      <p className="document-file-meta">
+        <span className="document-file-owner" title={file.ownerName}>
+          <span className="document-owner-dot" aria-hidden="true"
+            style={participantColor?{backgroundColor:participantColor}:undefined}/>
+          <span className="document-owner-name">{file.ownerName}</span>
+        </span>
+        <span className="document-file-separator" aria-hidden="true">·</span>
+        <span className="document-file-size">{formatBytes(file.size)}</span>
+      </p>
     </div>
     <div className={'cache-ring'+(cached?' is-complete':'')} role="progressbar"
       aria-label={'Cached progress for '+file.name}

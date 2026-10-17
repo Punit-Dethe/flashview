@@ -714,7 +714,7 @@ export function App() {
                     <span className="room-auto-switch" aria-hidden="true"/>
                   </label>
                   <button className="primary-button" disabled={busy} onClick={createRoom}>
-                    {busy ? 'Creating…' : 'Create room'} <span>→</span>
+                    {busy ? 'Creating…' : 'Create a room'} <span>→</span>
                   </button>
                 </div>
               </div>

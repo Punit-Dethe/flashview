@@ -600,16 +600,18 @@ export function App() {
     // local preview shortly afterward; it never awaits host-side reception.
     if (!socket.connected || !hostAvailable) socket.wake();
     else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
+    let thumbnailWorkStarted = false;
     const paintLocalThumbnails = () => {
+      if (thumbnailWorkStarted) return;
+      thumbnailWorkStarted = true;
       for (const { fileId } of batch) prepareLocalPreview(fileId);
     };
-    // Give byte transfer the first turn on slow phones; thumbnail rendering
-    // is cosmetic, and must not seize the main thread at upload start.
+    // Start after announcing the file, but don't depend solely on idle
+    // callbacks: background Firefox tabs can defer them for a long time.
     if (typeof window.requestIdleCallback === 'function') {
-      window.requestIdleCallback(paintLocalThumbnails, { timeout: 1200 });
-    } else {
-      setTimeout(paintLocalThumbnails, 350);
+      window.requestIdleCallback(paintLocalThumbnails, { timeout: 450 });
     }
+    setTimeout(paintLocalThumbnails, 450);
   }
 
   // The native file input fires 'cancel' when a picker is dismissed without

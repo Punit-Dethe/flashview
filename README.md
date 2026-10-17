@@ -241,3 +241,36 @@ Source: GitHub Actions run 38959904035, stage1-comparison artifact.
 
 Stage 2 has NOT started. Real-device A/B and multi-student stress results
 are needed before changing packet size or raising global concurrency caps.
+
+## Performance 3.0 — Phase 1 network packet A/B (experimental)
+
+Phase 0 has already collected repeatable Node and Cloudflare-local baselines.
+This experiment changes ONLY the number of original PDF bytes in each background
+WebSocket range request. Everything else, including thumbnails, room security,
+64 KiB IndexedDB cache blocks, separate transactions per block, and passive PDF
+viewing, remains as before.
+
+In the **teacher/host** URL (before creating the room), choose:
+- Normal **64 KiB** baseline: no parameter, or `?packet=64`
+- Experimental **128 KiB** network requests: `?packet=128`
+- Experimental **256 KiB** network requests: `?packet=256`
+
+Append `&packet=...` if the URL already has other query parameters. Students do
+not need the flag. Incomplete/partially cached files resume at missing 64 KiB
+cache-block boundaries; network requests must stop at cached or in-flight gaps.
+All received blocks are persisted separately and count toward completion ONLY
+after their original IndexedDB write commits.
+
+Synthetic paired benchmark examples:
+
+    BENCH_MIB=4 BENCH_RUNS=3 BENCH_FILE_READ_DELAY_MS=40 BENCH_PACKET_KIB=64 npm run bench:baseline
+    BENCH_MIB=4 BENCH_RUNS=3 BENCH_FILE_READ_DELAY_MS=40 BENCH_PACKET_KIB=128 npm run bench:baseline
+    BENCH_MIB=4 BENCH_RUNS=3 BENCH_FILE_READ_DELAY_MS=40 BENCH_PACKET_KIB=256 npm run bench:baseline
+
+Repeat each with `FLASHVIEW_BACKEND=cloudflare`. GitHub Actions records these
+as `flashview-network-packet-comparison`. Synthetic localhost timings don't
+establish real-world cellular-to-school transfer performance; measure the same
+PDF and device pair over the actual network, alternating packet sizes.
+No packet size should become the default until real-device results are reviewed.
+WebRTC is outside the planned architecture: FlashView prioritizes a relay that
+works across different networks.

@@ -127,7 +127,7 @@ try {
         const awaiting = host.locator('.approval').filter({hasText:'Bench ' + (i + 1)});
         await awaiting.waitFor({timeout:20000});
         await awaiting.getByRole('button',{name:'Allow'}).click();
-        await student.getByText('Choose a PDF to share.').waitFor();
+        await student.getByRole('heading', { name: 'My files' }).waitFor();
       }
       const start = Date.now();
       await Promise.all(senders.map(sender => sender.locator('input[type=file]').setInputFiles({

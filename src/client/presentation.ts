@@ -127,6 +127,10 @@ export class PresentationHost {
             !Number.isSafeInteger(m.begin) || !Number.isSafeInteger(m.end) ||
             m.begin < 0 || m.end <= m.begin || m.end > file.size ||
             m.end - m.begin > MAX_RANGE_BYTES || requests.has(m.id)) return;
+        // The presenter may be foreground while its owning classroom tab
+        // is backgrounded. Missing-page requests are a reason to wake the
+        // shared room socket immediately, not wait for a periodic timer.
+        if (!this.socket.connected) this.socket.wake();
         // Cached bytes are available even after the student leaves.
         // All misses use one shared room cache, not a fresh viewer transfer.
         let cancelled = false;

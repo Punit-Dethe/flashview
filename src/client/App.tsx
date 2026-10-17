@@ -738,7 +738,8 @@ export function App() {
                   <button className="primary-button" onClick={e => { e.stopPropagation(); browseFiles(); }}>Browse files <span>↗</span></button>
                   <small>PDF files only · Up to 50 MB</small>
                 </div>
-                <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple hidden onChange={addPdf}/>
+                <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" multiple hidden
+                  onChange={addPdf} onCancel={() => socket.wake()}/>
                 {sentFiles.length > 0 && <div className="sent-list"><h3>Files you're sharing</h3>
                   {sentFiles.map(f => <div className="sent-row" key={f.fileId}>
                     <span className="file-icon" style={fileAccentStyle(f.fileId)} aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></span><div className="file-meta"><strong>{f.name}</strong><span>{formatBytes(f.size)} · {f.status === 'announcing' ? 'Sending announcement…' : f.status === 'approved' ? 'Shared — caching on classroom computer' : f.status}</span></div>

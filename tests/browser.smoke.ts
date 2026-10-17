@@ -119,6 +119,11 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     const docHeading = await right.getByRole('heading', { name: /Queue/ }).boundingBox();
     assert.ok(docHeading && leftBefore && docHeading.x >= leftBefore.x + leftBefore.width,
       'Documents should occupy the area to the right of the full-height sidebar');
+    await first.getByRole('button', { name: 'List view' }).click();
+    assert.equal(await first.locator('.document-grid.is-list').count(), 1,
+      'Reference v8 list toggle should switch the real file queue');
+    await first.getByRole('button', { name: 'Grid view' }).click();
+    assert.equal(await first.locator('.document-grid.is-list').count(), 0);
     const copy = await first.getByRole('button', { name: /Copy link/ }).boundingBox();
     const end = await first.getByRole('button', { name: /End room/ }).boundingBox();
     assert.ok(copy && end && Math.abs(copy.y - end.y) < 4,
@@ -558,8 +563,9 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await host.locator('.document-row').filter({ hasText: 'lost-announcement.pdf' }).waitFor({ timeout: 15000 });
     await student.locator('.student-file-card').filter({ hasText: 'lost-announcement.pdf' })
       .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
-    // The host refreshes all server-persisted submissions after missed broadcasts.
-    await host.getByRole('button', { name: /Refresh submissions/ }).click();
+    // Reference v8 removes the extra Refresh button; the existing
+    // foreground wake/sync path still repairs missed host broadcasts.
+    await host.evaluate(() => window.dispatchEvent(new Event('focus')));
     assert.equal(await host.locator('.document-row').count(), 2);
     await host.locator('.document-row').filter({ hasText: 'lost-announcement.pdf' })
       .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });

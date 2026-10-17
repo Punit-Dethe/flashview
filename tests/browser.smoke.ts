@@ -6,7 +6,7 @@ import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, firefox, type Page } from 'playwright';
 const browserEngine = process.env.FLASHVIEW_BROWSER === 'firefox' ? firefox : chromium;
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 
 async function unusedPort(): Promise<number> {
   const listener = createServer();
@@ -190,7 +190,7 @@ test('open rooms auto-admit guests, show only their own PDFs, and expose a light
       await page.locator('.student-drive').waitFor();
       assert.equal(await page.locator('.student-drive').count(), 1);
       assert.equal(await page.locator('.upload-target').count(), 0);
-      assert.equal(await page.getByRole('button', { name: 'Add PDFs' }).count(), 1);
+      assert.equal(await page.getByRole('button', { name: 'Add files' }).count(), 1);
     }
     assert.equal(await host.locator('.sidebar-participants .approval').count(), 0,
       'Open room guests should not require host approval');
@@ -1172,7 +1172,7 @@ test('QR joins open the upload workspace immediately; leaving or ending a room r
     assert.equal(await student.evaluate(()=>
       (window as typeof window & {__sawQrJoinForm?:boolean}).__sawQrJoinForm),false,
       'Joining through a QR link must not flash the manual join screen');
-    assert.equal(await student.getByRole('button',{name:'Add PDFs'}).count(),1);
+    assert.equal(await student.getByRole('button',{name:'Add files'}).count(),1);
 
     // A room ended by the teacher should instantly leave the student's
     // workspace, clear its QR URL and restore an EMPTY join-code input.
@@ -1203,5 +1203,63 @@ test('QR joins open the upload workspace immediately; leaving or ending a room r
       'The prior QR link must not rejoin the room after a refresh');
   } finally {
     await host.close();await student.close();await browser.close();child.kill('SIGTERM');
+  }
+});
+
+
+test('universal binary transfer preserves APK, EXE, PPTX, XLSX, GIF, ZIP, DEB, SH and BIN bytes', {timeout: 130000}, async () => {
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({acceptDownloads:true});
+  const student=await browser.newPage();
+  const root='http://127.0.0.1:'+port;
+  try {
+    await host.goto(root);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-drive').waitFor();
+    const names=[
+      'example.apk','program.exe','slides.pptx','financials.xlsx','animation.gif',
+      'archive.zip','package.deb','install.sh','unknown-file.bin',
+    ];
+    const fixtures=names.map((name,i)=>{
+      const bytes=Buffer.alloc(70_000 + (i*23_719));
+      for(let j=0;j<bytes.length;j++) bytes[j]=(i*23+j*17+j>>4)&255;
+      return {name,mimeType:'application/octet-stream',buffer:bytes};
+    });
+    await student.locator('input[type=file]').setInputFiles(fixtures);
+    for(const f of fixtures) {
+      const card=host.locator('.document-row').filter({hasText:f.name});
+      await card.waitFor({timeout:45000});
+      assert.equal(await card.getByRole('button',{name:'Present '+f.name}).count(),0,
+        'Non-PDF must never enter PDF.js presenter: '+f.name);
+      const downloadButton=card.getByRole('button',{name:'Download '+f.name});
+      await downloadButton.waitFor();
+      await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:50000});
+      assert.equal(await downloadButton.isEnabled(),true);
+      const [download]=await Promise.all([
+        host.waitForEvent('download',{timeout:15000}),
+        downloadButton.click(),
+      ]);
+      assert.equal(download.suggestedFilename(),f.name);
+      const actual=await readFile(await download.path());
+      assert.equal(createHash('sha256').update(actual).digest('hex'),
+        createHash('sha256').update(f.buffer).digest('hex'),
+        'File must be byte-perfect through relay, cache, and browser download: '+f.name);
+      assert.equal(actual.byteLength,f.buffer.byteLength);
+    }
+    // A room still has the original 256 KiB packet default.
+    assert.equal(await host.evaluate(()=>new URLSearchParams(location.search).get('packet')),null);
+    await host.getByRole('button',{name:/End room/}).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button',{name:/End & clear cache/}).click();
+    await student.locator('.welcome').waitFor({timeout:20000});
+  } finally {
+    await host.close();await student.close();await browser.close();
+    child.kill('SIGTERM');
   }
 });

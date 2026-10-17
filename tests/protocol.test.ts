@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  decodeRangePacket, encodeRangePacket, MAX_PDF_BYTES, MAX_RANGE_BYTES,
+  decodeRangePacket, encodeRangePacket, MAX_FILE_BYTES, MAX_PDF_BYTES, MAX_RANGE_BYTES,
 } from '../src/shared/protocol';
 
 test('round-trip binary packet preserves range offset and PDF bytes', () => {
@@ -29,7 +29,8 @@ test('binary packets reject truncation and invalid headers', () => {
   assert.throws(() => decodeRangePacket(frame.buffer), /Invalid/);
 });
 
-test('range size is smaller than supported PDF size', () => {
+test('256 KiB range frames stay bounded independently of the new 200 MiB file limit', () => {
   assert.equal(MAX_RANGE_BYTES, 256 * 1024);
-  assert.equal(MAX_PDF_BYTES, 50 * 1024 * 1024);
+  assert.equal(MAX_FILE_BYTES, 200 * 1024 * 1024);
+  assert.equal(MAX_PDF_BYTES, MAX_FILE_BYTES);
 });

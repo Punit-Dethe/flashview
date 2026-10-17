@@ -111,6 +111,10 @@ export async function readCompletedPdf(roomId: string, file: PdfManifest): Promi
   return result;
 }
 
+/** The exact same chunk assembly also reconstructs arbitrary completed files.
+ * Kept as an alias so the PDF viewer and its existing cache path stay intact. */
+export const readCompletedFile = readCompletedPdf;
+
 async function writeRoom(room: string): Promise<void> {
   const db = await database();
   await new Promise<void>((resolve, reject) => {

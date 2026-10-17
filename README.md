@@ -274,3 +274,35 @@ PDF and device pair over the actual network, alternating packet sizes.
 After real-device A/B tests, 256 KiB is the default; 64/128 KiB remain opt-in fallbacks.
 WebRTC is outside the planned architecture: FlashView prioritizes a relay that
 works across different networks.
+
+## Universal binary transfer (first release)
+
+FlashView transfers **original binary bytes** regardless of extension: APK, EXE,
+Linux packages, PPT/PPTX, XLS/XLSX, ZIP, GIF, images, videos, text and PDFs.
+Files are relayed through the room WebSocket and never permanently hosted by
+Cloudflare. The client still uses the measured **256 KiB network default**
+(`?packet=128` and `?packet=64` remain developer-only fallbacks),
+64 KiB IndexedDB cache records and the same adaptive multi-student scheduler.
+
+- **PDF:** Existing immediate PDF.js presentation and first-page preview.
+- **Everything else:** A type-icon card and **Download** once the complete
+  original file has been received and committed to the receiver's browser.
+  The browser never executes, embeds, or renders unknown files.
+- The receiver must keep the classroom tab open until caching completes.
+  Completed files are held locally until the room's cache is cleared or the
+  browser removes the data. Ending the room deletes room-scoped cached files;
+  downloading deliberately saves a separate copy outside that cache.
+- **200 MiB maximum per nonempty file** for the initial universal transfer
+  release, and **10 files per sender** in one room. This is a size limit,
+  **not** a restriction on file formats. Larger installers/video files can
+  require a subsequent streamed-to-disk design to avoid high browser memory
+  usage while saving them.
+- Browser security scanners may warn about potentially unsafe downloaded
+  files, particularly EXE/APK; FlashView does not bypass browser protections.
+- When downloading, the host reconstructs the complete file from its cached
+  chunks, verifies the chunk sequence and lengths, and triggers a normal
+  user-initiated browser download. Filenames are sanitized for local saves.
+  An end-to-end Playwright test compares SHA-256 of nine arbitrary file
+  types against their original bytes.
+
+PDF preview remains completely separate from the network transfer pipeline.

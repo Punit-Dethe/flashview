@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { MAX_PDF_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
+import { MAX_FILE_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
+import { isPdfName, safeDownloadName } from '../shared/fileTypes';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
 import { formatBytes } from './pdf/Viewer';
 import { makeFirstPagePreview } from './pdf/firstPagePreview';
@@ -9,7 +10,7 @@ import { DocumentCard } from './DocumentCard';
 import { StudentTransferCard } from './StudentTransferCard';
 import { TransferPill } from './TransferPill';
 import { summarizeTransfers } from './transferProgress';
-import { cleanExpiredRoomCaches, type CacheProgress } from './pdf/roomCache';
+import { cleanExpiredRoomCaches, readCompletedFile, type CacheProgress } from './pdf/roomCache';
 import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
@@ -91,6 +92,7 @@ export function App() {
   const previewRoom = useRef(initialSession?.code ?? '');
   const transferSamples = useRef(new Map<string, { bytes: number; time: number }>());
   const [downloadSpeed, setDownloadSpeed] = useState<Record<string, number>>({});
+  const [savingFiles, setSavingFiles] = useState<Record<string, boolean>>({});
   const [endConfirm, setEndConfirm] = useState(false);
   const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
@@ -223,7 +225,7 @@ export function App() {
 
   function prepareLocalPreview(fileId: string): void {
     const shared = filesOnPhone.current.get(fileId);
-    if (!shared || shared.status === 'offline' || shared.status === 'rejected' ||
+    if (!shared || !isPdfName(shared.file.name) || shared.status === 'offline' || shared.status === 'rejected' ||
         previewFailed.current.has(fileId) || firstPageImages.current.has(fileId) ||
         previewRendering.current.has(fileId)) return;
     previewRendering.current.add(fileId);
@@ -250,7 +252,8 @@ export function App() {
 
   function preparePreview(fileId: string): void {
     const shared = filesOnPhone.current.get(fileId);
-    if (!shared || shared.status !== 'approved' || previewDelivered.current.has(fileId)) return;
+    if (!shared || !isPdfName(shared.file.name) ||
+        shared.status !== 'approved' || previewDelivered.current.has(fileId)) return;
     const saved = firstPageImages.current.get(fileId);
     if (saved) sendPreview(fileId, saved);
     // Never start expensive PDF.js work synchronously on a file approval:
@@ -392,6 +395,10 @@ export function App() {
       }
       if (type === 'preview.chunk') {
         const id = message.fileId;
+        // PDF thumbnails are the only preview format. Unknown binary files
+        // must never be interpreted or displayed as active document content.
+        if (typeof id !== 'string' ||
+            !hostFilesRef.current.some(f => f.fileId === id && isPdfName(f.name))) return;
         const part = message.part;
         const total = message.total;
         const data = message.data;
@@ -564,27 +571,28 @@ export function App() {
     socket.connect({ role: 'student', name: studentName.trim() || 'Student', ...identifier });
   }
 
-  async function addPdf(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+  async function addFiles(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     // File pickers on mobile can freeze timers and temporarily suspend sockets.
     // Resume immediately on selection instead of waiting for backoff/polling.
     socket.wake();
     const input = event.target;
     const selectedFiles = Array.from(input.files ?? []);
     input.value = '';
-    // Validate the whole file-picker selection before presenting any of it.
-    // Registering one PDF at a time could flash "Done" while later PDFs in
-    // the same selection were still being checked.
+    // Validate the whole selection before announcing it. PDF magic-byte
+    // checks remain PDF-only; all other formats transfer unchanged.
     const batch: Array<{ fileId: string; entry: SharedFile }> = [];
     for (const file of selectedFiles) {
-      if (file.size > MAX_PDF_BYTES || file.size === 0 || !file.name.toLowerCase().endsWith('.pdf')) {
-        setError('Please choose PDFs smaller than 50 MB.');
+      if (file.size === 0 || file.size > MAX_FILE_BYTES) {
+        setError(file.name + ' must be between 1 byte and 200 MiB.');
         continue;
       }
       try {
-        const prefix = await file.slice(0, 1024).text();
-        if (!prefix.includes('%PDF-')) {
-          setError(file.name + ' is not a valid PDF.');
-          continue;
+        if (isPdfName(file.name)) {
+          const prefix = await file.slice(0, 1024).text();
+          if (!prefix.includes('%PDF-')) {
+            setError(file.name + ' is not a valid PDF.');
+            continue;
+          }
         }
         batch.push({
           fileId: crypto.randomUUID().replaceAll('-', ''),
@@ -606,11 +614,14 @@ export function App() {
     // local preview shortly afterward; it never awaits host-side reception.
     if (!socket.connected || !hostAvailable) socket.wake();
     else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
-    // Local rendering is queued asynchronously after every file announcement.
+    // Only PDFs generate preview JPEGs. No native decoding, execution, or
+    // rendering is attempted for other arbitrary binary file formats.
     // Never rely on background-tab timers/idle callbacks here: Firefox can
     // suspend them, which would also delay the host's first-slide preview.
     // PDF.js decoding happens off the main thread and thumbnails stay small.
-    for (const { fileId } of batch) prepareLocalPreview(fileId);
+    for (const { fileId, entry } of batch) {
+      if (isPdfName(entry.file.name)) prepareLocalPreview(fileId);
+    }
   }
 
   // The native file input fires 'cancel' when a picker is dismissed without
@@ -627,6 +638,33 @@ export function App() {
   function browseFiles(): void {
     socket.pauseHeartbeat();
     fileInputRef.current?.click();
+  }
+
+  async function downloadFile(file: PdfManifest): Promise<void> {
+    if (savingFiles[file.fileId] || !hostSession) return;
+    setSavingFiles(current => ({ ...current, [file.fileId]: true }));
+    try {
+      // Never download partial/corrupt files. The presenter and downloads
+      // share the SAME already-committed 64 KiB browser cache.
+      const bytes = await readCompletedFile(hostSession.code, file);
+      if (!bytes) throw Error('File is not fully cached yet. Retry once received.');
+      const blob = new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = safeDownloadName(file.name);
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      try { link.click(); } finally {
+        link.remove();
+        // Give the browser time to start saving before revoking its URL.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save this file.');
+    } finally {
+      setSavingFiles(current => ({ ...current, [file.fileId]: false }));
+    }
   }
 
   function revoke(fileId: string): void {
@@ -687,6 +725,7 @@ export function App() {
     setPhonePreviews({});
     setDocumentPreviews({});
     setDownloadSpeed({});
+    setSavingFiles({});
     setEndConfirm(false);
     setEndAcknowledged(false);
     setCopied(false);
@@ -848,7 +887,7 @@ export function App() {
                       <div className="empty-list">
                         <span className="empty-art" aria-hidden="true">▤</span>
                         <h3>Nothing shared yet</h3>
-                        <p>Once a participant shares a PDF, it will appear here.</p>
+                        <p>Once a participant shares a file, it will appear here.</p>
                       </div>
                     )}
                     {documents.filter(f => f.status !== 'rejected').map(file => (
@@ -857,9 +896,12 @@ export function App() {
                         progress={cacheProgress[file.fileId]}
                         bytesPerSecond={downloadSpeed[file.fileId]}
                         onPresent={() => {
+                          if (!isPdfName(file.name)) return;
                           try { presentation.open(file, Boolean(cacheProgress[file.fileId]?.complete)); }
                           catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
-                        }}/>
+                        }}
+                        onDownload={() => void downloadFile(file)}
+                        saving={Boolean(savingFiles[file.fileId])}/>
                     ))}
                   </div>
 
@@ -911,8 +953,8 @@ export function App() {
                     </div>
                   ) : (
                     <>
-                      <input ref={fileInputRef} type="file" accept=".pdf,application/pdf"
-                        multiple hidden onChange={addPdf}/>
+                      <input ref={fileInputRef} type="file"
+                        multiple hidden onChange={addFiles}/>
                       {sentFiles.some(f => f.status !== 'rejected') ? (
                         <section className="student-drive-content" aria-label="Your uploads">
                           <div className="student-files-grid">
@@ -931,14 +973,14 @@ export function App() {
                             <path d="M26 42h20M26 49h13" stroke="#b1c2d8" strokeWidth="2.5" strokeLinecap="round"/>
                           </svg>
                           <h2>{joinState === 'connecting' ? 'Ready to share' : 'No files yet'}</h2>
-                          <p>{joinState === 'connecting' ? 'Connecting to your room…' : 'Tap New to share a PDF.'}</p>
+                          <p>{joinState === 'connecting' ? 'Connecting to your room…' : 'Tap New to share a file.'}</p>
                         </div>
                       )}
                       <div className="student-transfer-actions">
                         {transferPhase && <TransferPill phase={transferPhase}/>}
                         <button type="button" className="student-add-fab" onClick={browseFiles}
                           disabled={joinState !== 'accepted'}
-                          aria-label="Add PDFs" title="Add PDFs"><span aria-hidden="true">+</span><span>New</span></button>
+                          aria-label="Add files" title="Add files"><span aria-hidden="true">+</span><span>New</span></button>
                       </div>
                     </>
                   )}
@@ -952,7 +994,7 @@ export function App() {
             <section className="end-dialog" role="dialog" aria-modal="true" aria-labelledby="end-title">
               <div className="eyebrow">END ROOM / {hostSession.code}</div>
               <h2 id="end-title">End this room?</h2>
-              <p>This will close all presentation tabs, disconnect students, and delete the PDFs
+              <p>This will close all presentation tabs, disconnect students, and delete the files
                 and previews FlashView has cached on <strong>this computer</strong> for this room.</p>
               <p>Original PDFs on students' devices won't be touched. This action cannot be undone.</p>
               <label className="end-check">

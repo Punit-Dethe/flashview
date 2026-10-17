@@ -256,10 +256,18 @@ export class ClassroomRoom extends DurableObject<Env> {
         const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
         const bytes = msg.bytes;
         if (file && Number.isSafeInteger(bytes) && Number(bytes) >= 0 && Number(bytes) <= file.size) {
+          // Persist acknowledged metadata in the durable manifest. Background
+          // phones can request it later, without relying on live WS events.
+          const next = msg.snapshot === true ? Number(bytes) :
+            Math.max(file.cachedBytes ?? 0, Number(bytes));
+          if (file.cachedBytes !== next) {
+            file.cachedBytes = next;
+            await this.persist();
+          }
           const student = this.student(file.ownerId);
           if (student && student.peer.approved) send(student.ws, {
-            type: 'cache.progress', fileId: file.fileId, bytes: Number(bytes),
-            size: file.size, complete: Number(bytes) === file.size,
+            type: 'cache.progress', fileId: file.fileId, bytes: next,
+            size: file.size, complete: next === file.size,
           });
         }
         return;

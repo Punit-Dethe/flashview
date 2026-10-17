@@ -10,6 +10,8 @@ export interface PdfManifest {
   ownerId: string;
   ownerName: string;
   status: 'pending' | 'approved' | 'rejected' | 'offline';
+  /** Cached bytes last acknowledged by the classroom computer (not sent bytes). */
+  cachedBytes?: number;
 }
 
 export interface StudentInfo {

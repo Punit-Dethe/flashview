@@ -145,7 +145,10 @@ test('different devices exchange metadata, approvals and byte-range PDF data via
     assert.equal(ack.bytes, pdf.length);
     assert.equal(ack.complete, true);
     student.send({ type: 'file.sync' });
-    await student.wait('file.manifest');
+    const manifest = await student.wait('file.manifest');
+    const saved = manifest.files as Array<{ fileId: string; cachedBytes?: number }>;
+    assert.equal(saved.find(f => f.fileId === fileId)?.cachedBytes, pdf.length,
+      'The relay must keep the last host-acknowledged bytes for phone resync');
     await host.wait('cache.progress.request');
 
     // Students cannot request ranges: this belongs exclusively to the teacher.

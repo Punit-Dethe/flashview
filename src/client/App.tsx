@@ -82,7 +82,6 @@ export function App() {
   const [switchingRoom, setSwitchingRoom] = useState(false);
   const [switchCode, setSwitchCode] = useState('');
   const [copied, setCopied] = useState(false);
-  const autoStarted = useRef(false);
 
   useEffect(() => {
     // Abandoned rooms expire automatically; delete their old browser-stored PDFs
@@ -361,18 +360,6 @@ export function App() {
     }
   }
 
-  // The normal homepage is a ready-to-use room, without an extra setup click.
-  // Student invite links and the explicit ?manual=1 fallback must never auto-create.
-  useEffect(() => {
-    if (autoStarted.current || initialSession || initialJoin ||
-        window.location.pathname !== '/' ||
-        new URLSearchParams(window.location.search).has('manual')) return;
-    autoStarted.current = true;
-    void createRoom();
-  // Intentionally once per mounted app; the ref protects StrictMode effect replays.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   async function createRoom(): Promise<void> {
     setBusy(true);
     setError('');
@@ -465,9 +452,6 @@ export function App() {
       modeRef.current = 'welcome';
       setMode('welcome');
       socket.close();
-      // For the QR-first homepage, ending one session prepares another clean room.
-      // The explicit manual fallback retains its existing "Create a room" action.
-      if (!new URLSearchParams(window.location.search).has('manual')) void createRoom();
     } catch {
       setError('Could not clear this room’s local PDF cache. Please retry before ending the room.');
     } finally { setEnding(false); }
@@ -535,16 +519,13 @@ export function App() {
     modeRef.current = 'welcome';
     setMode('welcome');
     window.history.replaceState({}, '', '/');
-    if (!new URLSearchParams(window.location.search).has('manual')) void createRoom();
   }
 
   const joinLink = hostSession ? window.location.origin + '/?join=' + encodeURIComponent(hostSession.joinToken) : '';
   const approvedStudents = students.filter(s => s.approved).length;
-  const autoHomepage = !initialSession && !initialJoin &&
-    !new URLSearchParams(window.location.search).has('manual');
 
   return (
-    <div className="app premium-app">
+    <div className={'app premium-app' + (mode === 'host' && hostSession ? ' is-host-workspace' : '')}>
       <header className="site-header">
         <div className="brand" onClick={startFresh} role="button" tabIndex={0}
           onKeyDown={e => { if (e.key === 'Enter') startFresh(); }} aria-label="FlashView home">
@@ -558,15 +539,7 @@ export function App() {
       </header>
 
       <main className="app-content">
-        {mode === 'welcome' && autoHomepage && (
-          <div className="premium-onboarding" role="status">
-            <div className="spinner"/>
-            <h1>Preparing your room.</h1>
-            <p>Creating a secure invitation and getting everything ready.</p>
-            <button className="outline-button" disabled={busy} onClick={() => void createRoom()}>Retry room creation</button>
-          </div>
-        )}
-        {mode === 'welcome' && !autoHomepage && (
+        {mode === 'welcome' && (
           <div className="welcome">
             <div className="eyebrow"><span className="eyebrow-stroke"/> THE INSTANT CLASSROOM</div>
             <h1>From your phone.<br/><em>Onto the big screen.</em></h1>
@@ -605,91 +578,111 @@ export function App() {
           <div className="workspace premium-workspace">
             <div className="workspace-topline">
               <span className="workspace-location">Workspace <span aria-hidden="true">/</span> <strong>Room overview</strong></span>
-              <button type="button" className="subtle-link session-end" onClick={() => setEndConfirm(true)}>End session</button>
+              <span className="workspace-live-label"><span className="status-dot"/> Room active</span>
             </div>
-            <div className="workspace-introduction">
-              <div className="eyebrow"><span className="status-dot"/> ROOM IS READY</div>
-              <h1 className="section-heading">Your room is live.</h1>
-              <p className="section-intro">Share the code, welcome your participants, and present in seconds.</p>
-            </div>
-            <section className="room-card premium-invite" aria-label="Invite people to your room">
-              <div className="invite-content">
-                <div className="room-code-label">YOUR ROOM CODE</div>
-                <div className="room-code">{hostSession.code}</div>
-                <p className="room-instructions">Anyone with the code can request to join. You'll approve participants before they can share.</p>
-                <div className="invite-actions">
-                  <button type="button" className="primary-button" onClick={() => void copyInvite()}>
-                    {copied ? 'Link copied' : 'Copy invite link'} <span aria-hidden="true">{copied ? '✓' : '↗'}</span>
-                  </button>
-                  <button type="button" className="outline-button" onClick={() => {
-                    setSwitchCode('');
-                    setJoinDialogOpen(true);
-                  }}>Join another room <span aria-hidden="true">↗</span></button>
+            <div className="workspace-split">
+              <aside className="workspace-left" aria-label="Room invitation and controls">
+                <div className="workspace-invite-heading">
+                  <div className="eyebrow">INVITE PARTICIPANTS</div>
+                  <h1>Share this room.</h1>
+                  <p>Others can scan your code or join using the six-digit number.</p>
                 </div>
-              </div>
-              <div className="qr-side">
-                <div className="qr-plate"><QRCodeSVG value={joinLink} size={190} marginSize={1} bgColor="#ffffff" fgColor="#151619"/></div>
-                <span>SCAN TO JOIN</span>
-              </div>
-            </section>
-            {students.some(s => !s.approved) && <section className="pending-panel" aria-label="Pending participants">
-              <div className="pending-heading"><span className="status-dot"/> Waiting for your approval</div>
-              {students.filter(s => !s.approved).map(s => <div className="approval" key={s.id}>
-                <span><strong>{s.name}</strong><small>Requested access to this room</small></span>
-                <div>
-                  <button className="mini-accept" onClick={() => socket.send({ type: 'student.accept', studentId: s.id })}>Allow</button>
-                  <button className="mini-reject" onClick={() => socket.send({ type: 'student.reject', studentId: s.id })} aria-label={'Decline ' + s.name}>Decline</button>
-                </div>
-              </div>)}
-            </section>}
-            <section className="document-column">
-              <div className="list-heading">
-                <div className="list-heading-title"><h2>Documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2><p>Files appear here as soon as they're shared.</p></div>
-                <button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>Refresh submissions <span aria-hidden="true">↻</span></button>
-              </div>
-              <div className="document-list">
-                {documents.filter(f => f.status !== 'rejected').length === 0 &&
-                  <div className="empty-list">
-                    <span className="empty-art" aria-hidden="true">▤</span>
-                    <h3>Nothing shared yet</h3>
-                    <p>Once a participant sends a PDF, it will appear here automatically.</p>
-                  </div>}
-                {documents.filter(f => f.status !== 'rejected').map(file => (
-                  <article className="document-row" key={file.fileId} style={fileAccentStyle(file.fileId)}>
-                    <div className="file-icon" aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></div>
-                    <div className="file-meta">
-                      <strong title={file.name}>{file.name}</strong>
-                      <span>{file.ownerName} · {formatBytes(file.size)}</span>
-                      <span className="cache-status" data-testid={'cache-' + file.fileId}>
-                        {cacheProgress[file.fileId]?.complete
-                          ? '✓ Fully cached on this computer'
-                          : cacheProgress[file.fileId]
-                            ? '↓ ' + formatBytes(cacheProgress[file.fileId].bytes) + ' / ' + formatBytes(file.size) + ' saved' +
-                              (downloadSpeed[file.fileId] > 0 ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
-                            : 'Ready for progressive transfer'}
-                      </span>
-                      <div className="cache-percent-line">
-                        <span>{cacheProgress[file.fileId]?.complete ? 'Ready offline' :
-                          cacheProgress[file.fileId]?.bytes ? 'Downloading PDF' : 'Waiting for download'}</span>
-                        <strong className="cache-percent" data-testid={'percent-' + file.fileId}>{visibleCachePercent(cacheProgress[file.fileId], file.size)}</strong>
-                      </div>
-                      <div className={'file-progress-track' + (cacheProgress[file.fileId]?.complete ? ' is-complete' : '')}
-                        role="progressbar" aria-label={'Cached progress for ' + file.name} aria-valuemin={0} aria-valuemax={100}
-                        aria-valuenow={Math.min(100, Math.round((cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100))}>
-                        <span style={{ width: Math.min(100, (cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100) + '%' }}/>
-                      </div>
+                <section className="room-card premium-invite" aria-label="Live room QR code">
+                  <div className="qr-side">
+                    <div className="qr-plate">
+                      <QRCodeSVG value={joinLink} size={218} marginSize={1} bgColor="#ffffff" fgColor="#151619"/>
                     </div>
-                    {file.status === 'approved' || cacheProgress[file.fileId]?.complete ?
-                      <button className="open-button" onClick={() => {
-                        try { presentation.open(file); }
-                        catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
-                      }}>Present <span aria-hidden="true">↗</span></button>
-                      : <span className="unavailable">{file.status === 'offline' ? 'Sender offline' : file.status}</span>}
-                  </article>
-                ))}
-              </div>
-              {approvedStudents > 0 && <p className="participants">{approvedStudents} participant{approvedStudents === 1 ? '' : 's'} connected · {students.filter(s => s.approved).map(s => s.name).join(', ')}</p>}
-            </section>
+                    <span>SCAN TO JOIN</span>
+                  </div>
+                  <div className="invite-content">
+                    <div className="room-code-label">ROOM CODE</div>
+                    <div className="room-code">{hostSession.code}</div>
+                    <div className="invite-actions">
+                      <button type="button" className="primary-button" onClick={() => void copyInvite()}>
+                        {copied ? 'Copied' : 'Copy link'} <span aria-hidden="true">{copied ? '✓' : '↗'}</span>
+                      </button>
+                      <button type="button" className="outline-button end-room-button"
+                        onClick={() => setEndConfirm(true)}>End session</button>
+                    </div>
+                    <button type="button" className="outline-button join-another-button" onClick={() => {
+                      setSwitchCode('');
+                      setJoinDialogOpen(true);
+                    }}>Join another room <span aria-hidden="true">↗</span></button>
+                  </div>
+                </section>
+                <div className="workspace-invite-footer">
+                  <div><span className="status-dot"/> {approvedStudents} participant{approvedStudents === 1 ? '' : 's'} connected</div>
+                  <p>Documents are received in the background. Keep this tab open during the session.</p>
+                </div>
+              </aside>
+              <section className="workspace-right" aria-label="Shared documents and pending participants" data-testid="documents-scroll-region">
+                <div className="document-column">
+                  <div className="list-heading">
+                    <div className="list-heading-title">
+                      <div className="eyebrow">YOUR CLASSROOM</div>
+                      <h2>Documents <sup>{documents.filter(f => f.status !== 'rejected').length}</sup></h2>
+                      <p>Files appear here as soon as they are shared.</p>
+                    </div>
+                    <button type="button" className="subtle-link" onClick={() => socket.send({ type: 'room.sync' })}>
+                      Refresh submissions <span aria-hidden="true">↻</span>
+                    </button>
+                  </div>
+                  {students.some(s => !s.approved) && <section className="pending-panel" aria-label="Pending participants">
+                    <div className="pending-heading"><span className="status-dot"/> Waiting for your approval</div>
+                    {students.filter(s => !s.approved).map(s => <div className="approval" key={s.id}>
+                      <span><strong>{s.name}</strong><small>Requested access to this room</small></span>
+                      <div>
+                        <button className="mini-accept" onClick={() => socket.send({ type: 'student.accept', studentId: s.id })}>Allow</button>
+                        <button className="mini-reject" onClick={() => socket.send({ type: 'student.reject', studentId: s.id })} aria-label={'Decline ' + s.name}>Decline</button>
+                      </div>
+                    </div>)}
+                  </section>}
+                  <div className="document-list">
+                    {documents.filter(f => f.status !== 'rejected').length === 0 &&
+                      <div className="empty-list">
+                        <span className="empty-art" aria-hidden="true">▤</span>
+                        <h3>Nothing shared yet</h3>
+                        <p>Once a participant sends a PDF, it will appear here automatically.</p>
+                      </div>}
+                    {documents.filter(f => f.status !== 'rejected').map(file => (
+                      <article className="document-row" key={file.fileId} style={fileAccentStyle(file.fileId)}>
+                        <div className="file-icon" aria-hidden="true"><span className="file-symbol">▤</span><span>PDF</span></div>
+                        <div className="file-meta">
+                          <strong title={file.name}>{file.name}</strong>
+                          <span>{file.ownerName} · {formatBytes(file.size)}</span>
+                          <span className="cache-status" data-testid={'cache-' + file.fileId}>
+                            {cacheProgress[file.fileId]?.complete
+                              ? '✓ Fully cached on this computer'
+                              : cacheProgress[file.fileId]
+                                ? '↓ ' + formatBytes(cacheProgress[file.fileId].bytes) + ' / ' + formatBytes(file.size) + ' saved' +
+                                  (downloadSpeed[file.fileId] > 0 ? ' · ' + formatBytes(downloadSpeed[file.fileId]) + '/s' : '')
+                                : 'Ready for progressive transfer'}
+                          </span>
+                          <div className="cache-percent-line">
+                            <span>{cacheProgress[file.fileId]?.complete ? 'Ready offline' :
+                              cacheProgress[file.fileId]?.bytes ? 'Downloading PDF' : 'Waiting for download'}</span>
+                            <strong className="cache-percent" data-testid={'percent-' + file.fileId}>
+                              {visibleCachePercent(cacheProgress[file.fileId], file.size)}
+                            </strong>
+                          </div>
+                          <div className={'file-progress-track' + (cacheProgress[file.fileId]?.complete ? ' is-complete' : '')}
+                            role="progressbar" aria-label={'Cached progress for ' + file.name} aria-valuemin={0} aria-valuemax={100}
+                            aria-valuenow={Math.min(100, Math.round((cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100))}>
+                            <span style={{ width: Math.min(100, (cacheProgress[file.fileId]?.bytes ?? 0) / Math.max(file.size, 1) * 100) + '%' }}/>
+                          </div>
+                        </div>
+                        {file.status === 'approved' || cacheProgress[file.fileId]?.complete ?
+                          <button className="open-button" onClick={() => {
+                            try { presentation.open(file); }
+                            catch (e) { setError(e instanceof Error ? e.message : 'Unable to open presentation'); }
+                          }}>Present <span aria-hidden="true">↗</span></button>
+                          : <span className="unavailable">{file.status === 'offline' ? 'Sender offline' : file.status}</span>}
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
           </div>
         )}
 

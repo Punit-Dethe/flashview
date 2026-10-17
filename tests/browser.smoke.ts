@@ -841,3 +841,59 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
     child.kill('SIGTERM');
   }
 });
+
+
+test('student receives real classroom cache completion for multiple PDFs and sees a single aggregate pill', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const origin = 'http://127.0.0.1:' + port;
+  try {
+    await host.goto(origin);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const code = await host.locator('.room-code').textContent();
+
+    await student.goto(origin);
+    await student.locator('#code').fill(code!);
+    await student.locator('#student-name').fill('Multiple Files');
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await host.locator('.approval').filter({ hasText: 'Multiple Files' }).getByRole('button', { name: 'Allow' }).click();
+    await student.getByText('Choose a PDF to share.').waitFor();
+
+    // Both files are offered together; one completion cannot hide the other.
+    await student.locator('input[type=file]').setInputFiles([
+      { name: 'small.pdf', mimeType: 'application/pdf', buffer: makePdf(120) },
+      { name: 'larger.pdf', mimeType: 'application/pdf', buffer: makePdf(1400) },
+    ]);
+    await student.locator('.student-file-card').first().waitFor();
+    assert.equal(await student.locator('.student-file-card').count(), 2);
+    await student.locator('.transfer-pill').waitFor();
+    await host.locator('.document-row').filter({ hasText: 'small.pdf' }).waitFor();
+    await host.locator('.document-row').filter({ hasText: 'larger.pdf' }).waitFor();
+    await student.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').first()
+      .waitFor({ timeout: 25000 });
+    await student.waitForFunction(() =>
+      Array.from(document.querySelectorAll('.student-file-card .transfer-ring'))
+        .filter(el => el.getAttribute('aria-valuenow') === '100').length === 2,
+      null, { timeout: 25000 });
+    await student.getByText('All files are saved on the classroom computer. You can leave this page.').waitFor();
+    await student.locator('.student-transfer-heading').getByText('2 of 2 ready').waitFor();
+    await student.locator('.transfer-pill.is-done').waitFor({ timeout: 5000 });
+    await student.locator('.transfer-pill').waitFor({ state: 'detached', timeout: 7500 });
+
+    // A late third file must reopen the dock; previous completion alone is not
+    // a reason to tell the student that the new file was transferred.
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'late.pdf', mimeType: 'application/pdf', buffer: makePdf(400),
+    });
+    await student.locator('.student-file-card').filter({ hasText: 'late.pdf' }).waitFor();
+    await student.locator('.transfer-pill').waitFor();
+    await student.locator('.student-transfer-heading').getByText('3 of 3 ready').waitFor({ timeout: 25000 });
+    await student.locator('.transfer-pill.is-done').waitFor({ timeout: 5000 });
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

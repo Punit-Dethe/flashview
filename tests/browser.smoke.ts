@@ -310,7 +310,23 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await localPreview.waitFor({ timeout: 20000 });
     assert.ok(await localPreview.evaluate(node => (node as HTMLImageElement).naturalWidth > 100));
     // The smaller local JPEG should also reach the host without delaying PDF bytes.
-    await card.locator('img.document-thumb-image.is-visible').waitFor({ timeout: 20000 });
+    try {
+      await card.locator('img.document-thumb-image.is-visible').waitFor({ timeout: 20000 });
+    } catch (error) {
+      // Separate a missing relay message from an image decode failure,
+      // particularly on Firefox's headless mobile-sender simulation.
+      const hostPreview = await card.evaluate(el => ({
+        image: Boolean(el.querySelector('img.document-thumb-image')),
+        fallback: Boolean(el.querySelector('.document-pdf-symbol')),
+        spinner: Boolean(el.querySelector('.document-thumb-spinner')),
+      }));
+      const phonePreview = await localPreview.evaluate(el => ({
+        bytes: (el as HTMLImageElement).src.length,
+        width: (el as HTMLImageElement).naturalWidth,
+      }));
+      console.log('PREVIEW_DIAGNOSTICS', { hostPreview, phonePreview });
+      throw error;
+    }
     assert.equal(await card.locator('img.document-thumb-image').evaluate(
       image => (image as HTMLImageElement).naturalWidth > 100), true);
     assert.equal(await card.locator('.document-thumb-spinner').count(), 0,

@@ -3,6 +3,7 @@ import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
+import { roomExpiresAt } from '../shared/roomLifetime.js';
 import {
   decodeRangePacket, MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
   type PdfManifest, type StudentInfo,
@@ -15,7 +16,7 @@ type Outstanding = { fileId: string; senderId: string; begin: number; end: numbe
 type Room = {
   id: string; code: string; joinToken: string; hostToken: string;
   autoApprove: boolean;
-  created: number; host: Peer | null; students: Map<string, Peer>;
+  created: number; lastActivityAt: number; host: Peer | null; students: Map<string, Peer>;
   sessions: Map<string, ResumeSession>;
   files: Map<string, PdfManifest>; outstanding: Map<string, Outstanding>;
 };
@@ -98,6 +99,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     }
     const peer: Peer = { ws, id: randomUUID(), role: 'host', room, name: 'Host', approved: true };
     room.host = peer;
+    room.lastActivityAt = Date.now();
     connections.set(ws, peer);
     send(ws, {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
@@ -170,6 +172,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   const peer = connections.get(ws);
   if (!peer) return void sendError(ws, 'Authentication required');
   const room = peer.room;
+  if (peer.role === 'host' && room.host === peer) room.lastActivityAt = Date.now();
   if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
   if (msg.type === 'room.sync' && peer.role === 'host') {
     return void send(ws, {
@@ -386,7 +389,7 @@ const http = createServer((req, res) => {
     while ([...rooms.values()].some(r => r.code === code));
     const room: Room = {
       id: randomUUID(), code, joinToken: randomToken(20),
-      hostToken: randomToken(32), created: now, autoApprove,
+      hostToken: randomToken(32), created: now, lastActivityAt: now, autoApprove,
       host: null, students: new Map(), sessions: new Map(), files: new Map(), outstanding: new Map(),
     };
     rooms.set(room.id, room);
@@ -413,7 +416,12 @@ wss.on('connection', ws => {
   // Browsers (especially phones in the OS file picker) can miss an occasional
   // protocol ping. Require several missed replies before terminating a peer.
   (ws as WebSocket & { missedPongs?: number }).missedPongs = 0;
-  ws.on('pong', () => { (ws as WebSocket & { missedPongs?: number }).missedPongs = 0; });
+  ws.on('pong', () => {
+    (ws as WebSocket & { missedPongs?: number }).missedPongs = 0;
+    const peer = connections.get(ws);
+    // Only the current authenticated host can renew room lifetime.
+    if (peer?.role === 'host' && peer.room.host === peer) peer.room.lastActivityAt = Date.now();
+  });
   ws.on('message', (data, isBinary) => {
     if (isBinary) { handleBinary(ws, data); return; }
     try {
@@ -440,7 +448,7 @@ wss.on('connection', ws => {
 const housekeeping = setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
-    if (now - room.created > ROOM_TTL_MS) { closeRoom(room); continue; }
+    if (now >= roomExpiresAt(room.created, room.lastActivityAt)) { closeRoom(room); continue; }
     for (const [id, pending] of room.outstanding) {
       if (now - pending.created > RANGE_TIMEOUT_MS) {
         room.outstanding.delete(id);

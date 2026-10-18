@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
+import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
 import {
   MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
@@ -12,7 +13,7 @@ interface Env {
 }
 type Role = 'host' | 'student' | null;
 interface Peer { id: string; role: Role; name: string; approved: boolean }
-interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; autoApprove?: boolean }
+interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; lastActivityAt?: number; autoApprove?: boolean }
 interface ResumeSession { id: string; name: string; approved: boolean; token: string }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
 const MAX_STUDENTS = 30;
@@ -105,7 +106,19 @@ export class ClassroomRoom extends DurableObject<Env> {
     await this.ctx.storage.deleteAll();
   }
   private expired(): boolean {
-    return !this.config || Date.now() - this.config.created >= ROOM_TTL_MS;
+    return !this.config || Date.now() >= roomExpiresAt(this.config.created, this.config.lastActivityAt);
+  }
+
+  /** Throttle durable writes while keeping live rooms from expiring mid-transfer. */
+  private async touchHostActivity(): Promise<void> {
+    const cfg = this.config;
+    if (!cfg) return;
+    const now = Date.now();
+    if (!shouldPersistRoomActivity(cfg.lastActivityAt ?? cfg.created, now)) return;
+    cfg.lastActivityAt = now;
+    // Persist before rescheduling: an old alarm can still recover the new deadline.
+    await this.ctx.storage.put('config', cfg);
+    await this.ctx.storage.setAlarm(roomExpiresAt(cfg.created, cfg.lastActivityAt));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -122,7 +135,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       const created = Date.now();
       this.config = {
         code: incoming.code!, hostToken: incoming.hostToken, joinToken: incoming.joinToken, created,
-        autoApprove: incoming.autoApprove === true,
+        lastActivityAt: created, autoApprove: incoming.autoApprove === true,
       };
       await this.ctx.storage.put('config', this.config);
       await this.ctx.storage.setAlarm(created + ROOM_TTL_MS);
@@ -151,6 +164,7 @@ export class ClassroomRoom extends DurableObject<Env> {
         if (other !== ws && active.role === 'host') other.close(4000, 'Host reconnected');
       }
       this.putPeer(ws, { ...peer, role: 'host', name: 'Host', approved: true });
+      await this.touchHostActivity();
       // Requests were owned by the old host socket. After a host resume they
       // cannot be delivered to the new socket safely; clear the volatile map
       // so it cannot block retries from the new receiver.
@@ -262,6 +276,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       return;
     }
     if (!peer.role) return void send(ws, { type: 'error', message: 'Authentication required' });
+    if (peer.role === 'host') await this.touchHostActivity();
     if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
     // The database-backed manifest is authoritative, not best-effort live notifications.
     if (msg.type === 'room.sync' && peer.role === 'host') {
@@ -469,7 +484,17 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
   }
   async webSocketError(ws: WebSocket): Promise<void> { await this.webSocketClose(ws); }
-  async alarm(): Promise<void> { await this.terminate(); }
+  async alarm(): Promise<void> {
+    if (!this.config) return;
+    const deadline = roomExpiresAt(this.config.created, this.config.lastActivityAt);
+    // An alarm scheduled before the latest authenticated host activity must
+    // never destroy an otherwise live classroom after Durable Object hibernation.
+    if (Date.now() < deadline) {
+      await this.ctx.storage.setAlarm(deadline);
+      return;
+    }
+    await this.terminate();
+  }
 }
 
 export default {

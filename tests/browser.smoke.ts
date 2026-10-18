@@ -1084,6 +1084,16 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     });
     await student.locator('.transfer-pill').waitFor({ timeout: 7000 });
     assert.match(await student.locator('.transfer-pill').innerText(), /Connecting/);
+    // The actual student socket remains authenticated. An out-of-order
+    // host.offline notification must not defer a new file.offer for 20s.
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'stale-host-status.bin', mimeType: 'application/octet-stream',
+      buffer: Buffer.from('FlashView stale host notification regression'),
+    });
+    await host.locator('.document-row').filter({ hasText: 'stale-host-status.bin' })
+      .waitFor({ timeout: 6000 });
+    await host.locator('.document-row').filter({ hasText: 'stale-host-status.bin' })
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 10000 });
     await student.evaluate(() => {
       const sockets = (window as typeof window & { __flashviewSockets?: WebSocket[] }).__flashviewSockets;
       const ws = sockets?.at(-1);
@@ -1627,5 +1637,98 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
   }finally{
     await popup?.close().catch(()=>{});
     await host.close();await student.close();await browser.close();child.kill('SIGTERM');
+  }
+});
+
+test('host handover never sends a stale offline event; new host still receives the original file bytes',
+  { timeout: 45000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const page = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  try {
+    await page.goto(root);
+    const result = await page.evaluate(async () => {
+      type Event = { type: string; [key: string]: unknown };
+      type Peer = { ws: WebSocket; events: Event[] };
+      const sockets: WebSocket[] = [];
+      const open = async (auth: Record<string, unknown>): Promise<Peer> => {
+        const ws = new WebSocket(location.origin.replace(/^http/, 'ws') + '/ws');
+        ws.binaryType = 'arraybuffer';
+        sockets.push(ws);
+        const events: Event[] = [];
+        ws.addEventListener('message', message => {
+          if (typeof message.data === 'string') {
+            events.push(JSON.parse(message.data) as Event);
+          } else if (message.data instanceof ArrayBuffer) {
+            events.push({ type: 'binary', data: Array.from(new Uint8Array(message.data)) });
+          }
+        });
+        await new Promise<void>((resolve, reject) => {
+          ws.addEventListener('open', () => resolve(), { once: true });
+          ws.addEventListener('error', () => reject(Error('WebSocket error')), { once: true });
+        });
+        ws.send(JSON.stringify({ v: 1, type: 'hello', ...auth }));
+        return { ws, events };
+      };
+      const wait = async (peer: Peer, type: string): Promise<Event> => {
+        for (let i = 0; i < 120; i++) {
+          const at = peer.events.findIndex(event => event.type === type);
+          if (at >= 0) return peer.events.splice(at, 1)[0];
+          await new Promise<void>(resolve => setTimeout(resolve, 50));
+        }
+        throw Error('Timeout waiting for ' + type);
+      };
+      try {
+        const response = await fetch('/api/rooms?autoApprove=1', { method: 'POST' });
+        if (!response.ok) throw Error('Room creation failed');
+        const room = await response.json() as {
+          code: string; roomId: string; hostToken: string; joinToken: string;
+        };
+        const first = await open({ role: 'host', roomId: room.roomId, token: room.hostToken });
+        await wait(first, 'room.state');
+        const phone = await open({ role: 'student', joinToken: room.joinToken, name: 'Handover' });
+        await wait(phone, 'join.accepted');
+        const replacement = await open({ role: 'host', roomId: room.roomId, token: room.hostToken });
+        await wait(replacement, 'room.state');
+        await wait(phone, 'host.online');
+        // Old host socket's close event can arrive after its successor is ready.
+        await new Promise<void>(resolve => setTimeout(resolve, 400));
+        const staleOffline = phone.events.filter(event => event.type === 'host.offline').length;
+        const fileId = 'handovertransfer123';
+        const bytes = Array.from({ length: 520 }, (_, i) => (i * 29 + 13) % 256);
+        phone.ws.send(JSON.stringify({
+          v: 1, type: 'file.offer', fileId, name: 'handover.bin', size: bytes.length,
+        }));
+        await wait(phone, 'file.approved');
+        await wait(replacement, 'file.announced');
+        const requestId = 'handoverrange123';
+        replacement.ws.send(JSON.stringify({
+          v: 1, type: 'range.request', requestId, fileId, begin: 0, end: bytes.length,
+        }));
+        await wait(phone, 'range.request');
+        const json = new TextEncoder().encode(JSON.stringify({
+          type: 'range.data', requestId, fileId, begin: 0,
+        }));
+        const packet = new Uint8Array(2 + json.length + bytes.length);
+        new DataView(packet.buffer).setUint16(0, json.length);
+        packet.set(json, 2);
+        packet.set(bytes, 2 + json.length);
+        phone.ws.send(packet.buffer);
+        const delivered = await wait(replacement, 'binary');
+        const raw = delivered.data as number[];
+        const headerLength = new DataView(new Uint8Array(raw).buffer).getUint16(0);
+        const resultBytes = raw.slice(2 + headerLength);
+        return { staleOffline, matches: JSON.stringify(resultBytes) === JSON.stringify(bytes) };
+      } finally {
+        for (const ws of sockets) ws.close();
+      }
+    });
+    assert.equal(result.staleOffline, 0,
+      'An obsolete host socket cannot announce host.offline after the replacement comes online');
+    assert.equal(result.matches, true, 'An uninterrupted relay handover must preserve original bytes');
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
   }
 });

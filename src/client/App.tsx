@@ -339,7 +339,13 @@ export function App() {
       if (status === 'connected') {
         if (modeRef.current === 'host') completionAcks.current.clear();
         presentation.resume();
-        if (modeRef.current === 'student') socket.send({ type: 'file.sync' });
+        if (modeRef.current === 'student') {
+          // A file selected during mobile reconnect must be announced as
+          // soon as the new connection is authenticated, not 20 seconds later.
+          socket.send({ type: 'file.sync' });
+          for (const [fileId, entry] of filesOnPhone.current)
+            if (entry.status === 'announcing') offerLocalFile(fileId, entry);
+        }
       }
       // Only after a genuine drop is a preview eligible for retransmission.
       if (status === 'disconnected' && modeRef.current === 'student') {
@@ -689,7 +695,10 @@ export function App() {
     }))]);
     // Announce the files before doing any decoding. Start a low-resolution
     // local preview shortly afterward; it never awaits host-side reception.
-    if (!socket.connected || !hostAvailable) socket.wake();
+    // Authentication is sufficient to send a manifest. Even if the phone has
+    // a stale host.offline notification, the relay can save the file offer
+    // for the desktop when it returns.
+    if (!socket.connected) socket.wake();
     else for (const { fileId, entry } of batch) offerLocalFile(fileId, entry);
     // Only PDFs generate preview JPEGs. No native decoding, execution, or
     // rendering is attempted for other arbitrary binary file formats.

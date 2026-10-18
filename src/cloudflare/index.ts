@@ -426,7 +426,12 @@ export class ClassroomRoom extends DurableObject<Env> {
       return;
     }
     if (peer.role === 'host') {
-      for (const [other, student] of this.peers) if (student.role === 'student') send(other, { type: 'host.offline' });
+      // Host handover closes the old socket after its replacement authenticates.
+      // Do not tell phones the room is offline when that OLD socket closes.
+      if (!this.host) {
+        for (const [other, student] of this.peers)
+          if (student.role === 'student') send(other, { type: 'host.offline' });
+      }
     } else if (peer.role === 'student') {
       for (const file of this.files.values()) {
         if (file.ownerId === peer.id && file.status === 'approved') {

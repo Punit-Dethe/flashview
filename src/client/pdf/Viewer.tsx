@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSwipeable } from 'react-swipeable';
 import {
   getDocument, GlobalWorkerOptions, PDFDataRangeTransport,
   type PDFDocumentProxy,
@@ -358,6 +359,20 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     if (!pdfDocument || !Number.isFinite(next)) return;
     setPage(Math.min(pdfDocument.numPages, Math.max(1, Math.floor(next))));
   };
+  // PDF.js renders pages, but our headless PDF.js integration does not include
+  // its full browser UI/gesture layer. Share react-swipeable with the PPTX
+  // presenter. Disable page flipping while zoomed so dragging can pan instead.
+  const swipe = useSwipeable({
+    onSwipedLeft: () => { if (zoom === 1) go(page + 1); },
+    onSwipedRight: () => { if (zoom === 1) go(page - 1); },
+    delta: { left: 55, right: 55 },
+    swipeDuration: 1400,
+    trackTouch: true, trackMouse: true, preventScrollOnSwipe: zoom === 1,
+  });
+  const attachStage = useCallback((node: HTMLDivElement | null) => {
+    stage.current = node;
+    swipe.ref(node);
+  }, [swipe.ref]);
   useEffect(() => {
     const keyHandler = (event: KeyboardEvent) => {
       if (!pdfDocument || event.target instanceof HTMLInputElement) return;
@@ -452,7 +467,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
 
       </header>
       {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
-      <div className="page-stage" ref={stage}>
+      <div className="page-stage" ref={attachStage} aria-label="PDF page gesture area"
+        style={{ touchAction: zoom === 1 ? 'pan-y' : 'auto' }}>
         {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
         {(pdfDocument || showQuickPreview) && <div className="page-shell">
           {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>}

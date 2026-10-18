@@ -1,5 +1,5 @@
-/* Browser-only, intentionally limited PowerPoint slide preview. The ZIP
-   reader reveals individual slide parts as they appear in the local cache. */
+/* Lightweight, full-file PPTX renderer. Fullscreen uses the entire screen;
+   the ResizeObserver in the presenter fits the actual slide aspect ratio. */
 .flashview-pptx-presenter {
   position:relative; width:100%; height:100vh; height:100dvh;
   min-height:0; display:flex; flex-direction:column; overflow:hidden;
@@ -8,12 +8,12 @@
 .flashview-pptx-canvas {
   flex:1 1 auto; min-height:0; width:100%; display:flex;
   align-items:center; justify-content:center; position:relative;
-  overflow:hidden; padding:12px;
+  overflow:hidden; padding:0; touch-action:pan-y; user-select:none;
 }
 .flashview-pptx-slide {
-  position:relative; width:min(100%,calc((100dvh - 92px) * 1.7778));
-  max-height:100%; flex:none; overflow:hidden; background:#fff;
-  box-shadow:0 15px 70px rgba(0,0,0,.45);
+  position:relative; max-width:100%; max-height:100%;
+  flex:none; overflow:hidden; background:#fff; user-select:none;
+  box-shadow:none;
 }
 .flashview-pptx-element { position:absolute; box-sizing:border-box; overflow:hidden; }
 .flashview-pptx-text {
@@ -47,9 +47,24 @@
   padding:8px 12px; color:#fff; border-radius:14px; background:#222833;
   font:12px system-ui,sans-serif; }
 @media(max-width:680px) {
-  .flashview-pptx-slide { width:100%; }
   .flashview-pptx-controls { left:10px; right:10px; bottom:40px; gap:4px; justify-content:center; }
   .flashview-pptx-controls button { padding:0 9px; }
   .flashview-pptx-controls span { padding:0 5px; }
   .flashview-pptx-caption { left:12px; right:12px; font-size:10px; }
 }
+
+/* Fullscreen elements live in the browser top layer. Never subtract toolbar
+   space or use a 16:9 assumption: the actual PPTX shape is measured in JS. */
+.flashview-pptx-presenter:fullscreen {
+  width:100vw; height:100vh; height:100dvh;
+  max-width:none; max-height:none; margin:0; padding:0; border:0;
+  background:#000;
+}
+.flashview-pptx-presenter:fullscreen .flashview-pptx-canvas {
+  width:100%; height:100%; min-height:0; padding:0; background:#000;
+}
+.flashview-pptx-presenter:fullscreen .flashview-pptx-slide {
+  box-shadow:none; margin:0;
+}
+.flashview-pptx-presenter:fullscreen .flashview-pptx-caption { display:none; }
+.flashview-pptx-slide img { -webkit-user-drag:none; user-select:none; }

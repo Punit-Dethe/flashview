@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useSwipeable } from 'react-swipeable';
 import type { PdfManifest } from '../../shared/protocol';
 import { readCompletedFile } from '../pdf/roomCache';
 import { CompletedPptxArchive, type PptxSlide } from './slideModel';
@@ -7,9 +8,14 @@ import '../styles.powerpoint.css';
 type Props = { file: PdfManifest; roomId: string;
   close: () => void; onFirstSlideRendered?: () => void };
 
-function PptxCanvas({ slide }: { slide: PptxSlide }) {
+function PptxCanvas({ slide, available }: { slide: PptxSlide; available: { width: number; height: number } }) {
+  // Native fullscreen still preserves the slide's original aspect ratio.
+  // Fit into the actual measured stage, not a hardcoded 16:9 / 92px gap.
+  const scale = Math.min(available.width / slide.width, available.height / slide.height);
+  const width = Math.max(1, Math.floor(slide.width * scale));
+  const height = Math.max(1, Math.floor(slide.height * scale));
   return <div className="flashview-pptx-slide"
-    style={{ aspectRatio: slide.width + '/' + slide.height, backgroundColor: slide.background }}>
+    style={{ width, height, aspectRatio: slide.width + '/' + slide.height, backgroundColor: slide.background }}>
     {slide.items.map(item => {
       const style: CSSProperties = {
         left: item.x / slide.width * 100 + '%',
@@ -43,6 +49,8 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
   const pending = useRef(new Map<string, Promise<PptxSlide>>());
   const firstShown = useRef(false);
   const stageRef = useRef<HTMLDivElement>(null);
+  const canvasStage = useRef<HTMLDivElement>(null);
+  const [available, setAvailable] = useState({ width: 0, height: 0 });
   const [paths, setPaths] = useState<string[]>([]);
   const [slideIndex, setSlideIndex] = useState(0);
   const [slide, setSlide] = useState<PptxSlide | null>(null);
@@ -50,6 +58,52 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
   const [error, setError] = useState('');
   const [retryCount, retry] = useState(0);
   const [indexRetry, retryIndex] = useState(0);
+  const swipe = useSwipeable({
+    onSwipedLeft: () => setSlideIndex(index => Math.min(paths.length - 1, index + 1)),
+    onSwipedRight: () => setSlideIndex(index => Math.max(0, index - 1)),
+    delta: { left: 55, right: 55 },
+    swipeDuration: 1400,
+    trackMouse: true, trackTouch: true, preventScrollOnSwipe: true,
+  });
+  const attachCanvas = useCallback((node: HTMLDivElement | null) => {
+    canvasStage.current = node;
+    swipe.ref(node);
+  }, [swipe.ref]);
+
+  useEffect(() => {
+    const element = canvasStage.current;
+    if (!element) return;
+    const measure = () => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const width = Math.max(0, rect.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight));
+      const height = Math.max(0, rect.height - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
+      setAvailable(previous => previous.width === width && previous.height === height
+        ? previous : { width, height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!paths.length || event.altKey || event.ctrlKey || event.metaKey ||
+          event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement ||
+          (event.target instanceof HTMLElement && event.target.isContentEditable)) return;
+      if (event.key === 'ArrowRight' || event.key === 'PageDown') {
+        event.preventDefault();
+        setSlideIndex(index => Math.min(paths.length - 1, index + 1));
+      } else if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
+        event.preventDefault();
+        setSlideIndex(index => Math.max(0, index - 1));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paths.length]);
+
   useEffect(() => {
     let disposed = false;
     let archive: CompletedPptxArchive | null = null;
@@ -124,8 +178,9 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
   };
 
   return <div className="flashview-pptx-presenter" ref={stageRef}>
-    <div className="flashview-pptx-canvas">
-      {slide ? <PptxCanvas slide={slide}/> : <div className="flashview-pptx-state" role="status">
+    <div className="flashview-pptx-canvas" ref={attachCanvas} aria-label="PowerPoint slide gesture area">
+      {slide && available.width > 0 && available.height > 0
+        ? <PptxCanvas slide={slide} available={available}/> : <div className="flashview-pptx-state" role="status">
         {state !== 'error' && <span className="spinner"/>}
         <h1>{state === 'error' ? 'Slide unavailable' :
           state === 'index' ? 'Opening complete PowerPoint…' : 'Rendering slide…'}</h1>

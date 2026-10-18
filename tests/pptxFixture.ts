@@ -1,7 +1,7 @@
 import { ZipWriter, Uint8ArrayWriter, Uint8ArrayReader, TextReader } from '@zip.js/zip.js';
 
 /** Minimal genuine OOXML slideshow. No network fixture or third-party Office converter. */
-export async function makePowerPointFixture(extraBytes = 0): Promise<Buffer> {
+export async function makePowerPointFixture(extraBytes = 0, slideCount = 1): Promise<Buffer> {
   const ct='application/vnd.openxmlformats-officedocument.presentationml.';
   const relns='http://schemas.openxmlformats.org/package/2006/relationships';
   const presns='http://schemas.openxmlformats.org/presentationml/2006/main';
@@ -78,6 +78,19 @@ hlink="hlink" folHlink="folHlink" bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2"/>
 <a:bgFillStyleLst><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:bgFillStyleLst>
 </a:fmtScheme></a:themeElements></a:theme>`,
   };
+  if (slideCount === 2) {
+    // A second genuine slide lets the browser test arrows, keyboard and swipe.
+    parts['[Content_Types].xml'] = parts['[Content_Types].xml'].replace('</Types>',
+      '<Override PartName="/ppt/slides/slide2.xml" ContentType="'+ct+'slide+xml"/></Types>');
+    parts['ppt/presentation.xml'] = parts['ppt/presentation.xml'].replace('</p:sldIdLst>',
+      '<p:sldId id="257" r:id="rId3"/></p:sldIdLst>');
+    parts['ppt/_rels/presentation.xml.rels'] = parts['ppt/_rels/presentation.xml.rels']
+      .replace('</Relationships>',
+        '<Relationship Id="rId3" Type="'+partTypes+'slide" Target="slides/slide2.xml"/></Relationships>');
+    parts['ppt/slides/slide2.xml'] = parts['ppt/slides/slide1.xml']
+      .replace('FlashView PowerPoint Test','FlashView Slide Two');
+    parts['ppt/slides/_rels/slide2.xml.rels'] = parts['ppt/slides/_rels/slide1.xml.rels'];
+  }
   const archive = new ZipWriter(new Uint8ArrayWriter());
   for(const [name,xml] of Object.entries(parts)) await archive.add(name,new TextReader(xml));
   if (extraBytes > 0) {

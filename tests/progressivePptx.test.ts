@@ -32,7 +32,7 @@ test('zip.js progressively opens the ZIP directory and first entry without readi
     assert.ok(entries.some(entry=>entry.filename==='back/large.dat'),
       'Central ZIP directory reveals files without extracting their bodies');
     const front=entries.find(entry=>entry.filename==='front/slide1.xml');
-    assert.ok(front?.getData);
+    assert.ok(front && 'getData' in front);
     const text=await front.getData(new TextWriter());
     assert.equal(text,'<slide>First slide</slide>');
     assert.ok(reads.some(read=>read.begin>fileBytes.length/2),

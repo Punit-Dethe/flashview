@@ -35,7 +35,7 @@ function one(root: Document | Element, name: string): Element | undefined {
 function direct(root: Element | undefined, name: string): Element | undefined {
   return [...(root?.children ?? [])].find(el => el.localName === name);
 }
-function num(value: string | null | undefined, fallback = 0): number {
+function num(value: string | number | null | undefined, fallback = 0): number {
   const result = Number(value);
   return Number.isFinite(result) && result >= 0 ? result : fallback;
 }
@@ -69,7 +69,7 @@ export class PartialPptxArchive {
   getSlidePaths(): string[] { return this.slides; }
   private async text(path: string): Promise<string> {
     const entry = this.entries.get(path);
-    if (!entry || !entry.getData) throw new Error('Missing PowerPoint resource: ' + path);
+    if (!entry || !('getData' in entry)) throw new Error('Missing PowerPoint resource: ' + path);
     if (num(entry.uncompressedSize, MAX_XML + 1) > MAX_XML)
       throw new Error('PowerPoint XML is too large to preview safely');
     return await entry.getData(new TextWriter());
@@ -174,7 +174,7 @@ export class PartialPptxArchive {
       const media = rels.get(id);
       if (!media || !/\.(png|jpe?g|gif|webp)$/i.test(media)) return;
       const entry = this.entries.get(media);
-      if (!entry?.getData || num(entry.uncompressedSize, MAX_IMAGE + 1) > MAX_IMAGE) return;
+      if (!entry || !('getData' in entry) || num(entry.uncompressedSize, MAX_IMAGE + 1) > MAX_IMAGE) return;
       const mime = /\.png$/i.test(media) ? 'image/png' : /\.gif$/i.test(media)
         ? 'image/gif' : /\.webp$/i.test(media) ? 'image/webp' : 'image/jpeg';
       const blob = await entry.getData(new BlobWriter(mime));

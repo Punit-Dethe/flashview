@@ -1922,11 +1922,64 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
     // focus event is correctly ignored and would test a different behavior.
     await host.bringToFront();
     assert.equal(await host.evaluate(() => document.visibilityState), 'visible');
+    await host.evaluate(() => {
+      const record = window as typeof window & {
+        __flashviewSockets?: WebSocket[];
+        __staleCacheEvents?: string[];
+      };
+      record.__staleCacheEvents = [];
+      const ws = record.__flashviewSockets?.at(-1);
+      if (!ws) throw Error('No host WebSocket for cache repair test');
+      const send = ws.send.bind(ws);
+      ws.send = ((data: string | ArrayBufferLike | Blob | ArrayBufferView) => {
+        if (typeof data === 'string') {
+          const msg = JSON.parse(data) as { type?: string };
+          if (msg.type) record.__staleCacheEvents!.push('out:' + msg.type);
+        }
+        return send(data);
+      }) as WebSocket['send'];
+      ws.addEventListener('message', event => {
+        if (typeof event.data !== 'string') return;
+        const msg = JSON.parse(event.data) as { type?: string };
+        if (msg.type) record.__staleCacheEvents!.push('in:' + msg.type);
+      });
+    });
     // Ask for the server manifest without recreating the teacher's cache.
     // The scheduler must revalidate the local 100% index, discover the
     // missing chunk and independently request it from the original sender.
     await host.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ state: 'hidden', timeout: 12000 });
+    try {
+      await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ state: 'hidden', timeout: 12000 });
+    } catch (error) {
+      const diagnostics = await host.evaluate(async room => {
+        const record = window as typeof window & {
+          __flashviewSockets?: WebSocket[];
+          __staleCacheEvents?: string[];
+        };
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open('flashview-room-cache');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+          const req = db.transaction('chunks', 'readonly').objectStore('chunks')
+            .index('room').getAllKeys(IDBKeyRange.only(room));
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        return {
+          visibility: document.visibilityState,
+          socketState: record.__flashviewSockets?.at(-1)?.readyState,
+          events: record.__staleCacheEvents,
+          cachedKeys: keys.map(String),
+          ringValues: [...document.querySelectorAll('.document-row .cache-ring')]
+            .map(el => el.getAttribute('aria-valuenow')),
+          documentText: document.body.innerText.slice(-900),
+        };
+      }, code);
+      console.error('STALE_CACHE_DIAGNOSTICS', JSON.stringify(diagnostics));
+      throw error;
+    }
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
     const digest = await host.evaluate(async room => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {

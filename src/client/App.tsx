@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } fro
 import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
 import { assignParticipantColors } from './participantColors';
-import { MAX_FILE_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
+import { MAX_FILE_BYTES, MAX_STUDENT_FILES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { isPdfName, isPowerPointName, safeDownloadName } from '../shared/fileTypes';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
 import { formatBytes } from './pdf/Viewer';
@@ -665,6 +665,14 @@ export function App() {
     // checks remain PDF-only; all other formats transfer unchanged.
     const batch: Array<{ fileId: string; entry: SharedFile }> = [];
     for (const file of selectedFiles) {
+      // The relay counts all file manifests from this student, including
+      // revoked ones. Reject surplus selections BEFORE adding a phantom
+      // "Uploading" card that the server can never accept.
+      if (filesOnPhone.current.size + batch.length >= MAX_STUDENT_FILES) {
+        setError('This room allows up to ' + MAX_STUDENT_FILES +
+          ' files per person. Start a new room to share more.');
+        break;
+      }
       if (file.size === 0 || file.size > MAX_FILE_BYTES) {
         setError(file.name + ' must be between 1 byte and 200 MiB.');
         continue;

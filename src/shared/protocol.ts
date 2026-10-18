@@ -1,5 +1,7 @@
 // Initial safety cap; file format is unrestricted.
 export const MAX_FILE_BYTES = 200 * 1024 * 1024;
+/** Maximum number of file manifests a sender can create in one room. */
+export const MAX_STUDENT_FILES = 10;
 // Backwards-compatible name for older PDF-only integrations.
 export const MAX_PDF_BYTES = MAX_FILE_BYTES;
 export const MAX_RANGE_BYTES = 256 * 1024;

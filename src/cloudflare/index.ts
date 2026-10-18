@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import {
-  MAX_FILE_BYTES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
+  MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
 } from '../shared/protocol';
 
@@ -373,7 +373,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     if (msg.type === 'file.offer') {
       if (!validId(msg.fileId) || !Number.isSafeInteger(msg.size) ||
           Number(msg.size) < 1 || Number(msg.size) > MAX_FILE_BYTES ||
-          [...this.files.values()].filter(f => f.ownerId === peer.id).length >= 10 &&
+          [...this.files.values()].filter(f => f.ownerId === peer.id).length >= MAX_STUDENT_FILES &&
             !this.files.has(msg.fileId)) {
         return void send(ws, { type: 'error', message: 'Invalid file size or room file limit reached' });
       }

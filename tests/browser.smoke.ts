@@ -1736,3 +1736,43 @@ test('host handover never sends a stale offline event; new host still receives t
     child.kill('SIGTERM');
   }
 });
+
+test('phone and relay enforce the same ten-file room limit without phantom uploads',
+  { timeout: 85000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const phone = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const root = 'http://127.0.0.1:' + port;
+  try {
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const code = (await host.locator('.room-code').innerText()).trim();
+    await phone.goto(root);
+    await phone.locator('#code').fill(code);
+    await phone.getByRole('button', { name: /Join room/ }).click();
+    await phone.locator('.student-drive').waitFor();
+    const files = Array.from({ length: 11 }, (_, index) => ({
+      name: 'limit-' + index + '.bin',
+      mimeType: 'application/octet-stream',
+      buffer: Buffer.alloc(40 + index, index),
+    }));
+    await phone.locator('input[type=file]').setInputFiles(files);
+    await phone.locator('.student-file-card').nth(9).waitFor({ timeout: 15000 });
+    assert.equal(await phone.locator('.student-file-card').count(), 10);
+    assert.equal(await phone.getByText('limit-10.bin').count(), 0);
+    await phone.getByRole('alert').getByText(/up to 10 files per person/i)
+      .waitFor({ timeout: 7000 });
+    await host.locator('.document-row').filter({ hasText: 'limit-9.bin' })
+      .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
+    assert.equal(await host.locator('.document-row').count(), 10,
+      'No rejected eleventh file should enter the host queue');
+    await phone.waitForFunction(() =>
+      document.querySelectorAll('.student-file-card .transfer-ring[aria-valuenow="100"]').length === 10,
+      null, { timeout: 25000 });
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

@@ -4,7 +4,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
-  decodeRangePacket, MAX_FILE_BYTES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
+  decodeRangePacket, MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
   type PdfManifest, type StudentInfo,
 } from '../shared/protocol.js';
 
@@ -271,7 +271,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     const size = msg.size;
     if (!validId(fileId) || !Number.isSafeInteger(size) ||
         Number(size) <= 0 || Number(size) > MAX_FILE_BYTES ||
-        (!room.files.has(fileId) && [...room.files.values()].filter(f => f.ownerId === peer.id).length >= 10)) {
+        (!room.files.has(fileId) && [...room.files.values()].filter(f => f.ownerId === peer.id).length >= MAX_STUDENT_FILES)) {
       return void sendError(ws, 'Invalid file size or room file limit reached');
     }
     const name = acceptableText(msg.name, 130);

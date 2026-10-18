@@ -467,7 +467,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
 
       </header>
       {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
-      <div className="page-stage" ref={attachStage} aria-label="PDF page gesture area"
+      <div className="page-stage" ref={attachStage} onMouseDown={swipe.onMouseDown}
+        aria-label="PDF page gesture area"
         style={{ touchAction: zoom === 1 ? 'pan-y' : 'auto' }}>
         {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
         {(pdfDocument || showQuickPreview) && <div className="page-shell">

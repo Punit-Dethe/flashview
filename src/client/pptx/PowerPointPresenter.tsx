@@ -178,7 +178,8 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
   };
 
   return <div className="flashview-pptx-presenter" ref={stageRef}>
-    <div className="flashview-pptx-canvas" ref={attachCanvas} aria-label="PowerPoint slide gesture area">
+    <div className="flashview-pptx-canvas" ref={attachCanvas} onMouseDown={swipe.onMouseDown}
+      aria-label="PowerPoint slide gesture area">
       {slide && available.width > 0 && available.height > 0
         ? <PptxCanvas slide={slide} available={available}/> : <div className="flashview-pptx-state" role="status">
         {state !== 'error' && <span className="spinner"/>}

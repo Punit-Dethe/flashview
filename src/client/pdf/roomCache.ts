@@ -4,6 +4,7 @@ import { perf } from '../perf';
 import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
 import { packetChunksFromQuery, selectMissingChunkGroup } from './networkPacket';
 import { shouldReconnectForRangeFailure } from './transferRecovery';
+import { storageRetryDelay } from './storageRecovery';
 
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
@@ -14,6 +15,10 @@ const DB_NAME = 'flashview-room-cache';
 const DB_VERSION = 2;
 const MAX_MEMORY_BYTES = 48 * 1024 * 1024;
 type ChunkRecord = { key: string; room: string; document: string; index: number; data: ArrayBuffer };
+type StorageRecovery = {
+  file: PdfManifest; record: ChunkRecord; attempts: number;
+  timer: ReturnType<typeof setTimeout> | null;
+};
 type RoomRecord = { id: string; expires: number };
 export type CacheProgress = { fileId: string; bytes: number; size: number; complete: boolean };
 
@@ -209,6 +214,7 @@ export class RoomPdfCache {
   private readonly fixedTransfer = new URLSearchParams(location.search).get('transfer') === 'fixed';
   private readonly networkChunks = packetChunksFromQuery(location.search);
   private storageFailedFiles = new Set<string>();
+  private storageRecovery = new Map<string, StorageRecovery>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
   onStalled: (fileId: string) => void = () => {};
@@ -221,6 +227,56 @@ export class RoomPdfCache {
     if (this.warned) return;
     this.warned = true;
     this.onStorageWarning('Browser storage is unavailable or full. Cached PDFs may not survive a refresh.');
+  }
+  /** Pause only the affected file after a failed IndexedDB write, not its peers.
+   * Retry the exact original bytes with bounded backoff; never re-request
+   * already received network data merely to test whether storage recovered.
+   */
+  private storageWriteFailed(file: PdfManifest, record: ChunkRecord): void {
+    this.warning();
+    this.storageFailedFiles.add(file.fileId);
+    this.jobs.delete(file.fileId);
+    if (this.storageRecovery.has(file.fileId)) return;
+    const state: StorageRecovery = { file, record, attempts: 0, timer: null };
+    this.storageRecovery.set(file.fileId, state);
+    state.timer = setTimeout(() => void this.retryStorage(file.fileId), storageRetryDelay(0));
+  }
+
+  private async retryStorage(fileId: string): Promise<void> {
+    const state = this.storageRecovery.get(fileId);
+    if (!state || this.stopped) return;
+    state.timer = null;
+    try {
+      const writing = saveChunk(state.record);
+      this.pendingWrites.add(writing);
+      try { await writing; }
+      finally { this.pendingWrites.delete(writing); }
+      if (this.stopped || this.storageRecovery.get(fileId) !== state) return;
+      const indexed = await this.indexSet(fileId);
+      if (this.stopped || this.storageRecovery.get(fileId) !== state) return;
+      indexed.add(state.record.index);
+      this.notePersistedByte(fileId);
+      const progress = completion(state.file, indexed);
+      this.onProgress(progress);
+      this.notifyCacheWaiters(state.record.key);
+      this.storageRecovery.delete(fileId);
+      this.storageFailedFiles.delete(fileId);
+      // Rejoining the scheduler is safe: it skips all successfully persisted
+      // chunks, and never restarts a shared socket or a healthy peer transfer.
+      if (state.file.status === 'approved') this.prefetch(state.file);
+    } catch {
+      if (this.stopped || this.storageRecovery.get(fileId) !== state) return;
+      state.attempts++;
+      state.timer = setTimeout(() => void this.retryStorage(fileId),
+        storageRetryDelay(state.attempts));
+    }
+  }
+
+  private cancelStorageRetry(fileId: string): void {
+    const state = this.storageRecovery.get(fileId);
+    if (state?.timer !== null && state?.timer !== undefined) clearTimeout(state.timer);
+    this.storageRecovery.delete(fileId);
+    this.storageFailedFiles.delete(fileId);
   }
   private key(fileId: string, index: number): string {
     return this.roomId + '/' + fileId + '/' + index;
@@ -332,10 +388,11 @@ export class RoomPdfCache {
       if (this.stopped) throw Error('Classroom cache closed');
       this.putMemory(key, data);
       const writingSince = perf.enabled ? performance.now() : 0;
-      const saving = saveChunk({
+      const record: ChunkRecord = {
         key, room: this.roomId, document: this.roomId + '/' + file.fileId,
         index, data: data.slice().buffer,
-      });
+      };
+      const saving = saveChunk(record);
       this.pendingWrites.add(saving);
       try {
         await saving;
@@ -349,9 +406,7 @@ export class RoomPdfCache {
         this.onProgress(state);
         this.notifyCacheWaiters(key);
       } catch {
-        this.warning();
-        this.storageFailedFiles.add(file.fileId);
-        this.jobs.delete(file.fileId);
+        this.storageWriteFailed(file, record);
         // Storage can fail while an in-memory copy remains viewable.
         this.notifyCacheWaiters(key);
       }
@@ -393,10 +448,11 @@ export class RoomPdfCache {
       const piece = data.slice(offset, Math.min(offset + CHUNK_BYTES, data.byteLength));
       this.putMemory(key, piece);
       const writingSince = perf.enabled ? performance.now() : 0;
-      const saving = saveChunk({
+      const record: ChunkRecord = {
         key, room: this.roomId, document: this.roomId + '/' + file.fileId,
         index, data: piece.slice().buffer,
-      });
+      };
+      const saving = saveChunk(record);
       this.pendingWrites.add(saving);
       try {
         await saving;
@@ -410,9 +466,7 @@ export class RoomPdfCache {
         this.onProgress(state);
         this.notifyCacheWaiters(key);
       } catch {
-        this.warning();
-        this.storageFailedFiles.add(file.fileId);
-        this.jobs.delete(file.fileId);
+        this.storageWriteFailed(file, record);
         // A persisted chunk is never acknowledged before its transaction
         // commits. In-memory bytes can still satisfy existing viewers.
         this.notifyCacheWaiters(key);
@@ -534,6 +588,7 @@ export class RoomPdfCache {
   }
   /** A disconnected student must not consume the background scheduler. */
   pause(fileId: string): void {
+    this.cancelStorageRetry(fileId);
     this.schedulingGeneration++;
     this.wakeScheduler?.();
     this.jobs.delete(fileId);
@@ -695,6 +750,10 @@ export class RoomPdfCache {
     this.nextIndex.clear();
     this.cooldown.clear();
     this.adaptive.clear();
+    for (const recovery of this.storageRecovery.values()) {
+      if (recovery.timer !== null) clearTimeout(recovery.timer);
+    }
+    this.storageRecovery.clear();
     this.storageFailedFiles.clear();
     this.firstQueuedAt.clear();
     this.stallReported.clear();

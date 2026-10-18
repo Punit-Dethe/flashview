@@ -1917,6 +1917,11 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
         return originalArrayBuffer.apply(this, args);
       };
     });
+    // The app only synchronizes in a visible teacher tab, by design.
+    // Make this the foreground tab before synthesizing focus; a hidden-tab
+    // focus event is correctly ignored and would test a different behavior.
+    await host.bringToFront();
+    assert.equal(await host.evaluate(() => document.visibilityState), 'visible');
     // Ask for the server manifest without recreating the teacher's cache.
     // The scheduler must revalidate the local 100% index, discover the
     // missing chunk and independently request it from the original sender.

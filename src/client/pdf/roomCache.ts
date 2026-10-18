@@ -1,4 +1,5 @@
 import { MAX_RANGE_BYTES, ROOM_TTL_MS, type PdfManifest } from '../../shared/protocol';
+import { isPowerPointName } from '../../shared/fileTypes';
 import type { RoomSocket } from '../socket';
 import { perf } from '../perf';
 import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
@@ -523,7 +524,12 @@ export class RoomPdfCache {
     }
     const currentWindow = this.fixedTransfer ? BACKGROUND_WINDOW : this.tuner(file.fileId).limit;
     if ((this.activePerFileRequests.get(file.fileId) ?? 0) >= currentWindow) return [];
-    const cursor = this.nextIndex.get(file.fileId) ?? 0;
+    // zip.js can scan up to ~1 MiB at the end of a ZIP for its directory.
+    // Start the independent background cache near the tail, then wrap to
+    // zero for first-slide XML. The viewer never prioritizes network data.
+    const firstPacket = isPowerPointName(file.name) && !this.nextIndex.has(file.fileId);
+    const cursor = this.nextIndex.get(file.fileId) ??
+      (firstPacket ? Math.max(0, total - 16) : 0);
     const selected = selectMissingChunkGroup(total, cursor, cached, reserved, this.networkChunks);
     if (!selected.length) return [];
     for (const index of selected) reserved.add(index);

@@ -999,7 +999,7 @@ export function App() {
                         bytesPerSecond={downloadSpeed[file.fileId]}
                         onPresent={()=>{
                           const complete=Boolean(cacheProgress[file.fileId]?.complete);
-                          if(!isPdfName(file.name)&&!(isPowerPointName(file.name)&&complete))return;
+                          if(!isPdfName(file.name)&&!isPowerPointName(file.name))return;
                           try{presentation.open(file,complete);}
                           catch(e){setError(e instanceof Error?e.message:'Unable to open presentation');}
                         }}

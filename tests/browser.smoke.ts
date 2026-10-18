@@ -1548,7 +1548,7 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
   }
 });
 
-test('complete PowerPoint uses lazy browser-only presenter with independent Download and Present actions',
+test('zip.js PowerPoint preview and paired action controls work independently of Download',
   {timeout:130000}, async()=>{
   const {port,child}=await runningServer();
   const browser=await browserEngine.launch({headless:true});
@@ -1578,6 +1578,22 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     assert.equal(await downloadButton.count(),1,'PPTX also gets Download');
     assert.equal(await presentButton.evaluate(x=>getComputedStyle(x).borderRadius),'50%',
       'PPTX Present is circular');
+    const actionGeometry=await card.evaluate(element=>{
+      const row=element.querySelector('.document-card-actions')!.getBoundingClientRect();
+      const download=element.querySelector('.document-card-download')!.getBoundingClientRect();
+      const present=element.querySelector('.document-card-present')!.getBoundingClientRect();
+      return {rowTop:row.top,rowBottom:row.bottom,downloadTop:download.top,
+        downloadBottom:download.bottom,presentTop:present.top,presentBottom:present.bottom,
+        downloadRight:download.right,presentLeft:present.left,presentWidth:present.width};
+    });
+    assert.ok(Math.abs((actionGeometry.downloadTop+actionGeometry.downloadBottom)/2 -
+      (actionGeometry.presentTop+actionGeometry.presentBottom)/2)<3,
+      'Present must share the Download button horizontal row, not overlay the file thumbnail');
+    assert.ok(actionGeometry.presentLeft>=actionGeometry.downloadRight+5 &&
+      actionGeometry.presentWidth>=40 &&
+      actionGeometry.presentTop>=actionGeometry.rowTop-1 &&
+      actionGeometry.presentBottom<=actionGeometry.rowBottom+1,
+      'Circular Present must be on the right inside the same action row');
     await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});
     assert.equal(await presentButton.isEnabled(),true);
     assert.equal(await downloadButton.isEnabled(),true);
@@ -1585,7 +1601,10 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     await popup.locator('.flashview-pptx-controls').waitFor({timeout:45000});
     assert.equal(await popup.getByText('Slide 1 / 1').count(),1,
       'Actual PowerPoint rendered from IndexedDB without cloud conversion');
-    assert.equal(await popup.getByRole('button',{name:'Start slideshow'}).count(),1);
+    assert.equal(await popup.getByRole('button',{name:'Toggle fullscreen'}).count(),1);
+    assert.equal(await popup.locator('.flashview-pptx-slide .flashview-pptx-text')
+      .filter({hasText:'FlashView PowerPoint Test'}).count(),1,
+      'zip.js extracts and renders the actual slide text');
     assert.equal(await popup.locator('.flashview-pptx-state').count(),0);
     const [dl]=await Promise.all([host.waitForEvent('download'),downloadButton.click()]);
     const got=await readFile(await dl.path());

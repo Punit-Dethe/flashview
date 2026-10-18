@@ -93,16 +93,9 @@ export function Presenter() {
     <div className="presentation-layout">
       {file && source && !unavailable
         ? isPowerPointName(file.name)
-          ? cached?.complete && roomId
-            ? <Suspense fallback={<div className="presentation-state" role="status"><span className="spinner"/><h1>Loading PowerPoint viewer…</h1></div>}>
-                <PowerPointPresenter file={file} roomId={roomId} close={close} onFirstSlideRendered={pageReady}/>
-              </Suspense>
-            : <div className="presentation-state" role="status">
-                <span className="spinner"/>
-                <h1>Finishing PowerPoint download…</h1>
-                <p>PowerPoint playback becomes available after the original file is cached.</p>
-                <button className="outline-button" onClick={close}>Close viewer</button>
-              </div>
+          ? <Suspense fallback={<div className="presentation-state" role="status"><span className="spinner"/><h1>Loading PowerPoint preview…</h1></div>}>
+              <PowerPointPresenter file={file} source={source} cached={cached} close={close} onFirstSlideRendered={pageReady}/>
+            </Suspense>
           : <Viewer file={file} socket={source} close={close} cached={cached} previewImage={preview} cachedRoomId={roomId} onFirstPageRendered={pageReady}
               onTiming={reportTiming}/>
         : <div className="presentation-state" role="status">

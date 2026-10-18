@@ -1,125 +1,158 @@
-import '../styles.powerpoint.css';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { PdfManifest } from '../../shared/protocol';
-import { readCompletedFile } from '../pdf/roomCache';
-import { inspectPptx } from './inspect';
+import type { CacheProgress } from '../pdf/roomCache';
+import type { PdfRangeSource } from '../presentation';
+import { CachedPptxReader } from './zipRange';
+import { PartialPptxArchive, type PptxSlide } from './slideModel';
+import '../styles.powerpoint.css';
 
-type Engine = ReturnType<typeof import('pptx-vanilla-viewer').createPptxViewer>;
+type Props = { file: PdfManifest; source: PdfRangeSource; cached?: CacheProgress | null;
+  close: () => void; onFirstSlideRendered?: () => void };
 
-type Props = {
-  file: PdfManifest;
-  roomId: string | null;
-  close: () => void;
-  onFirstSlideRendered?: () => void;
-};
+function PptxCanvas({ slide }: { slide: PptxSlide }) {
+  return <div className="flashview-pptx-slide"
+    style={{ aspectRatio: slide.width + '/' + slide.height, backgroundColor: slide.background }}>
+    {slide.items.map(item => {
+      const style: CSSProperties = {
+        left: item.x / slide.width * 100 + '%',
+        top: item.y / slide.height * 100 + '%',
+        width: item.width / slide.width * 100 + '%',
+        height: item.height / slide.height * 100 + '%',
+        borderRadius: item.radius,
+        backgroundColor: item.fill,
+      };
+      if (item.kind === 'image') return item.src
+        ? <img key={item.id} className="flashview-pptx-element" src={item.src}
+            alt="" style={{ ...style, objectFit: 'contain' }}/>
+        : <div key={item.id} className="flashview-pptx-element flashview-pptx-placeholder" style={style}/>;
+      return <div key={item.id} className="flashview-pptx-element flashview-pptx-text"
+        style={{ ...style, fontSize: 'min(3vw,' + (item.size || 24) + 'px)',
+          color: item.color || '#1d2636', whiteSpace: 'pre-wrap' }}>
+        {item.text}
+      </div>;
+    })}
+  </div>;
+}
 
-/** Runs only in a separate /present tab. It never talks to the relay or affects
- * background transfer concurrency. A PPTX is eligible only after complete cache. */
-export default function PowerPointPresenter({ file, roomId, close, onFirstSlideRendered }: Props) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const viewerRef = useRef<Engine | null>(null);
-  const firstVisible = useRef(false);
-  const [stage, setStage] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [error, setError] = useState('');
+/** Experimental progressive PPTX preview. zip.js extracts cached slide parts;
+ * it does NOT implement PowerPoint animations. All network transfer remains
+ * controlled by the host's independent background cache scheduler. */
+export default function PowerPointPresenter({ file, source, cached, close, onFirstSlideRendered }: Props) {
+  const archiveRef = useRef<PartialPptxArchive | null>(null);
+  const slideCache = useRef(new Map<string, PptxSlide>());
+  const pending = useRef(new Map<string, Promise<PptxSlide>>());
+  const firstShown = useRef(false);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [paths, setPaths] = useState<string[]>([]);
   const [slideIndex, setSlideIndex] = useState(0);
-  const [slideCount, setSlideCount] = useState(0);
+  const [slide, setSlide] = useState<PptxSlide | null>(null);
+  const [state, setState] = useState<'index' | 'loading' | 'partial' | 'ready' | 'error'>('index');
+  const [error, setError] = useState('');
+  const [retryCount, retry] = useState(0);
+  const [indexRetry, retryIndex] = useState(0);
+  const percent = cached?.complete ? 100 : Math.round(
+    Math.max(0, Math.min(100, (cached?.bytes ?? 0) / Math.max(file.size, 1) * 100)));
 
   useEffect(() => {
-    let cancelled = false;
-    let viewer: Engine | null = null;
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
-    setStage('loading');
-    setSlideIndex(0);
-    setSlideCount(0);
-    firstVisible.current = false;
-
-    const fail = (message: string) => {
-      if (cancelled) return;
-      if (watchdog) clearTimeout(watchdog);
-      setError(message);
-      setStage('error');
-    };
-    async function start() {
-      if (!roomId || !hostRef.current) {
-        fail('The classroom cache is unavailable. Reopen this presentation from the host.');
-        return;
-      }
-      const bytes = await readCompletedFile(roomId, file);
-      if (cancelled) return;
-      if (!bytes) {
-        fail('This PowerPoint is not fully downloaded yet. Retry after the transfer completes.');
-        return;
-      }
-      // Inspect the full local archive using zip.js. The presentation renderer
-      // remains a separate, lazily loaded dependency with its own PPTX parser.
-      await inspectPptx(bytes);
-      if (cancelled) return;
-      const { createPptxViewer } = await import('pptx-vanilla-viewer');
-      if (cancelled || !hostRef.current) return;
-      viewer = createPptxViewer(hostRef.current, {
-        editable: false,
-        showToolbar: false,
-        showThumbnails: false,
-        showCompatibilityToasts: false,
-        fileName: file.name,
-        onLoad: ({ slideCount: count }) => {
-          if (cancelled) return;
-          if (watchdog) clearTimeout(watchdog);
-          setSlideCount(count);
-          setSlideIndex(0);
-          setStage('ready');
-          if (!firstVisible.current) {
-            firstVisible.current = true;
-            // Report only after the initial slide has had a chance to paint.
-            requestAnimationFrame(() => requestAnimationFrame(() => {
-              if (!cancelled) onFirstSlideRendered?.();
-            }));
-          }
-        },
-        onSlideChange: index => { if (!cancelled) setSlideIndex(index); },
-        onError: message => fail(message || 'Unable to render this PowerPoint.'),
-      });
-      viewerRef.current = viewer;
-      // Load only after the complete file has been reconstructed locally.
-      // No URL or remote file storage is passed to the engine.
-      await viewer.loadFile(bytes);
-    }
-    watchdog = setTimeout(() =>
-      fail('Opening the PowerPoint took too long. Close and retry the presentation.'), 45_000);
-    void start().catch(error => fail(error instanceof Error ? error.message : 'PowerPoint could not be opened.'));
+    let disposed = false;
+    const reader = new CachedPptxReader(file, source);
+    const archive = new PartialPptxArchive(reader);
+    archiveRef.current = archive;
+    setState('index'); setPaths([]); setSlide(null); setSlideIndex(0);
+    slideCache.current.clear(); pending.current.clear(); firstShown.current = false;
+    void archive.index().then(slidePaths => {
+      if (disposed) return;
+      setPaths(slidePaths); setState('loading');
+    }).catch(e => {
+      if (disposed) return;
+      setError(e instanceof Error ? e.message : 'Unable to inspect PowerPoint archive');
+      setState('error');
+    });
     return () => {
-      cancelled = true;
-      if (watchdog) clearTimeout(watchdog);
-      viewerRef.current = null;
-      viewer?.destroy();
+      disposed = true;
+      reader.close();
+      void archive.close().catch(() => {});
+      if (archiveRef.current === archive) archiveRef.current = null;
     };
-  }, [file.fileId, file.size, roomId]);
+  }, [file.fileId, file.size, source, indexRetry]);
 
-  const next = () => viewerRef.current?.next();
-  const previous = () => viewerRef.current?.prev();
-  const fullscreen = () => {
-    const viewer = viewerRef.current;
-    if (viewer) void viewer.enterPresentation().catch(error =>
-      setError(error instanceof Error ? error.message : 'Fullscreen was blocked by the browser.'));
+  const markVisible = useCallback(() => {
+    if (firstShown.current) return;
+    firstShown.current = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => onFirstSlideRendered?.()));
+  }, [onFirstSlideRendered]);
+
+  useEffect(() => {
+    const path = paths[slideIndex], archive = archiveRef.current;
+    if (!path || !archive) return;
+    let active = true;
+    const existing = slideCache.current.get(path);
+    if (existing) {
+      setSlide(existing); setState('ready'); markVisible();
+      return () => { active = false; };
+    }
+    setSlide(null); setState('loading'); setError('');
+    let task = pending.current.get(path);
+    if (!task) {
+      task = archive.slide(path, early => {
+        slideCache.current.set(path, early);
+        if (active) { setSlide(early); setState('partial'); markVisible(); }
+      });
+      pending.current.set(path, task);
+    }
+    void task.then(result => {
+      slideCache.current.set(path, result); pending.current.delete(path);
+      if (!active) return;
+      setSlide(result); setState('ready'); markVisible();
+    }).catch(e => {
+      pending.current.delete(path);
+      if (!active) return;
+      setError(e instanceof Error ? e.message : 'Could not read slide data');
+      setState('error');
+    });
+    return () => { active = false; };
+  }, [paths, slideIndex, retryCount, markVisible]);
+
+  const move = (direction: number) =>
+    setSlideIndex(index => Math.max(0, Math.min(paths.length - 1, index + direction)));
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else if (stageRef.current) void stageRef.current.requestFullscreen().catch(() => {});
   };
 
-  return <div className="flashview-pptx-presenter">
-    <div ref={hostRef} className="flashview-pptx-canvas" aria-label="PowerPoint slides" />
-    {stage !== 'ready' && <div className="flashview-pptx-state" role="status">
-      {stage === 'loading' && <span className="spinner" />}
-      <h1>{stage === 'loading' ? 'Opening PowerPoint…' : 'Unable to open PowerPoint'}</h1>
-      <p>{stage === 'loading'
-        ? 'Preparing the fully downloaded presentation in your browser.'
-        : error}</p>
-      {stage === 'error' && <button type="button" onClick={close}>Close presentation</button>}
-    </div>}
-    {stage === 'ready' && <div className="flashview-pptx-controls">
-      <span aria-live="polite">Slide {slideIndex + 1} / {slideCount}</span>
-      <button type="button" onClick={previous} disabled={slideIndex === 0} aria-label="Previous slide">←</button>
-      <button type="button" onClick={next} disabled={slideIndex >= slideCount - 1} aria-label="Next slide">→</button>
-      <button type="button" onClick={fullscreen} aria-label="Start slideshow">Fullscreen</button>
+  return <div className="flashview-pptx-presenter" ref={stageRef}>
+    <div className="flashview-pptx-canvas">
+      {slide ? <PptxCanvas slide={slide}/> : <div className="flashview-pptx-state" role="status">
+        {state !== 'error' && <span className="spinner"/>}
+        <h1>{state === 'error' ? 'Slide unavailable' :
+          state === 'index' ? 'Reading PowerPoint slide index…' : 'Waiting for slide data…'}</h1>
+        <p>{state === 'error' ? error : 'Previewing available bytes. Original file transfer continues independently.'}</p>
+        {state === 'error' && <button type="button" onClick={() => {
+          setError('');
+          if (!paths.length) retryIndex(n => n + 1);
+          else {
+            slideCache.current.delete(paths[slideIndex]);
+            pending.current.delete(paths[slideIndex]);
+            retry(n => n + 1);
+          }
+        }}>Retry slide</button>}
+      </div>}
+      {slide && state === 'partial' && <div className="flashview-pptx-image-progress" role="status">
+        Slide visible · remaining images loading
+      </div>}
+    </div>
+    <div className="flashview-pptx-controls">
+      <span aria-live="polite">Slide {paths.length ? slideIndex + 1 : '—'} / {paths.length || '—'}</span>
+      <button type="button" onClick={() => move(-1)} disabled={!paths.length || slideIndex === 0}
+        aria-label="Previous slide">←</button>
+      <button type="button" onClick={() => move(1)} disabled={!paths.length || slideIndex === paths.length - 1}
+        aria-label="Next slide">→</button>
+      <button type="button" onClick={toggleFullscreen} aria-label="Toggle fullscreen">Fullscreen</button>
       <button type="button" onClick={close} aria-label="Close presentation">Close</button>
-    </div>}
-    {error && stage === 'ready' && <div className="flashview-pptx-warning" role="alert">{error}</div>}
+    </div>
+    <div className="flashview-pptx-caption" aria-live="polite">
+      <span>Experimental static PPTX preview · animations not supported</span>
+      <span>{percent}% downloaded</span>
+    </div>
   </div>;
 }

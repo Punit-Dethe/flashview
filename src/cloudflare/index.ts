@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
+import { canForwardToHost } from '../shared/relayBackpressure';
 import {
   MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
@@ -230,7 +231,21 @@ export class ClassroomRoom extends DurableObject<Env> {
         if (!range || range.senderId !== peer.id || range.fileId !== header.fileId ||
             range.begin !== header.begin || range.end - range.begin !== bytes.byteLength) return;
         this.ranges.delete(header.requestId);
-        this.host?.send(message);
+        const host = this.host;
+        if (host && host.readyState === OPEN &&
+            canForwardToHost(host.bufferedAmount, message.byteLength)) {
+          try {
+            host.send(message);
+          } catch {
+            send(host, { type: 'range.error', requestId: header.requestId,
+              message: 'Receiver relay is temporarily overloaded' });
+          }
+        } else {
+          // Never silently lose a response: the existing receiver backoff
+          // retries this *same original file range*. The relay stores no bytes.
+          send(host, { type: 'range.error', requestId: header.requestId,
+            message: 'Receiver relay is temporarily overloaded' });
+        }
       } catch { /* Ignore invalid binary frames and do not log user data. */ }
       return;
     }

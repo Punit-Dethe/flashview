@@ -1652,8 +1652,9 @@ test('host handover never sends a stale offline event; new host still receives t
       type Event = { type: string; [key: string]: unknown };
       type Peer = { ws: WebSocket; events: Event[] };
       const sockets: WebSocket[] = [];
-      const open = async (auth: Record<string, unknown>): Promise<Peer> => {
-        const ws = new WebSocket(location.origin.replace(/^http/, 'ws') + '/ws');
+      const open = async (auth: Record<string, unknown>, roomCode: string): Promise<Peer> => {
+        const ws = new WebSocket(location.origin.replace(/^http/, 'ws') +
+          '/ws?room=' + encodeURIComponent(roomCode));
         ws.binaryType = 'arraybuffer';
         sockets.push(ws);
         const events: Event[] = [];
@@ -1685,11 +1686,11 @@ test('host handover never sends a stale offline event; new host still receives t
         const room = await response.json() as {
           code: string; roomId: string; hostToken: string; joinToken: string;
         };
-        const first = await open({ role: 'host', roomId: room.roomId, token: room.hostToken });
+        const first = await open({ role: 'host', roomId: room.roomId, token: room.hostToken }, room.code);
         await wait(first, 'room.state');
-        const phone = await open({ role: 'student', joinToken: room.joinToken, name: 'Handover' });
+        const phone = await open({ role: 'student', joinToken: room.joinToken, name: 'Handover' }, room.code);
         await wait(phone, 'join.accepted');
-        const replacement = await open({ role: 'host', roomId: room.roomId, token: room.hostToken });
+        const replacement = await open({ role: 'host', roomId: room.roomId, token: room.hostToken }, room.code);
         await wait(replacement, 'room.state');
         await wait(phone, 'host.online');
         // Old host socket's close event can arrive after its successor is ready.

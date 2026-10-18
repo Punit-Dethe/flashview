@@ -7,6 +7,7 @@ export type PptxSlideItem = {
   x: number; y: number; width: number; height: number;
   text?: string; size?: number; color?: string; fill?: string;
   radius?: string; src?: string;
+  stroke?: string; strokeWidth?: number;
 };
 export type PptxSlide = {
   path: string;
@@ -38,10 +39,36 @@ function num(value: string | number | null | undefined, fallback = 0): number {
   const result = Number(value);
   return Number.isFinite(result) && result >= 0 ? result : fallback;
 }
+/** OOXML a:alpha uses 0..100000; 0 means completely transparent.
+ * Only inspect the actual fill element. Descendant searches through spPr
+ * can accidentally pick up an outline color and paint a text box solid.
+ */
 function color(root: Document | Element | undefined, fallback: string): string {
   if (!root) return fallback;
-  const s = one(root, 'srgbClr')?.getAttribute('val');
-  return s && /^[0-9a-f]{6}$/i.test(s) ? '#' + s : fallback;
+  const node = root instanceof Element && root.localName === 'srgbClr'
+    ? root : direct(root as Element, 'srgbClr');
+  const value = node?.getAttribute('val');
+  if (!value || !/^[0-9a-f]{6}$/i.test(value)) return fallback;
+  const alpha = direct(node, 'alpha');
+  const opacity = alpha ? Math.max(0, Math.min(1, num(alpha.getAttribute('val'), 100000) / 100000)) : 1;
+  if (opacity === 0) return 'transparent';
+  if (opacity === 1) return '#' + value;
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return 'rgba(' + red + ', ' + green + ', ' + blue + ', ' + opacity + ')';
+}
+
+function shapePaint(spPr: Element | undefined): { fill: string; stroke?: string; strokeWidth?: number } {
+  if (!spPr) return { fill: 'transparent' };
+  const fill = direct(spPr, 'noFill') ? 'transparent' : color(direct(spPr, 'solidFill'), 'transparent');
+  const ln = direct(spPr, 'ln');
+  if (!ln || direct(ln, 'noFill')) return { fill };
+  const stroke = color(direct(ln, 'solidFill'), 'transparent');
+  if (stroke === 'transparent') return { fill };
+  // PowerPoint line widths are in EMU. Convert to CSS pixels at 96 DPI.
+  const strokeWidth = Math.max(0.5, Math.min(18, num(ln.getAttribute('w'), 12700) * 96 / 914400));
+  return { fill, stroke, strokeWidth };
 }
 function relsPath(path: string): string {
   const slash = path.lastIndexOf('/');
@@ -127,7 +154,8 @@ export class CompletedPptxArchive {
     const xml = parseXml(await this.text(path));
     const root = one(xml, 'spTree');
     if (!root) throw new Error('This slide has no drawing tree');
-    const background = color(one(xml, 'bgPr'), '#ffffff');
+    const bgPr = one(xml, 'bgPr');
+    const background = bgPr ? color(direct(bgPr, 'solidFill'), '#ffffff') : '#ffffff';
     const model: PptxSlide = {
       path, ...this.dimensions, background, items: [],
     };
@@ -158,12 +186,12 @@ export class CompletedPptxArchive {
         const content = paragraphs.map(p => descendants(p, 't').map(t => t.textContent || '').join('')).join('\n');
         item.text = content;
         item.kind = content ? 'text' : 'shape';
-        item.fill = color(direct(child, 'spPr'), 'transparent');
+        Object.assign(item, shapePaint(direct(child, 'spPr')));
         const geom = one(child, 'prstGeom')?.getAttribute('prst');
         item.radius = geom === 'ellipse' ? '50%' : '0';
         const style = body && (one(body, 'rPr') || one(body, 'defRPr') || one(body, 'endParaRPr'));
         item.size = num(style?.getAttribute('sz'), 2000) / 100 * 1.3333;
-        item.color = color(style, '#1d2636');
+        item.color = color(direct(style, 'solidFill'), '#1d2636');
       }
       model.items.push(item);
     }

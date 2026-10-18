@@ -18,6 +18,7 @@ function PptxCanvas({ slide }: { slide: PptxSlide }) {
         height: item.height / slide.height * 100 + '%',
         borderRadius: item.radius,
         backgroundColor: item.fill,
+        border: item.stroke ? (item.strokeWidth ?? 1) + 'px solid ' + item.stroke : undefined,
       };
       if (item.kind === 'image') return item.src
         ? <img key={item.id} className="flashview-pptx-element" src={item.src}

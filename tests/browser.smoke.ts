@@ -1614,6 +1614,27 @@ test('full-download zip.js preview: PowerPoint Present stays disabled until ever
       .filter({hasText:'FlashView PowerPoint Test'}).count(),1,
       'zip.js extracts and renders the actual slide text');
     assert.equal(await popup.locator('.flashview-pptx-state').count(),0);
+    // The original Object Detection deck uses transparent white rectangles
+    // (a:alpha val=0) with red borders on top of photos. Regression: never
+    // let the fill conceal the image or colored background beneath.
+    const overlays=await popup.locator('.flashview-pptx-slide .flashview-pptx-element').evaluateAll(elements =>
+      elements.map(element=>{
+        const style=getComputedStyle(element);
+        return {background:style.backgroundColor,border:style.borderTopColor,width:style.borderTopWidth};
+      }));
+    assert.ok(overlays.some(x=>x.background==='rgb(35, 122, 178)'),
+      'PPTX backing image-like shape must remain visible');
+    assert.ok(overlays.some(x=>x.background==='rgba(0, 0, 0, 0)' &&
+      x.border==='rgb(168, 64, 51)' && Number.parseFloat(x.width)>0),
+      'Transparent detection boxes must preserve their red outline without white fill');
+    const viewportFit=await popup.locator('.flashview-pptx-slide').evaluate(element=>{
+      const bounds=element.getBoundingClientRect();
+      const stage=element.parentElement!.getBoundingClientRect();
+      return {slideLeft:bounds.left,slideRight:bounds.right,stageLeft:stage.left,stageRight:stage.right};
+    });
+    assert.ok(viewportFit.slideLeft>=viewportFit.stageLeft-2 &&
+      viewportFit.slideRight<=viewportFit.stageRight+2,
+      'PowerPoint slide must fit within viewport instead of cropping its left and right edges');
     assert.equal(await popup.getByText('100% cached').count(),1);
     assert.equal(await popup.getByText('Full-file zip.js comparison', {exact:false}).count(),1,
       'This test uses completed bytes, not a progressive ZIP range viewer');

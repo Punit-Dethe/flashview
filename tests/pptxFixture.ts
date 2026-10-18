@@ -36,7 +36,19 @@ export async function makePowerPointFixture(extraBytes = 0): Promise<Buffer> {
 <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
 <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="4000"/>
 <a:t>FlashView PowerPoint Test</a:t></a:r></a:p></p:txBody>
-</p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`,
+</p:sp>
+<!-- Regression fixture: a transparent white bounding box above a colored
+     shape, matching the a:alpha=0 overlays used in real detection decks. -->
+<p:sp><p:nvSpPr><p:cNvPr id="3" name="Photo-like backdrop"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="1800000" y="2700000"/><a:ext cx="3100000" cy="1500000"/></a:xfrm>
+<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+<a:solidFill><a:srgbClr val="237AB2"/></a:solidFill></p:spPr></p:sp>
+<p:sp><p:nvSpPr><p:cNvPr id="4" name="Transparent detection outline"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+<p:spPr><a:xfrm><a:off x="2000000" y="2900000"/><a:ext cx="2700000" cy="1100000"/></a:xfrm>
+<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+<a:solidFill><a:srgbClr val="FFFFFF"><a:alpha val="0"/></a:srgbClr></a:solidFill>
+<a:ln w="21590"><a:solidFill><a:srgbClr val="A84033"/></a:solidFill></a:ln></p:spPr></p:sp>
+</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`,
     'ppt/slides/_rels/slide1.xml.rels': `<Relationships xmlns="${relns}"><Relationship Id="rId1" Type="${partTypes}slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>`,
     'ppt/slideLayouts/slideLayout1.xml': `<p:sldLayout xmlns:p="${presns}" xmlns:a="${drawns}" type="blank" preserve="1">
 <p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>

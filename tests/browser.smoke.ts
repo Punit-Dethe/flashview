@@ -1648,20 +1648,20 @@ test('host handover never sends a stale offline event; new host still receives t
   const root = 'http://127.0.0.1:' + port;
   try {
     await page.goto(root);
-    const result = await page.evaluate(async () => {
-      type Event = { type: string; [key: string]: unknown };
-      type Peer = { ws: WebSocket; events: Event[]; seen: string[] };
-      const sockets: WebSocket[] = [];
-      const open = async (auth: Record<string, unknown>, roomCode: string): Promise<Peer> => {
+    // A string expression avoids tsx's __name wrapper leaking into the
+    // isolated Playwright browser context when helper functions are nested.
+    const result = await page.evaluate(`(async () => {
+      const sockets = [];
+      const open = async (auth, roomCode) => {
         const ws = new WebSocket(location.origin.replace(/^http/, 'ws') +
           '/ws?room=' + encodeURIComponent(roomCode));
         ws.binaryType = 'arraybuffer';
         sockets.push(ws);
-        const events: Event[] = [];
-        const seen: string[] = [];
+        const events = [];
+        const seen = [];
         ws.addEventListener('message', message => {
           if (typeof message.data === 'string') {
-            const event = JSON.parse(message.data) as Event;
+            const event = JSON.parse(message.data);
             events.push(event);
             seen.push(event.type);
           } else if (message.data instanceof ArrayBuffer) {
@@ -1669,27 +1669,25 @@ test('host handover never sends a stale offline event; new host still receives t
             seen.push('binary');
           }
         });
-        await new Promise<void>((resolve, reject) => {
+        await new Promise((resolve, reject) => {
           ws.addEventListener('open', () => resolve(), { once: true });
           ws.addEventListener('error', () => reject(Error('WebSocket error')), { once: true });
         });
         ws.send(JSON.stringify({ v: 1, type: 'hello', ...auth }));
         return { ws, events, seen };
       };
-      const wait = async (peer: Peer, type: string): Promise<Event> => {
+      const wait = async (peer, type) => {
         for (let i = 0; i < 120; i++) {
           const at = peer.events.findIndex(event => event.type === type);
           if (at >= 0) return peer.events.splice(at, 1)[0];
-          await new Promise<void>(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
         throw Error('Timeout waiting for ' + type);
       };
       try {
         const response = await fetch('/api/rooms?autoApprove=1', { method: 'POST' });
         if (!response.ok) throw Error('Room creation failed');
-        const room = await response.json() as {
-          code: string; roomId: string; hostToken: string; joinToken: string;
-        };
+        const room = await response.json();
         const first = await open({ role: 'host', roomId: room.roomId, token: room.hostToken }, room.code);
         await wait(first, 'room.state');
         const phone = await open({ role: 'student', joinToken: room.joinToken, name: 'Handover' }, room.code);
@@ -1697,8 +1695,7 @@ test('host handover never sends a stale offline event; new host still receives t
         const replacement = await open({ role: 'host', roomId: room.roomId, token: room.hostToken }, room.code);
         await wait(replacement, 'room.state');
         await wait(phone, 'host.online');
-        // Old host socket's close event can arrive after its successor is ready.
-        await new Promise<void>(resolve => setTimeout(resolve, 400));
+        await new Promise(resolve => setTimeout(resolve, 400));
         const lastOnlineAt = phone.seen.lastIndexOf('host.online');
         const staleOffline = phone.seen.slice(lastOnlineAt + 1)
           .filter(type => type === 'host.offline').length;
@@ -1723,14 +1720,14 @@ test('host handover never sends a stale offline event; new host still receives t
         packet.set(bytes, 2 + json.length);
         phone.ws.send(packet.buffer);
         const delivered = await wait(replacement, 'binary');
-        const raw = delivered.data as number[];
+        const raw = delivered.data;
         const headerLength = new DataView(new Uint8Array(raw).buffer).getUint16(0);
         const resultBytes = raw.slice(2 + headerLength);
         return { staleOffline, matches: JSON.stringify(resultBytes) === JSON.stringify(bytes) };
       } finally {
         for (const ws of sockets) ws.close();
       }
-    });
+    })()`) as { staleOffline: number; matches: boolean };
     assert.equal(result.staleOffline, 0,
       'An obsolete host socket cannot announce host.offline after the replacement comes online');
     assert.equal(result.matches, true, 'An uninterrupted relay handover must preserve original bytes');

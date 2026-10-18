@@ -310,6 +310,18 @@ export class RoomPdfCache {
       const stale = persisted.size !== indexed.size ||
         [...persisted].some(index => !indexed.has(index));
       if (stale) {
+        // A missing IndexedDB key must invalidate the corresponding in-memory
+        // copy as well. Otherwise chunk() returns memory immediately, skips
+        // saveChunk(), and the scheduler loops forever without repairing disk.
+        for (const index of indexed) {
+          if (persisted.has(index)) continue;
+          const key = this.key(file.fileId, index);
+          const cached = this.memory.get(key);
+          if (cached) {
+            this.memoryBytes -= cached.byteLength;
+            this.memory.delete(key);
+          }
+        }
         indexed.clear();
         for (const index of persisted) indexed.add(index);
       }

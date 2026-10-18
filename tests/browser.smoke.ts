@@ -1900,6 +1900,18 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
     // First the relay and student agree that the ORIGINAL cache is complete.
     await student.locator('.student-file-card').filter({ hasText: 'stale-cache.pdf' })
       .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
+    // Freeze ALL new phone reads after initial completion. This makes the
+    // downward correction observable before the missing range can be repaired.
+    await student.evaluate(() => {
+      const read = Blob.prototype.arrayBuffer;
+      const waiting: Array<() => void> = [];
+      Blob.prototype.arrayBuffer = async function (...args) {
+        await new Promise<void>(resolve => waiting.push(resolve));
+        return read.apply(this, args);
+      };
+      (window as typeof window & { __releaseCacheRepair?: () => void }).__releaseCacheRepair =
+        () => { for (const resolve of waiting.splice(0)) resolve(); };
+    });
     const removed = await host.evaluate(room => new Promise<number>((resolve, reject) => {
       const request = indexedDB.open('flashview-room-cache');
       request.onsuccess = () => {
@@ -1920,14 +1932,6 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
     }), code);
     assert.equal(removed, 1);
 
-    // Prevent immediate repair so that a false 100% is observably retracted.
-    await student.evaluate(() => {
-      const originalArrayBuffer = Blob.prototype.arrayBuffer;
-      Blob.prototype.arrayBuffer = async function(...args) {
-        await new Promise(resolve => setTimeout(resolve, 1200));
-        return originalArrayBuffer.apply(this, args);
-      };
-    });
     // The app only synchronizes in a visible teacher tab, by design.
     // Make this the foreground tab before synthesizing focus; a hidden-tab
     // focus event is correctly ignored and would test a different behavior.
@@ -1991,6 +1995,9 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
       console.error('STALE_CACHE_DIAGNOSTICS', JSON.stringify(diagnostics));
       throw error;
     }
+    await student.evaluate(() => {
+      (window as typeof window & { __releaseCacheRepair?: () => void }).__releaseCacheRepair?.();
+    });
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
     const digest = await host.evaluate(async room => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {

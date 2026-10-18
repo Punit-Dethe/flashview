@@ -1650,7 +1650,7 @@ test('host handover never sends a stale offline event; new host still receives t
     await page.goto(root);
     const result = await page.evaluate(async () => {
       type Event = { type: string; [key: string]: unknown };
-      type Peer = { ws: WebSocket; events: Event[] };
+      type Peer = { ws: WebSocket; events: Event[]; seen: string[] };
       const sockets: WebSocket[] = [];
       const open = async (auth: Record<string, unknown>, roomCode: string): Promise<Peer> => {
         const ws = new WebSocket(location.origin.replace(/^http/, 'ws') +
@@ -1658,11 +1658,15 @@ test('host handover never sends a stale offline event; new host still receives t
         ws.binaryType = 'arraybuffer';
         sockets.push(ws);
         const events: Event[] = [];
+        const seen: string[] = [];
         ws.addEventListener('message', message => {
           if (typeof message.data === 'string') {
-            events.push(JSON.parse(message.data) as Event);
+            const event = JSON.parse(message.data) as Event;
+            events.push(event);
+            seen.push(event.type);
           } else if (message.data instanceof ArrayBuffer) {
             events.push({ type: 'binary', data: Array.from(new Uint8Array(message.data)) });
+            seen.push('binary');
           }
         });
         await new Promise<void>((resolve, reject) => {
@@ -1670,7 +1674,7 @@ test('host handover never sends a stale offline event; new host still receives t
           ws.addEventListener('error', () => reject(Error('WebSocket error')), { once: true });
         });
         ws.send(JSON.stringify({ v: 1, type: 'hello', ...auth }));
-        return { ws, events };
+        return { ws, events, seen };
       };
       const wait = async (peer: Peer, type: string): Promise<Event> => {
         for (let i = 0; i < 120; i++) {
@@ -1695,7 +1699,9 @@ test('host handover never sends a stale offline event; new host still receives t
         await wait(phone, 'host.online');
         // Old host socket's close event can arrive after its successor is ready.
         await new Promise<void>(resolve => setTimeout(resolve, 400));
-        const staleOffline = phone.events.filter(event => event.type === 'host.offline').length;
+        const lastOnlineAt = phone.seen.lastIndexOf('host.online');
+        const staleOffline = phone.seen.slice(lastOnlineAt + 1)
+          .filter(type => type === 'host.offline').length;
         const fileId = 'handovertransfer123';
         const bytes = Array.from({ length: 520 }, (_, i) => (i * 29 + 13) % 256);
         phone.ws.send(JSON.stringify({

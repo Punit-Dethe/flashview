@@ -323,10 +323,15 @@ export class RoomPdfCache {
       }
       return fresh;
     }).catch(() => {
-      // Database verification is not evidence of a completed cache. Never
-      // falsely acknowledge the entire file while storage is unavailable.
+      // Failed verification is not proof that the bytes remain on disk.
+      // Throttle future attempts instead of spinning on a broken IndexedDB.
       this.warning();
-      return { fileId: file.fileId, bytes: 0, size: file.size, complete: false, corrected: true };
+      this.cooldown.set(file.fileId, Date.now() + storageRetryDelay(0));
+      const uncertain: CacheProgress = {
+        fileId: file.fileId, bytes: 0, size: file.size, complete: false, corrected: true,
+      };
+      this.onProgress(uncertain);
+      return uncertain;
     }).finally(() => {
       this.verifyingCompleted.delete(file.fileId);
     });

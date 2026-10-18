@@ -189,6 +189,10 @@ export class RoomPdfCache {
   private working = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private activeBackground = new Set<Promise<void>>();
+  // A new file must wake the scheduler even if every existing request is hung.
+  // The generation also catches offers arriving while an IndexedDB query awaits.
+  private schedulingGeneration = 0;
+  private wakeScheduler: (() => void) | null = null;
   // Adaptive limits count outstanding network requests, not individual 64 KiB
   // persistent blocks. The baseline at 64 KiB retains the same request count.
   private activePerFileRequests = new Map<string, number>();
@@ -530,6 +534,8 @@ export class RoomPdfCache {
   }
   /** A disconnected student must not consume the background scheduler. */
   pause(fileId: string): void {
+    this.schedulingGeneration++;
+    this.wakeScheduler?.();
     this.jobs.delete(fileId);
     this.nextIndex.delete(fileId);
     this.cooldown.delete(fileId);
@@ -539,6 +545,8 @@ export class RoomPdfCache {
   }
   resume(): void {
     if (this.stopped) return;
+    this.schedulingGeneration++;
+    this.wakeScheduler?.();
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     void this.work();
@@ -577,6 +585,7 @@ export class RoomPdfCache {
       // No artificial successful-batch timer. A settled transfer makes a
       // slot available to other students immediately, independent of tabs.
       while (!this.stopped && this.jobs.size > 0) {
+        const seenGeneration = this.schedulingGeneration;
         if (!this.socket.connected) { retryAfter = 4500; break; }
         const entries = [...this.jobs.entries()];
         if (entries.length === 0) break;
@@ -638,9 +647,19 @@ export class RoomPdfCache {
           if (!assignedThisRound) break;
         }
         if (this.activeBackground.size > 0) {
-          // A stalled request doesn't block other files unless all bounded
-          // network slots really are in use. Page reads have separate slots.
-          await Promise.race(this.activeBackground);
+          // Do not sleep forever on the last hung range when a new file arrives.
+          // The generation guards against an offer during an awaited cache read,
+          // before the wake callback has been registered.
+          if (seenGeneration !== this.schedulingGeneration) continue;
+          let wake!: () => void;
+          const signalled = new Promise<void>(resolve => { wake = resolve; });
+          this.wakeScheduler = wake;
+          try {
+            if (seenGeneration === this.schedulingGeneration)
+              await Promise.race([...this.activeBackground, signalled]);
+          } finally {
+            if (this.wakeScheduler === wake) this.wakeScheduler = null;
+          }
           continue;
         }
         if (this.jobs.size === 0) break;
@@ -662,6 +681,9 @@ export class RoomPdfCache {
   }
   dispose(): void {
     this.stopped = true;
+    this.schedulingGeneration++;
+    this.wakeScheduler?.();
+    this.wakeScheduler = null;
     this.jobs.clear();
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.memory.clear();

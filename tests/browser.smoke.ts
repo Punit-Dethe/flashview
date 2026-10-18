@@ -813,9 +813,15 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
       assert.equal(await image.evaluate(el => (el as HTMLImageElement).naturalWidth > 200), true);
     }
 
-    // A second student's small PDF must complete even while the first
-    // student has an intentionally blocked range request. This used to be
-    // impossible when the scheduler awaited a whole per-file batch.
+    // The original sender has only a single deliberately held tail range left.
+    // Make the stuck-worker race deterministic: no successful old request may
+    // wake the scheduler coincidentally after the second file is announced.
+    await row.locator('.cache-ring[aria-valuenow="99"]').waitFor({ timeout: 30000 });
+    await delay(750);
+
+    // A second student's small PDF must complete despite that permanently
+    // pending range. A new offer MUST itself wake the scheduler; waiting on
+    // Promise.race(activeBackground) alone left this second file at 0%.
     const fastStudent = await browser.newPage();
     await fastStudent.goto(root);
     await fastStudent.locator('#code').fill(code);

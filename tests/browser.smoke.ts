@@ -1864,3 +1864,166 @@ test('a transient host IndexedDB write failure recovers without reuploading the 
     child.kill('SIGTERM');
   }
 });
+
+test('a deleted cached chunk retracts false completion and is downloaded again', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  const original = makePdf(1600);
+  try {
+    // Test-only socket capture installed before the app constructs its socket.
+    await host.addInitScript(() => {
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = class extends NativeWebSocket {
+        constructor(url: string | URL, protocols?: string | string[]) {
+          super(url, protocols);
+          const record = window as typeof window & { __staleSockets?: WebSocket[] };
+          (record.__staleSockets ??= []).push(this);
+        }
+      };
+    });
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const code = (await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await student.locator('.student-drive').waitFor();
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'stale-cache.pdf', mimeType: 'application/pdf', buffer: original,
+    });
+    const row = host.locator('.document-row').filter({ hasText: 'stale-cache.pdf' });
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
+    // First the relay and student agree that the ORIGINAL cache is complete.
+    await student.locator('.student-file-card').filter({ hasText: 'stale-cache.pdf' })
+      .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
+    // Freeze ALL new phone reads after initial completion. This makes the
+    // downward correction observable before the missing range can be repaired.
+    await student.evaluate(() => {
+      const read = Blob.prototype.arrayBuffer;
+      const waiting: Array<() => void> = [];
+      Blob.prototype.arrayBuffer = async function (...args) {
+        await new Promise<void>(resolve => waiting.push(resolve));
+        return read.apply(this, args);
+      };
+      (window as typeof window & { __releaseCacheRepair?: () => void }).__releaseCacheRepair =
+        () => { for (const resolve of waiting.splice(0)) resolve(); };
+    });
+    const removed = await host.evaluate(room => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('flashview-room-cache');
+      request.onsuccess = () => {
+        const store = request.result.transaction('chunks', 'readwrite').objectStore('chunks');
+        const cursor = store.index('room').openKeyCursor(IDBKeyRange.only(room));
+        cursor.onsuccess = () => {
+          const result = cursor.result;
+          if (!result) { reject(Error('No cache chunk to remove')); return; }
+          const key = String(result.primaryKey);
+          const tx = store.transaction;
+          store.delete(key);
+          tx.oncomplete = () => resolve(1);
+          tx.onerror = () => reject(tx.error);
+        };
+        cursor.onerror = () => reject(cursor.error);
+      };
+      request.onerror = () => reject(request.error);
+    }), code);
+    assert.equal(removed, 1);
+
+    // The app only synchronizes in a visible teacher tab, by design.
+    // Make this the foreground tab before synthesizing focus; a hidden-tab
+    // focus event is correctly ignored and would test a different behavior.
+    await host.bringToFront();
+    assert.equal(await host.evaluate(() => document.visibilityState), 'visible');
+    await host.evaluate(() => {
+      const record = window as typeof window & {
+        __staleSockets?: WebSocket[];
+        __staleCacheEvents?: string[];
+      };
+      record.__staleCacheEvents = [];
+      const ws = record.__staleSockets?.at(-1);
+      if (!ws) throw Error('No host WebSocket for cache repair test');
+      const send = ws.send.bind(ws);
+      ws.send = ((data: string | ArrayBufferLike | Blob | ArrayBufferView) => {
+        if (typeof data === 'string') {
+          const msg = JSON.parse(data) as { type?: string };
+          if (msg.type) record.__staleCacheEvents!.push('out:' + msg.type);
+        }
+        return send(data);
+      }) as WebSocket['send'];
+      ws.addEventListener('message', event => {
+        if (typeof event.data !== 'string') return;
+        const msg = JSON.parse(event.data) as { type?: string };
+        if (msg.type) record.__staleCacheEvents!.push('in:' + msg.type);
+      });
+    });
+    // Ask for the server manifest without recreating the teacher's cache.
+    // The scheduler must revalidate the local 100% index, discover the
+    // missing chunk and independently request it from the original sender.
+    await host.evaluate(() => window.dispatchEvent(new Event('focus')));
+    try {
+      await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ state: 'hidden', timeout: 12000 });
+    } catch (error) {
+      const diagnostics = await host.evaluate(async room => {
+        const record = window as typeof window & {
+          __staleSockets?: WebSocket[];
+          __staleCacheEvents?: string[];
+        };
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open('flashview-room-cache');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+          const req = db.transaction('chunks', 'readonly').objectStore('chunks')
+            .index('room').getAllKeys(IDBKeyRange.only(room));
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        return {
+          visibility: document.visibilityState,
+          socketState: record.__staleSockets?.at(-1)?.readyState,
+          events: record.__staleCacheEvents,
+          cachedKeys: keys.map(String),
+          ringValues: [...document.querySelectorAll('.document-row .cache-ring')]
+            .map(el => el.getAttribute('aria-valuenow')),
+          documentText: document.body.innerText.slice(-900),
+        };
+      }, code);
+      console.error('STALE_CACHE_DIAGNOSTICS', JSON.stringify(diagnostics));
+      throw error;
+    }
+    await student.evaluate(() => {
+      (window as typeof window & { __releaseCacheRepair?: () => void }).__releaseCacheRepair?.();
+    });
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
+    const digest = await host.evaluate(async room => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('flashview-room-cache');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const chunks = await new Promise<Array<{ index: number; data: ArrayBuffer }>>((resolve, reject) => {
+        const request = db.transaction('chunks', 'readonly').objectStore('chunks')
+          .index('room').getAll(IDBKeyRange.only(room));
+        request.onsuccess = () => resolve(request.result as Array<{ index: number; data: ArrayBuffer }>);
+        request.onerror = () => reject(request.error);
+      });
+      chunks.sort((a, b) => a.index - b.index);
+      const bytes = new Uint8Array(chunks.reduce((n, item) => n + item.data.byteLength, 0));
+      let cursor = 0;
+      for (const chunk of chunks) {
+        bytes.set(new Uint8Array(chunk.data), cursor);
+        cursor += chunk.data.byteLength;
+      }
+      const hashed = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      return Array.from(hashed, b => b.toString(16).padStart(2, '0')).join('');
+    }, code);
+    assert.equal(digest, createHash('sha256').update(original).digest('hex'));
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

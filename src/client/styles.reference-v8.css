@@ -588,3 +588,53 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   }
   .premium-app .reference-room .reference-room-hint { padding-top:22px; }
 }
+
+
+/* Paired file actions. The full-size left action describes cache progress and
+   becomes Download at 100%; the smaller right-side Present control applies to
+   PDFs (progressive) and complete PPTX/PPSX files only. */
+.premium-app .reference-room .document-card-actions {
+  display:flex; align-items:center; gap:8px; width:calc(100% - 24px);
+  margin:0 12px 12px; padding:0; min-width:0;
+}
+.premium-app .reference-room .document-card-actions .reference-card-action {
+  flex:1 1 auto; width:auto; min-width:0; height:42px; min-height:42px;
+  margin:0;
+}
+.premium-app .reference-room .document-card-actions .document-card-present {
+  flex:0 0 42px; width:42px; height:42px; min-width:42px; min-height:42px;
+  padding:0; margin:0; display:grid; place-items:center; border-radius:50%;
+  background:#0e0f14; border:1px solid #0e0f14; color:#fff;
+  cursor:pointer; transition:background .2s,border-color .2s;
+}
+.premium-app .reference-room .document-card-actions .document-card-present svg {
+  display:block; width:19px; height:19px; margin-left:2px;
+}
+.premium-app .reference-room .document-card-actions .document-card-present.is-disabled {
+  background:#e6eaf1; border-color:#d9dfe9; color:#9ba4b5; cursor:not-allowed;
+}
+.premium-app .reference-room .document-card-actions .document-card-present:hover:not(:disabled) {
+  background:#30333c; border-color:#30333c;
+}
+.premium-app .reference-room .workspace-right .document-grid.is-list .document-card-actions {
+  flex:0 0 218px; width:218px; margin:0;
+}
+.premium-app .reference-room .workspace-right .document-grid.is-list .document-card-actions .reference-card-action {
+  flex:1 1 auto; width:auto; margin:0;
+}
+.premium-app .reference-room .workspace-right .document-grid.is-list .document-card-actions .document-card-present {
+  flex:0 0 42px; width:42px;
+}
+@media (max-width:900px) {
+  .premium-app .reference-room .workspace-right .document-grid.is-list .document-card-actions {
+    flex-basis:160px; width:160px;
+  }
+}
+@media (max-width:600px) {
+  .premium-app .reference-room .workspace-right .document-grid.is-list .document-card {
+    flex-wrap:wrap;
+  }
+  .premium-app .reference-room .workspace-right .document-grid.is-list .document-card-actions {
+    flex:1 0 100%; width:100%; margin-top:8px;
+  }
+}

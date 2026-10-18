@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { PdfManifest } from '../shared/protocol';
-import { isPdfName } from '../shared/fileTypes';
+import { isPdfName, isPowerPointName } from '../shared/fileTypes';
 import type { CacheProgress } from './pdf/roomCache';
 import { formatBytes } from './pdf/Viewer';
 import { PixelIcon, pixelKindForName } from './PixelIcon';
@@ -24,6 +24,7 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
   const [imageState,setImageState]=useState({url:'',ready:false,failed:false});
   const [fallbackTimeout,setFallbackTimeout]=useState(false);
   const pdf=isPdfName(file.name);
+  const powerpoint=isPowerPointName(file.name);
   useEffect(()=>{
     if(!pdf||previewUrl)return;
     setFallbackTimeout(false);
@@ -32,7 +33,7 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
   },[pdf,previewUrl,file.fileId]);
   const cached=Boolean(progress?.complete);
   const percent=cached?100:Math.max(0,Math.min(100,(progress?.bytes??0)/Math.max(1,file.size)*100));
-  const available=file.status==='approved'||cached;
+  const available=pdf?(file.status==='approved'||cached):powerpoint&&cached;
   const imageFailed=imageState.url===previewUrl&&imageState.failed;
   const showingImage=pdf&&Boolean(previewUrl)&&imageState.url===previewUrl&&imageState.ready&&!imageFailed;
   const showIcon=!pdf||imageFailed||(!previewUrl&&(fallbackTimeout||file.status==='offline'));
@@ -76,20 +77,24 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
           strokeLinecap="round" strokeLinejoin="round" fill="none"/>}
       </svg>
     </div>
-    {pdf?(available?
-      <button type="button" className="document-card-open reference-card-action ready"
-        onClick={onPresent} aria-label={'Present '+file.name} title={'Present '+file.name}>
-        <span>Present <span aria-hidden="true">↗</span></span>
-      </button>:
-      <button type="button" className="reference-card-action busy" disabled
-        aria-label={'Waiting for '+file.name}><span>Waiting for sender…</span></button>
-    ):<button type="button"
-      className={'document-card-open document-card-download reference-card-action'+(cached?' ready':' busy')}
-      disabled={!cached||saving} onClick={onDownload}
-      aria-label={'Download '+file.name} aria-busy={saving}
-      title={cached?'Save the complete original file':progressLabel}
-      style={{'--p':percent+'%'} as CSSProperties}>
-      <span>{saving?'Preparing…':cached?'Download ↓':'Receiving… '+Math.round(percent)+'%'}</span>
-    </button>}
+    <div className="document-card-actions">
+      <button type="button"
+        className={'document-card-download reference-card-action'+(cached?' ready':' busy')}
+        disabled={!cached||saving} onClick={onDownload}
+        aria-label={'Download '+file.name} aria-busy={saving}
+        title={cached?'Save the complete original file':progressLabel}
+        style={{'--p':percent+'%'} as CSSProperties}>
+        <span>{saving?'Preparing…':cached?'Download ↓':'Receiving… '+Math.round(percent)+'%'}</span>
+      </button>
+      {(pdf||powerpoint)&&<button type="button"
+        className={'document-card-open document-card-present'+(available?' ready':' is-disabled')}
+        disabled={!available} onClick={onPresent}
+        aria-label={'Present '+file.name}
+        title={available?'Present '+file.name:(powerpoint?'Available after complete download':'Waiting for sender')}>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+          <path d="M8.5 5.5 18 12l-9.5 6.5z" fill="currentColor"/>
+        </svg>
+      </button>}
+    </div>
   </article>;
 }

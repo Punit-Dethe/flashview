@@ -6,6 +6,12 @@ export function isPdfName(name: string): boolean {
   return /\.pdf$/i.test(name);
 }
 
+/** Browser PowerPoint engine supports OOXML PPTX and slideshow PPSX files.
+ * Legacy .ppt files are still download-only. */
+export function isPowerPointName(name: string): boolean {
+  return /\.(pptx|ppsx)$/i.test(name);
+}
+
 export function fileTypeLabel(name: string): string {
   const extension = name.split('.').pop()?.toUpperCase() ?? '';
   if (!extension || extension === name.toUpperCase()) return 'FILE';

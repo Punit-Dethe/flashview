@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { CacheProgress } from './pdf/roomCache';
 import type { PdfManifest } from '../shared/protocol';
 import { PresentationGuest } from './presentation';
 import { Viewer } from './pdf/Viewer';
+import { isPowerPointName } from '../shared/fileTypes';
+
+const PowerPointPresenter = lazy(() => import('./pptx/PowerPointPresenter'));
 
 /** /present is separate from the host dashboard: it never opens a host socket. */
 export function Presenter() {
@@ -89,13 +92,24 @@ export function Presenter() {
   return (
     <div className="presentation-layout">
       {file && source && !unavailable
-        ? <Viewer file={file} socket={source} close={close} cached={cached} previewImage={preview} cachedRoomId={roomId} onFirstPageRendered={pageReady}
-          onTiming={reportTiming}/>
+        ? isPowerPointName(file.name)
+          ? cached?.complete && roomId
+            ? <Suspense fallback={<div className="presentation-state" role="status"><span className="spinner"/><h1>Loading PowerPoint viewer…</h1></div>}>
+                <PowerPointPresenter file={file} roomId={roomId} close={close} onFirstSlideRendered={pageReady}/>
+              </Suspense>
+            : <div className="presentation-state" role="status">
+                <span className="spinner"/>
+                <h1>Finishing PowerPoint download…</h1>
+                <p>PowerPoint playback becomes available after the original file is cached.</p>
+                <button className="outline-button" onClick={close}>Close viewer</button>
+              </div>
+          : <Viewer file={file} socket={source} close={close} cached={cached} previewImage={preview} cachedRoomId={roomId} onFirstPageRendered={pageReady}
+              onTiming={reportTiming}/>
         : <div className="presentation-state" role="status">
           {!unavailable && <span className="spinner"/>}
           <h1>{unavailable ? 'Presentation unavailable.' : 'Opening your presentation.'}</h1>
           <p>{unavailable
-            ? 'Go back to your classroom dashboard and open the PDF again.'
+            ? 'Go back to your classroom dashboard and open the file again.'
             : 'Connecting to the classroom tab. Keep that tab open while presenting.'}</p>
           <button className="outline-button" onClick={close}>Close viewer ↗</button>
         </div>}

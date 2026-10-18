@@ -24,12 +24,14 @@
     "bench:baseline": "node --import tsx tests/benchmark.baseline.ts"
   },
   "dependencies": {
+    "@zip.js/zip.js": "^2.8.15",
     "pdfjs-dist": "^6.4.299",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "ws": "^8.18.3",
-    "tsx": "^4.20.6"
+    "tsx": "^4.20.6",
+    "pptx-vanilla-viewer": "3.42.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

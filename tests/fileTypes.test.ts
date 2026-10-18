@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fileTypeLabel,isPdfName,safeDownloadName} from '../src/shared/fileTypes';
+import {fileTypeLabel,isPdfName,isPowerPointName,safeDownloadName} from '../src/shared/fileTypes';
 import {MAX_FILE_BYTES,MAX_RANGE_BYTES} from '../src/shared/protocol';
 
 test('all extensions can use the same binary transport, without false PDF previews',()=>{
@@ -25,4 +25,10 @@ test('download names are restricted to local base filenames, never HTML or path 
 test('the per-file size cap rises while proven network packet size is unchanged',()=>{
   assert.equal(MAX_FILE_BYTES,200*1024*1024);
   assert.equal(MAX_RANGE_BYTES,256*1024);
+});
+
+test('only OOXML PowerPoint formats are eligible for presentation',()=>{
+  for (const name of ['lecture.pptx','SLIDES.PPSX','a.PptX']) assert.equal(isPowerPointName(name),true,name);
+  for (const name of ['legacy.ppt','macro.pptm','talk.pdf','photo.jpg','file.pptx.exe'])
+    assert.equal(isPowerPointName(name),false,name);
 });

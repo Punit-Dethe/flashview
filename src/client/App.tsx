@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
 import { assignParticipantColors } from './participantColors';
 import { MAX_FILE_BYTES, type PdfManifest, type StudentInfo } from '../shared/protocol';
-import { isPdfName, safeDownloadName } from '../shared/fileTypes';
+import { isPdfName, isPowerPointName, safeDownloadName } from '../shared/fileTypes';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
 import { formatBytes } from './pdf/Viewer';
 import { makeFirstPagePreview } from './pdf/firstPagePreview';
@@ -998,8 +998,9 @@ export function App() {
                         progress={cacheProgress[file.fileId]}
                         bytesPerSecond={downloadSpeed[file.fileId]}
                         onPresent={()=>{
-                          if(!isPdfName(file.name))return;
-                          try{presentation.open(file,Boolean(cacheProgress[file.fileId]?.complete));}
+                          const complete=Boolean(cacheProgress[file.fileId]?.complete);
+                          if(!isPdfName(file.name)&&!(isPowerPointName(file.name)&&complete))return;
+                          try{presentation.open(file,complete);}
                           catch(e){setError(e instanceof Error?e.message:'Unable to open presentation');}
                         }}
                         onDownload={()=>void downloadFile(file)}

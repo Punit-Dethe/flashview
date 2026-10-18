@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, firefox, type Page } from 'playwright';
+import { makePowerPointFixture } from './pptxFixture';
 const browserEngine = process.env.FLASHVIEW_BROWSER === 'firefox' ? firefox : chromium;
 import { mkdir, readFile } from 'node:fs/promises';
 
@@ -1272,8 +1273,9 @@ test('universal binary transfer preserves APK, EXE, PPTX, XLSX, GIF, ZIP, DEB, S
     for(const f of fixtures) {
       const card=host.locator('.document-row').filter({hasText:f.name});
       await card.waitFor({timeout:45000});
-      assert.equal(await card.getByRole('button',{name:'Present '+f.name}).count(),0,
-        'Non-PDF must never enter PDF.js presenter: '+f.name);
+      const present=card.getByRole('button',{name:'Present '+f.name});
+      assert.equal(await present.count(),f.name.endsWith('.pptx')?1:0,
+        'Only PDF and supported PowerPoint files receive Present controls: '+f.name);
       const downloadButton=card.getByRole('button',{name:'Download '+f.name});
       await downloadButton.waitFor();
       await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:50000});
@@ -1289,6 +1291,12 @@ test('universal binary transfer preserves APK, EXE, PPTX, XLSX, GIF, ZIP, DEB, S
         'File must be byte-perfect through relay, cache, and browser download: '+f.name);
       assert.equal(actual.byteLength,f.buffer.byteLength);
     }
+    const pptxButton=host.locator('.document-row').filter({hasText:'slides.pptx'})
+      .getByRole('button',{name:'Present slides.pptx'});
+    assert.equal(await pptxButton.isEnabled(),true,
+      'A fully received PPTX enables Present, independent of the original sender');
+    // The synthetic binary file above is intentionally NOT a real PPTX.
+    // The separate genuine-OOXML test below must exercise renderer loading.
     // A room still has the original 256 KiB packet default.
     assert.equal(await host.evaluate(()=>new URLSearchParams(location.search).get('packet')),null);
     await host.getByRole('button',{name:/End room/}).click();
@@ -1536,6 +1544,56 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
     assert.equal(await host.locator('.qr-plate').isVisible(),false);
     assert.equal(await card.isVisible(),true,'Collapsing Configure must not hide files');
   }finally{
+    await host.close();await student.close();await browser.close();child.kill('SIGTERM');
+  }
+});
+
+test('complete PowerPoint uses lazy browser-only presenter with independent Download and Present actions',
+  {timeout:130000}, async()=>{
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({viewport:{width:1280,height:760},acceptDownloads:true});
+  const student=await browser.newPage();
+  const root='http://127.0.0.1:'+port;
+  let popup:Page|null=null;
+  try{
+    const pptx=await makePowerPointFixture();
+    await host.goto(root);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    await student.locator('input[type=file]').setInputFiles({
+      name:'lecture.pptx',mimeType:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      buffer:pptx,
+    });
+    const card=host.locator('.document-row').filter({hasText:'lecture.pptx'});
+    await card.waitFor({timeout:30000});
+    const downloadButton=card.getByRole('button',{name:'Download lecture.pptx'});
+    const presentButton=card.getByRole('button',{name:'Present lecture.pptx'});
+    assert.equal(await presentButton.count(),1,'PPTX gets the small circular Present button');
+    assert.equal(await downloadButton.count(),1,'PPTX also gets Download');
+    assert.equal(await presentButton.evaluate(x=>getComputedStyle(x).borderRadius),'50%',
+      'PPTX Present is circular');
+    await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});
+    assert.equal(await presentButton.isEnabled(),true);
+    assert.equal(await downloadButton.isEnabled(),true);
+    [popup]=await Promise.all([host.waitForEvent('popup'),presentButton.click()]);
+    await popup.locator('.flashview-pptx-controls').waitFor({timeout:45000});
+    assert.equal(await popup.getByText('Slide 1 / 1').count(),1,
+      'Actual PowerPoint rendered from IndexedDB without cloud conversion');
+    assert.equal(await popup.getByRole('button',{name:'Start slideshow'}).count(),1);
+    assert.equal(await popup.locator('.flashview-pptx-state').count(),0);
+    const [dl]=await Promise.all([host.waitForEvent('download'),downloadButton.click()]);
+    const got=await readFile(await dl.path());
+    assert.equal(createHash('sha256').update(got).digest('hex'),
+      createHash('sha256').update(pptx).digest('hex'),
+      'PowerPoint Download must preserve original bytes');
+  }finally{
+    await popup?.close().catch(()=>{});
     await host.close();await student.close();await browser.close();child.kill('SIGTERM');
   }
 });

@@ -32,7 +32,9 @@ export class PresentationHost {
       // complete-local-file path when progress.complete becomes true.
       const now = performance.now();
       const previous = this.lastProgressPaint.get(progress.fileId) ?? -Infinity;
-      if (!progress.complete && now - previous < 350) return;
+      // A persisted-cache correction must never be hidden by paint throttling:
+      // a recently displayed 100% can become incomplete after IndexedDB loss.
+      if (!progress.complete && !progress.corrected && now - previous < 350) return;
       this.lastProgressPaint.set(progress.fileId, now);
       this.onProgress(progress);
       for (const entry of this.tabs.values()) {

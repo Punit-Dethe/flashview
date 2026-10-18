@@ -1873,6 +1873,17 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
   const root = 'http://127.0.0.1:' + port;
   const original = makePdf(1600);
   try {
+    // Test-only socket capture installed before the app constructs its socket.
+    await host.addInitScript(() => {
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = class extends NativeWebSocket {
+        constructor(url: string | URL, protocols?: string | string[]) {
+          super(url, protocols);
+          const record = window as typeof window & { __staleSockets?: WebSocket[] };
+          (record.__staleSockets ??= []).push(this);
+        }
+      };
+    });
     await host.goto(root);
     await host.getByRole('button', { name: /Create a room/ }).click();
     await host.locator('.connection.connected').waitFor();
@@ -1924,11 +1935,11 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
     assert.equal(await host.evaluate(() => document.visibilityState), 'visible');
     await host.evaluate(() => {
       const record = window as typeof window & {
-        __flashviewSockets?: WebSocket[];
+        __staleSockets?: WebSocket[];
         __staleCacheEvents?: string[];
       };
       record.__staleCacheEvents = [];
-      const ws = record.__flashviewSockets?.at(-1);
+      const ws = record.__staleSockets?.at(-1);
       if (!ws) throw Error('No host WebSocket for cache repair test');
       const send = ws.send.bind(ws);
       ws.send = ((data: string | ArrayBufferLike | Blob | ArrayBufferView) => {
@@ -1953,7 +1964,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
     } catch (error) {
       const diagnostics = await host.evaluate(async room => {
         const record = window as typeof window & {
-          __flashviewSockets?: WebSocket[];
+          __staleSockets?: WebSocket[];
           __staleCacheEvents?: string[];
         };
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -1969,7 +1980,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
         });
         return {
           visibility: document.visibilityState,
-          socketState: record.__flashviewSockets?.at(-1)?.readyState,
+          socketState: record.__staleSockets?.at(-1)?.readyState,
           events: record.__staleCacheEvents,
           cachedKeys: keys.map(String),
           ringValues: [...document.querySelectorAll('.document-row .cache-ring')]

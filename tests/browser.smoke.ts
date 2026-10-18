@@ -1578,7 +1578,31 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     assert.equal(await downloadButton.count(),1,'PPTX also gets Download');
     assert.equal(await presentButton.evaluate(x=>getComputedStyle(x).borderRadius),'50%',
       'PPTX Present is circular');
+    const actionStyle=await card.evaluate(el=>{
+      const row=el.querySelector('.document-card-actions')!.getBoundingClientRect();
+      const left=el.querySelector('.document-card-download')!.getBoundingClientRect();
+      const right=el.querySelector('.document-card-present')!.getBoundingClientRect();
+      const paint=getComputedStyle(el.querySelector('.document-card-present')!);
+      return {withinRow:right.top>=row.top-2&&right.bottom<=row.bottom+2,
+        aligned:Math.abs((left.top+left.bottom)/2-(right.top+right.bottom)/2)<2,
+        follows:left.right+5<=right.left,background:paint.backgroundColor,
+        border:paint.borderTopWidth,icon:el.querySelector('.document-card-present svg path')?.getAttribute('d')};
+    });
+    assert.ok(actionStyle.withinRow&&actionStyle.aligned&&actionStyle.follows,
+      'Outlined Present must be to the right of Download in the same horizontal row');
+    assert.equal(actionStyle.background,'rgb(255, 255, 255)',
+      'Present must use a white outlined button rather than the previous black fill');
+    assert.ok(actionStyle.border!=='0px'&&actionStyle.icon?.includes('17.5'),
+      'Present uses a bordered projection-screen glyph');
     await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});
+    await card.locator('img.document-thumb-image.is-visible').waitFor({timeout:45000});
+    const thumb=await card.locator('img.document-thumb-image').evaluate(el=>({
+      width:(el as HTMLImageElement).naturalWidth,
+      height:(el as HTMLImageElement).naturalHeight,
+      url:(el as HTMLImageElement).src,
+    }));
+    assert.ok(thumb.width>=300&&thumb.height>0&&thumb.url.startsWith('data:image/jpeg;base64,'),
+      'Host generates a genuine first-slide JPEG locally after the PPTX download completes');
     assert.equal(await presentButton.isEnabled(),true);
     assert.equal(await downloadButton.isEnabled(),true);
     [popup]=await Promise.all([host.waitForEvent('popup'),presentButton.click()]);

@@ -93,6 +93,10 @@ export function App() {
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
   const previewLookups = useRef(new Set<string>());
   const previewRoom = useRef(initialSession?.code ?? '');
+  // PPTX thumbnails are host-only, complete-file-only cosmetic work.
+  // Serialize idle jobs and never run alongside a background file transfer.
+  const pptxThumbAttempted = useRef(new Set<string>());
+  const pptxThumbQueue = useRef<Promise<void>>(Promise.resolve());
   const transferSamples = useRef(new Map<string, { bytes: number; time: number }>());
   const [downloadSpeed, setDownloadSpeed] = useState<Record<string, number>>({});
   const [savingFiles, setSavingFiles] = useState<Record<string, boolean>>({});
@@ -173,6 +177,42 @@ export function App() {
       }).catch(() => {});
     }
   }, [hostSession?.code, documents, presentation]);
+
+  // Do not burden mobile senders with PowerPoint parsing or add preview
+  // packets to the relay. Once ALL approved files are fully cached on the
+  // host, make small first-slide JPEG thumbnails using the existing OOXML
+  // engine. This occurs at idle priority; downloads always come first.
+  useEffect(() => {
+    const room = hostSession?.code;
+    if (!room || mode !== 'host') return;
+    if (documents.some(file =>
+      file.status === 'approved' && !cacheProgress[file.fileId]?.complete)) return;
+    for (const file of documents) {
+      if (!isPowerPointName(file.name) || !cacheProgress[file.fileId]?.complete ||
+          documentPreviews[file.fileId]) continue;
+      const key = room + '/' + file.fileId;
+      if (pptxThumbAttempted.current.has(key)) continue;
+      pptxThumbAttempted.current.add(key);
+      pptxThumbQueue.current = pptxThumbQueue.current.catch(() => {}).then(async () => {
+        // Yield both parsing and JPEG encoding until the browser has breathing
+        // room. Never initiate PPTX thumbnail work from the phone.
+        await new Promise<void>(resolve => {
+          if ('requestIdleCallback' in window) window.requestIdleCallback(() => resolve(), { timeout: 4000 });
+          else setTimeout(resolve, 350);
+        });
+        if (previewRoom.current !== room || modeRef.current !== 'host') return;
+        const bytes = await readCompletedFile(room, file);
+        if (!bytes || previewRoom.current !== room) return;
+        const { makePowerPointThumbnail } = await import('./pptx/makeThumbnail');
+        const preview = await makePowerPointThumbnail(bytes);
+        if (!preview || previewRoom.current !== room) return;
+        await presentation.savePreview(file.fileId, preview);
+        if (previewRoom.current === room)
+          setDocumentPreviews(current => current[file.fileId]
+            ? current : { ...current, [file.fileId]: preview });
+      }).catch(() => { /* Unsupported decks retain their existing file icon. */ });
+    }
+  }, [hostSession?.code, mode, documents, cacheProgress, documentPreviews, presentation]);
 
   function offerLocalFile(id: string, entry: SharedFile): void {
     if (entry.status === 'rejected' || entry.status === 'offline') return;

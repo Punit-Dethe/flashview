@@ -26,23 +26,23 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
   const pdf=isPdfName(file.name);
   const powerpoint=isPowerPointName(file.name);
   useEffect(()=>{
-    if(!pdf||previewUrl)return;
+    if(!(pdf||powerpoint)||previewUrl)return;
     setFallbackTimeout(false);
     const timer=setTimeout(()=>setFallbackTimeout(true),6000);
     return ()=>clearTimeout(timer);
-  },[pdf,previewUrl,file.fileId]);
+  },[pdf,powerpoint,previewUrl,file.fileId]);
   const cached=Boolean(progress?.complete);
   const percent=cached?100:Math.max(0,Math.min(100,(progress?.bytes??0)/Math.max(1,file.size)*100));
   const available=pdf?(file.status==='approved'||cached):powerpoint&&cached;
   const imageFailed=imageState.url===previewUrl&&imageState.failed;
-  const showingImage=pdf&&Boolean(previewUrl)&&imageState.url===previewUrl&&imageState.ready&&!imageFailed;
-  const showIcon=!pdf||imageFailed||(!previewUrl&&(fallbackTimeout||file.status==='offline'));
+  const showingImage=(pdf||powerpoint)&&Boolean(previewUrl)&&imageState.url===previewUrl&&imageState.ready&&!imageFailed;
+  const showIcon=!(pdf||powerpoint)||imageFailed||(!previewUrl&&(fallbackTimeout||file.status==='offline'||powerpoint));
   const progressLabel=cached?'Fully cached':Math.round(percent)+'% cached'+
     (bytesPerSecond>0?' · '+formatBytes(bytesPerSecond)+'/s':'');
   return <article className="document-row document-card" data-owner-id={file.ownerId}>
     <div className="document-card-visual">
       <div className="document-thumb" aria-hidden="true">
-        {pdf&&previewUrl&&!imageFailed&&
+        {(pdf||powerpoint)&&previewUrl&&!imageFailed&&
           <img className={'document-thumb-image'+(showingImage?' is-visible':'')}
             src={previewUrl} alt="" loading="lazy" decoding="async"
             onLoad={()=>setImageState({url:previewUrl,ready:true,failed:false})}
@@ -91,8 +91,10 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
         disabled={!available} onClick={onPresent}
         aria-label={'Present '+file.name}
         title={available?'Present '+file.name:(powerpoint?'Available after complete download':'Waiting for sender')}>
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
-          <path d="M8.5 5.5 18 12l-9.5 6.5z" fill="currentColor"/>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true"
+          stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4.5" width="18" height="13" rx="1.8"/>
+          <path d="M12 17.5v3.2M8.5 20.7h7M7.5 9l3.5 3 2.3-2 3.2 3"/>
         </svg>
       </button>}
     </div>

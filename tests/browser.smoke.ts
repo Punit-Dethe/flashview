@@ -1600,7 +1600,7 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
         .find(button=>button.getAttribute('aria-label')==='Present lecture.pptx');
       if (!el || el.disabled) return false;
       const paint=getComputedStyle(el);
-      const rgb=paint.backgroundColor.match(/\\d+/g)?.map(Number)??[];
+      const rgb=paint.backgroundColor.match(/[0-9]+/g)?.map(Number)??[];
       return rgb.length>=3 && rgb.slice(0,3).every(value=>value>=245);
     },null,{timeout:3000});
     await card.locator('img.document-thumb-image.is-visible').waitFor({timeout:45000});

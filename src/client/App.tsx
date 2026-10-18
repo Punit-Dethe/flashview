@@ -18,7 +18,9 @@ import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
 /** A late initial IndexedDB snapshot must never rewind live saved-byte progress. */
 function retainNewestProgress(previous: CacheProgress | undefined, incoming: CacheProgress): CacheProgress {
-  if (!previous || previous.size !== incoming.size) return incoming;
+  // An independent IndexedDB verification can retract a stale 100% cache.
+  // Normal live byte progress stays monotonic so an old snapshot cannot rewind it.
+  if (incoming.corrected || !previous || previous.size !== incoming.size) return incoming;
   return incoming.bytes >= previous.bytes ? incoming : previous;
 }
 
@@ -363,6 +365,15 @@ export function App() {
       }
     };
     presentation.onProgress = progress => {
+      if (progress.corrected) {
+        // The relay may already have receipted the previous completed state.
+        // Explicitly clear it so the phone no longer shows a false Done.
+        completionAcks.current.delete(progress.fileId);
+        completionLastSent.current.delete(progress.fileId);
+        if (socket.connected) socket.send({
+          type: 'cache.progress', fileId: progress.fileId, bytes: 0, snapshot: true,
+        });
+      }
       if (progress.bytes > 0)
         setError(previous => previous.startsWith('File transfer stalled') ? '' : previous);
       setCacheProgress(existing => ({

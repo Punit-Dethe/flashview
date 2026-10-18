@@ -1864,3 +1864,90 @@ test('a transient host IndexedDB write failure recovers without reuploading the 
     child.kill('SIGTERM');
   }
 });
+
+test('a deleted cached chunk retracts false completion and is downloaded again', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  const original = makePdf(1600);
+  try {
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const code = (await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await student.locator('.student-drive').waitFor();
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'stale-cache.pdf', mimeType: 'application/pdf', buffer: original,
+    });
+    const row = host.locator('.document-row').filter({ hasText: 'stale-cache.pdf' });
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
+    // First the relay and student agree that the ORIGINAL cache is complete.
+    await student.locator('.student-file-card').filter({ hasText: 'stale-cache.pdf' })
+      .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
+    const removed = await host.evaluate(room => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('flashview-room-cache');
+      request.onsuccess = () => {
+        const store = request.result.transaction('chunks', 'readwrite').objectStore('chunks');
+        const cursor = store.index('room').openKeyCursor(IDBKeyRange.only(room));
+        cursor.onsuccess = () => {
+          const result = cursor.result;
+          if (!result) { reject(Error('No cache chunk to remove')); return; }
+          const key = String(result.primaryKey);
+          const tx = store.transaction;
+          store.delete(key);
+          tx.oncomplete = () => resolve(1);
+          tx.onerror = () => reject(tx.error);
+        };
+        cursor.onerror = () => reject(cursor.error);
+      };
+      request.onerror = () => reject(request.error);
+    }), code);
+    assert.equal(removed, 1);
+
+    // Prevent immediate repair so that a false 100% is observably retracted.
+    await student.evaluate(() => {
+      const originalArrayBuffer = Blob.prototype.arrayBuffer;
+      Blob.prototype.arrayBuffer = async function(...args) {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        return originalArrayBuffer.apply(this, args);
+      };
+    });
+    // Ask for the server manifest without recreating the teacher's cache.
+    // The scheduler must revalidate the local 100% index, discover the
+    // missing chunk and independently request it from the original sender.
+    await host.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ state: 'hidden', timeout: 12000 });
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
+    const digest = await host.evaluate(async room => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('flashview-room-cache');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const chunks = await new Promise<Array<{ index: number; data: ArrayBuffer }>>((resolve, reject) => {
+        const request = db.transaction('chunks', 'readonly').objectStore('chunks')
+          .index('room').getAll(IDBKeyRange.only(room));
+        request.onsuccess = () => resolve(request.result as Array<{ index: number; data: ArrayBuffer }>);
+        request.onerror = () => reject(request.error);
+      });
+      chunks.sort((a, b) => a.index - b.index);
+      const bytes = new Uint8Array(chunks.reduce((n, item) => n + item.data.byteLength, 0));
+      let cursor = 0;
+      for (const chunk of chunks) {
+        bytes.set(new Uint8Array(chunk.data), cursor);
+        cursor += chunk.data.byteLength;
+      }
+      const hashed = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      return Array.from(hashed, b => b.toString(16).padStart(2, '0')).join('');
+    }, code);
+    assert.equal(digest, createHash('sha256').update(original).digest('hex'));
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

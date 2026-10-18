@@ -20,7 +20,7 @@ type StorageRecovery = {
   timer: ReturnType<typeof setTimeout> | null;
 };
 type RoomRecord = { id: string; expires: number };
-export type CacheProgress = { fileId: string; bytes: number; size: number; complete: boolean };
+export type CacheProgress = { fileId: string; bytes: number; size: number; complete: boolean; corrected?: boolean };
 
 let openDatabase: Promise<IDBDatabase> | null = null;
 function database(): Promise<IDBDatabase> {
@@ -190,6 +190,7 @@ export class RoomPdfCache {
   private pendingWrites = new Set<Promise<void>>();
   private memoryBytes = 0;
   private indices = new Map<string, Promise<Set<number>>>();
+  private verifyingCompleted = new Map<string, Promise<CacheProgress>>();
   private jobs = new Map<string, PdfManifest>();
   private working = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -292,6 +293,47 @@ export class RoomPdfCache {
     }
     return pending;
   }
+  /**
+   * The in-memory index is fast, but another tab or browser quota cleanup can
+   * remove IndexedDB entries behind it. Before publishing 100% or retiring
+   * the file from the transfer queue, independently re-read persisted keys.
+   * This happens only at the completion boundary and during low-rate room
+   * snapshots, never for each chunk or network range.
+   */
+  private checkedProgress(file: PdfManifest, indexed: Set<number>): Promise<CacheProgress> {
+    const initial = completion(file, indexed);
+    if (!initial.complete) return Promise.resolve(initial);
+    const existing = this.verifyingCompleted.get(file.fileId);
+    if (existing) return existing;
+    const verification = cachedIndices(this.roomId, file.fileId).then(persisted => {
+      if (this.stopped) return { ...initial, complete: false };
+      const stale = persisted.size !== indexed.size ||
+        [...persisted].some(index => !indexed.has(index));
+      if (stale) {
+        indexed.clear();
+        for (const index of persisted) indexed.add(index);
+      }
+      const fresh = completion(file, indexed);
+      if (stale && !fresh.complete) {
+        const repaired = { ...fresh, corrected: true };
+        // Correction is authoritative. A previously reported 100% can be
+        // retracted when the backing bytes have disappeared.
+        this.onProgress(repaired);
+        return repaired;
+      }
+      return fresh;
+    }).catch(() => {
+      // Database verification is not evidence of a completed cache. Never
+      // falsely acknowledge the entire file while storage is unavailable.
+      this.warning();
+      return { fileId: file.fileId, bytes: 0, size: file.size, complete: false, corrected: true };
+    }).finally(() => {
+      this.verifyingCompleted.delete(file.fileId);
+    });
+    this.verifyingCompleted.set(file.fileId, verification);
+    return verification;
+  }
+
   private putMemory(key: string, data: Uint8Array): void {
     if (data.byteLength > MAX_MEMORY_BYTES) return;
     const previous = this.memory.get(key);
@@ -337,7 +379,10 @@ export class RoomPdfCache {
   }
   async progress(file: PdfManifest): Promise<CacheProgress> {
     const indices = await this.indexSet(file.fileId);
-    return completion(file, indices);
+    const state = await this.checkedProgress(file, indices);
+    if (state.corrected && file.status === 'approved' && !this.storageFailedFiles.has(file.fileId))
+      this.prefetch(file);
+    return state;
   }
   private async chunk(file: PdfManifest, index: number): Promise<Uint8Array> {
     if (this.stopped) throw Error('Classroom cache closed');
@@ -401,9 +446,9 @@ export class RoomPdfCache {
         const set = await this.indexSet(file.fileId);
         set.add(index);
         this.notePersistedByte(file.fileId);
-        const state = completion(file, set);
+        const state = await this.checkedProgress(file, set);
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
-        this.onProgress(state);
+        if (!this.stopped) this.onProgress(state);
         this.notifyCacheWaiters(key);
       } catch {
         this.storageWriteFailed(file, record);
@@ -461,9 +506,9 @@ export class RoomPdfCache {
         const set = await this.indexSet(file.fileId);
         set.add(index);
         this.notePersistedByte(file.fileId);
-        const state = completion(file, set);
+        const state = await this.checkedProgress(file, set);
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
-        this.onProgress(state);
+        if (!this.stopped) this.onProgress(state);
         this.notifyCacheWaiters(key);
       } catch {
         this.storageWriteFailed(file, record);
@@ -668,9 +713,17 @@ export class RoomPdfCache {
                 this.adaptive.delete(fileId);
                 this.firstQueuedAt.delete(fileId);
                 this.stallReported.delete(fileId);
-                this.onProgress(completion(file, cached));
+                const verified = await this.checkedProgress(file, cached);
+                if (verified.complete) {
+                  this.onProgress(verified);
+                  continue;
+                }
+                // Persisted keys disappeared after the in-memory cache said
+                // 100%. Keep this file scheduled and re-fetch missing ranges.
+                this.jobs.set(fileId, file);
+              } else {
+                continue;
               }
-              continue;
             }
             const indices = this.reserveNext(file, cached);
             if (indices.length === 0) continue;
@@ -744,6 +797,7 @@ export class RoomPdfCache {
     this.memory.clear();
     this.memoryBytes = 0;
     this.indices.clear();
+    this.verifyingCompleted.clear();
     for (const key of [...this.cacheWaiters.keys()]) this.notifyCacheWaiters(key);
     this.reserved.clear();
     this.activePerFileRequests.clear();

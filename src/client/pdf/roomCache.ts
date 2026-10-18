@@ -3,6 +3,7 @@ import type { RoomSocket } from '../socket';
 import { perf } from '../perf';
 import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
 import { packetChunksFromQuery, selectMissingChunkGroup } from './networkPacket';
+import { shouldReconnectForRangeFailure } from './transferRecovery';
 
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
@@ -500,7 +501,10 @@ export class RoomPdfCache {
   /** Reconnect only after sustained zero progress and an actual range failure.
    * Do not restart healthy concurrent transfers or create another socket.
    */
-  private recoverStalledTransfer(fileId: string): void {
+  private recoverStalledTransfer(fileId: string, failure: unknown): void {
+    // A file-specific rejection (offline sender, backpressure, invalid range,
+    // quota failure) is not evidence that the shared host socket is broken.
+    if (!shouldReconnectForRangeFailure(failure)) return;
     const queuedAt = this.firstQueuedAt.get(fileId);
     const now = Date.now();
     if (queuedAt === undefined || now - queuedAt < 25_000 ||
@@ -617,10 +621,10 @@ export class RoomPdfCache {
               : this.chunkGroup(file, indices);
             task = transfer.then(() => {
               this.cooldown.delete(fileId);
-            }).catch(() => {
+            }).catch(error => {
               if (this.jobs.has(fileId)) {
                 this.cooldown.set(fileId, Date.now() + 4500);
-                this.recoverStalledTransfer(fileId);
+                this.recoverStalledTransfer(fileId, error);
               }
             }).finally(() => {
               for (const index of indices) this.reserved.get(fileId)?.delete(index);

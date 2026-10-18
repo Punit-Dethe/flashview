@@ -195,6 +195,10 @@ export class RoomPdfCache {
   private nextIndex = new Map<string, number>();
   private cooldown = new Map<string, number>();
   private rotation = 0;
+  private firstQueuedAt = new Map<string, number>();
+  private lastPersistedByteAt = Date.now();
+  private lastReconnectAt = 0;
+  private stallReported = new Set<string>();
   private readonly adaptive = new Map<string, AdaptiveTransferWindow>();
   // Keep a fixed scheduler available for identical-file A/B tests.
   private readonly fixedTransfer = new URLSearchParams(location.search).get('transfer') === 'fixed';
@@ -202,6 +206,7 @@ export class RoomPdfCache {
   private storageFailedFiles = new Set<string>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
+  onStalled: (fileId: string) => void = () => {};
   private warned = false;
 
   constructor(readonly roomId: string, private readonly socket: RoomSocket) {
@@ -333,6 +338,7 @@ export class RoomPdfCache {
         if (this.stopped) return data;
         const set = await this.indexSet(file.fileId);
         set.add(index);
+        this.notePersistedByte(file.fileId);
         const state = completion(file, set);
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
         this.onProgress(state);
@@ -393,6 +399,7 @@ export class RoomPdfCache {
         if (this.stopped) return;
         const set = await this.indexSet(file.fileId);
         set.add(index);
+        this.notePersistedByte(file.fileId);
         const state = completion(file, set);
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
         this.onProgress(state);
@@ -485,10 +492,35 @@ export class RoomPdfCache {
     return result;
   }
 
+  private notePersistedByte(fileId: string): void {
+    this.lastPersistedByteAt = Date.now();
+    this.stallReported.delete(fileId);
+  }
+
+  /** Reconnect only after sustained zero progress and an actual range failure.
+   * Do not restart healthy concurrent transfers or create another socket.
+   */
+  private recoverStalledTransfer(fileId: string): void {
+    const queuedAt = this.firstQueuedAt.get(fileId);
+    const now = Date.now();
+    if (queuedAt === undefined || now - queuedAt < 25_000 ||
+        now - this.lastPersistedByteAt < 20_000 ||
+        now - this.lastReconnectAt < 45_000 || !this.socket.connected) return;
+    this.lastReconnectAt = now;
+    if (!this.stallReported.has(fileId)) {
+      this.stallReported.add(fileId);
+      this.onStalled(fileId);
+    }
+    this.socket.restartStalledTransfer();
+  }
+
   /** Queue a file as soon as it is offered, not when the viewer opens. */
   prefetch(file: PdfManifest): void {
     if (this.stopped || this.storageFailedFiles.has(file.fileId)) return;
-    if (!this.jobs.has(file.fileId)) perf.mark('cache:' + file.fileId);
+    if (!this.jobs.has(file.fileId)) {
+      perf.mark('cache:' + file.fileId);
+      this.firstQueuedAt.set(file.fileId, Date.now());
+    }
     this.jobs.set(file.fileId, file);
     this.resume();
   }
@@ -498,6 +530,8 @@ export class RoomPdfCache {
     this.nextIndex.delete(fileId);
     this.cooldown.delete(fileId);
     this.adaptive.delete(fileId);
+    this.firstQueuedAt.delete(fileId);
+    this.stallReported.delete(fileId);
   }
   resume(): void {
     if (this.stopped) return;
@@ -564,6 +598,8 @@ export class RoomPdfCache {
                 this.cooldown.delete(fileId);
                 this.reserved.delete(fileId);
                 this.adaptive.delete(fileId);
+                this.firstQueuedAt.delete(fileId);
+                this.stallReported.delete(fileId);
                 this.onProgress(completion(file, cached));
               }
               continue;
@@ -582,7 +618,10 @@ export class RoomPdfCache {
             task = transfer.then(() => {
               this.cooldown.delete(fileId);
             }).catch(() => {
-              if (this.jobs.has(fileId)) this.cooldown.set(fileId, Date.now() + 4500);
+              if (this.jobs.has(fileId)) {
+                this.cooldown.set(fileId, Date.now() + 4500);
+                this.recoverStalledTransfer(fileId);
+              }
             }).finally(() => {
               for (const index of indices) this.reserved.get(fileId)?.delete(index);
               const count = (this.activePerFileRequests.get(fileId) ?? 0) - 1;
@@ -631,6 +670,8 @@ export class RoomPdfCache {
     this.cooldown.clear();
     this.adaptive.clear();
     this.storageFailedFiles.clear();
+    this.firstQueuedAt.clear();
+    this.stallReported.clear();
   }
   async clear(): Promise<void> {
     this.dispose();

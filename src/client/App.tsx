@@ -95,8 +95,12 @@ export function App() {
   const previewRoom = useRef(initialSession?.code ?? '');
   // PPTX thumbnails are host-only, complete-file-only cosmetic work.
   // Serialize idle jobs and never run alongside a background file transfer.
-  const pptxThumbAttempted = useRef(new Set<string>());
+  const pptxThumbAttempts = useRef(new Map<string, number>());
   const pptxThumbQueue = useRef<Promise<void>>(Promise.resolve());
+  const [pptxThumbnailRetryTick, triggerPptxThumbnailRetry] = useState(0);
+  const thumbnailTransferBusy = useRef(false);
+  thumbnailTransferBusy.current = documents.some(file =>
+    file.status === 'approved' && !cacheProgress[file.fileId]?.complete);
   const transferSamples = useRef(new Map<string, { bytes: number; time: number }>());
   const [downloadSpeed, setDownloadSpeed] = useState<Record<string, number>>({});
   const [savingFiles, setSavingFiles] = useState<Record<string, boolean>>({});
@@ -185,14 +189,14 @@ export function App() {
   useEffect(() => {
     const room = hostSession?.code;
     if (!room || mode !== 'host') return;
-    if (documents.some(file =>
-      file.status === 'approved' && !cacheProgress[file.fileId]?.complete)) return;
+    if (thumbnailTransferBusy.current) return;
     for (const file of documents) {
       if (!isPowerPointName(file.name) || !cacheProgress[file.fileId]?.complete ||
           documentPreviews[file.fileId]) continue;
       const key = room + '/' + file.fileId;
-      if (pptxThumbAttempted.current.has(key)) continue;
-      pptxThumbAttempted.current.add(key);
+      const attempt = pptxThumbAttempts.current.get(key) ?? 0;
+      if (attempt >= 2) continue;
+      pptxThumbAttempts.current.set(key, attempt + 1);
       pptxThumbQueue.current = pptxThumbQueue.current.catch(() => {}).then(async () => {
         // Yield both parsing and JPEG encoding until the browser has breathing
         // room. Never initiate PPTX thumbnail work from the phone.
@@ -201,18 +205,33 @@ export function App() {
           else setTimeout(resolve, 350);
         });
         if (previewRoom.current !== room || modeRef.current !== 'host') return;
+        if (thumbnailTransferBusy.current) {
+          // A fresh upload began while we were waiting for idle time.
+          pptxThumbAttempts.current.delete(key);
+          return;
+        }
         const bytes = await readCompletedFile(room, file);
-        if (!bytes || previewRoom.current !== room) return;
+        if (!bytes || previewRoom.current !== room) throw Error('Complete PPTX cache unavailable');
         const { makePowerPointThumbnail } = await import('./pptx/makeThumbnail');
         const preview = await makePowerPointThumbnail(bytes);
-        if (!preview || previewRoom.current !== room) return;
+        if (!preview || previewRoom.current !== room) throw Error('Thumbnail rendering returned no image');
         await presentation.savePreview(file.fileId, preview);
         if (previewRoom.current === room)
           setDocumentPreviews(current => current[file.fileId]
             ? current : { ...current, [file.fileId]: preview });
-      }).catch(() => { /* Unsupported decks retain their existing file icon. */ });
+      }).catch(error => {
+        // Don't permanently silence a transient browser/image decode failure.
+        // Only one delayed retry; never let retries affect the transfer queue.
+        console.warn('[FlashView] PPTX thumbnail attempt failed:', error);
+        if (attempt === 0 && previewRoom.current === room) {
+          setTimeout(() => {
+            if (previewRoom.current === room)
+              triggerPptxThumbnailRetry(value => value + 1);
+          }, 8_000);
+        }
+      });
     }
-  }, [hostSession?.code, mode, documents, cacheProgress, documentPreviews, presentation]);
+  }, [hostSession?.code, mode, documents, cacheProgress, documentPreviews, presentation, pptxThumbnailRetryTick]);
 
   function offerLocalFile(id: string, entry: SharedFile): void {
     if (entry.status === 'rejected' || entry.status === 'offline') return;
@@ -328,6 +347,8 @@ export function App() {
       }
     };
     presentation.onProgress = progress => {
+      if (progress.bytes > 0)
+        setError(previous => previous.startsWith('File transfer stalled') ? '' : previous);
       setCacheProgress(existing => ({
         ...existing, [progress.fileId]: retainNewestProgress(existing[progress.fileId], progress),
       }));
@@ -348,6 +369,9 @@ export function App() {
       }
     };
     presentation.onWarning = message => setError(message);
+    presentation.onStalled = () => setError(
+      'File transfer stalled. FlashView is reconnecting and retrying automatically; keep both devices open.',
+    );
     // On mobile, background tabs may have their timers and connections suspended.
     // Returning to the tab checks the socket and resumes it if necessary.
     const wake = () => {

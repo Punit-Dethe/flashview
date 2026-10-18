@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import {
   MAX_FILE_BYTES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
@@ -69,7 +70,9 @@ export class ClassroomRoom extends DurableObject<Env> {
     return null;
   }
   private student(id: string): { ws: WebSocket; peer: Peer } | null {
-    for (const [ws, peer] of this.peers) if (peer.role === 'student' && peer.id === id) return { ws, peer };
+    for (const [ws, peer] of this.peers)
+      if (peer.role === 'student' && peer.id === id && ws.readyState === OPEN)
+        return { ws, peer };
     return null;
   }
   private students(): StudentInfo[] {
@@ -147,6 +150,10 @@ export class ClassroomRoom extends DurableObject<Env> {
         if (other !== ws && active.role === 'host') other.close(4000, 'Host reconnected');
       }
       this.putPeer(ws, { ...peer, role: 'host', name: 'Host', approved: true });
+      // Requests were owned by the old host socket. After a host resume they
+      // cannot be delivered to the new socket safely; clear the volatile map
+      // so it cannot block retries from the new receiver.
+      this.ranges.clear();
       send(ws, {
         type: 'room.state', id: cfg.code, code: cfg.code, joinToken: cfg.joinToken,
         students: this.students(), files: [...this.files.values()],
@@ -315,6 +322,13 @@ export class ClassroomRoom extends DurableObject<Env> {
           }
         }
       } else if (msg.type === 'range.request') {
+        // Critical ordering: expired requests must be removed *before* the
+        // 48-request capacity guard. Previously a full table of expired
+        // requests could reject every retry forever.
+        const expired = pruneExpiredRanges(this.ranges, Date.now(), RANGE_TIMEOUT_MS);
+        for (const id of expired) this.sendHost({
+          type: 'range.error', requestId: id, message: 'Request timed out',
+        });
         const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
         const begin = msg.begin, end = msg.end, requestId = msg.requestId;
         if (!validId(requestId) || !file || file.status !== 'approved' ||
@@ -326,9 +340,6 @@ export class ClassroomRoom extends DurableObject<Env> {
         const student = this.student(file.ownerId);
         if (!student || !student.peer.approved) {
           return void send(ws, { type: 'range.error', requestId, message: 'Sender is offline' });
-        }
-        for (const [id, pending] of this.ranges) {
-          if (Date.now() - pending.created > RANGE_TIMEOUT_MS) this.ranges.delete(id);
         }
         if (this.ranges.has(requestId)) return;
         this.ranges.set(requestId, {

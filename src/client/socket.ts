@@ -110,6 +110,18 @@ export class RoomSocket {
     this.open();
   }
 
+  /** Recover a transfer whose first byte never arrived despite retries.
+   * This preserves the student/host credentials and reauthenticates the
+   * existing room; it is NOT a file re-upload or a second parallel socket.
+   * Used only by the receiver's bounded no-progress watchdog.
+   */
+  restartStalledTransfer(): void {
+    if (this.stopped || !this.identity) return;
+    this.stopConnection();
+    this.retryCount = 0;
+    this.open();
+  }
+
   private open(): void {
     if (this.stopped || !this.identity || this.ws) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

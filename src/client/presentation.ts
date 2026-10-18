@@ -17,6 +17,7 @@ export class PresentationHost {
   private lastProgressPaint = new Map<string, number>();
   onProgress: (status: CacheProgress) => void = () => {};
   onWarning: (message: string) => void = () => {};
+  onStalled: (fileId: string) => void = () => {};
   constructor(private readonly socket: RoomSocket) {}
 
   setRoom(roomId: string): void {
@@ -40,6 +41,7 @@ export class PresentationHost {
       }
     };
     cache.onStorageWarning = message => this.onWarning(message);
+    cache.onStalled = fileId => this.onStalled(fileId);
     this.cache = cache;
     void cleanExpiredRoomCaches(roomId);
   }

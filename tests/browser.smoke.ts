@@ -1590,11 +1590,13 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     });
     assert.ok(actionStyle.withinRow&&actionStyle.aligned&&actionStyle.follows,
       'Outlined Present must be to the right of Download in the same horizontal row');
-    assert.equal(actionStyle.background,'rgb(255, 255, 255)',
-      'Present must use a white outlined button rather than the previous black fill');
+    assert.ok(['rgb(255, 255, 255)','rgb(248, 249, 251)'].includes(actionStyle.background),
+      'Present should be white when ready or pale gray while download is incomplete');
     assert.ok(actionStyle.border!=='0px'&&actionStyle.icon?.includes('17.5'),
       'Present uses a bordered projection-screen glyph');
     await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});
+    assert.equal(await presentButton.evaluate(el=>getComputedStyle(el).backgroundColor),
+      'rgb(255, 255, 255)','Ready Present button is outlined and white');
     await card.locator('img.document-thumb-image.is-visible').waitFor({timeout:45000});
     const thumb=await card.locator('img.document-thumb-image').evaluate(el=>({
       width:(el as HTMLImageElement).naturalWidth,

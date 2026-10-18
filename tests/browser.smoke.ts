@@ -433,13 +433,14 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       typeof Touch==='function' && typeof TouchEvent==='function');
     if(syntheticTouchSupported) await presentation.evaluate(() => {
       const target=document.querySelector<HTMLElement>('.page-stage')!;
-      const point=(x:number)=>new Touch({identifier:1,target,clientX:x,clientY:300});
-      const dispatch=(type:string,x:number,ended=false)=>{
-        const touch=point(x);
-        target.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,
-          touches:ended?[]:[touch],targetTouches:ended?[]:[touch],changedTouches:[touch]}));
-      };
-      dispatch('touchstart',360);dispatch('touchmove',820);dispatch('touchend',820,true);
+      const first=new Touch({identifier:1,target,clientX:360,clientY:300});
+      const last=new Touch({identifier:1,target,clientX:820,clientY:300});
+      target.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,
+        touches:[first],targetTouches:[first],changedTouches:[first]}));
+      target.dispatchEvent(new TouchEvent('touchmove',{bubbles:true,cancelable:true,
+        touches:[last],targetTouches:[last],changedTouches:[last]}));
+      target.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,
+        touches:[],targetTouches:[],changedTouches:[last]}));
     });
     else {
       // Firefox desktop builds can omit Touch constructors entirely.
@@ -1687,13 +1688,14 @@ test('full-download zip.js preview: PowerPoint Present stays disabled until ever
     // Rightward touch swipe must navigate back without using arrows.
     await popup.evaluate(() => {
       const target=document.querySelector<HTMLElement>('.flashview-pptx-canvas')!;
-      const point=(x:number)=>new Touch({identifier:3,target,clientX:x,clientY:305});
-      const dispatch=(type:string,x:number,ended=false)=>{
-        const touch=point(x);
-        target.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,
-          touches:ended?[]:[touch],targetTouches:ended?[]:[touch],changedTouches:[touch]}));
-      };
-      dispatch('touchstart',390); dispatch('touchmove',800); dispatch('touchend',800,true);
+      const first=new Touch({identifier:3,target,clientX:390,clientY:305});
+      const last=new Touch({identifier:3,target,clientX:800,clientY:305});
+      target.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,
+        touches:[first],targetTouches:[first],changedTouches:[first]}));
+      target.dispatchEvent(new TouchEvent('touchmove',{bubbles:true,cancelable:true,
+        touches:[last],targetTouches:[last],changedTouches:[last]}));
+      target.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,
+        touches:[],targetTouches:[],changedTouches:[last]}));
     });
     await popup.getByText('Slide 1 / 2').waitFor({timeout:12000});
     // Keyboard and arrows remain usable on boards with physical controls.

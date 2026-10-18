@@ -1548,7 +1548,7 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
   }
 });
 
-test('zip.js PowerPoint preview and paired action controls work independently of Download',
+test('full-download zip.js preview: PowerPoint Present stays disabled until every byte is cached',
   {timeout:130000}, async()=>{
   const {port,child}=await runningServer();
   const browser=await browserEngine.launch({headless:true});
@@ -1557,7 +1557,9 @@ test('zip.js PowerPoint preview and paired action controls work independently of
   const root='http://127.0.0.1:'+port;
   let popup:Page|null=null;
   try{
-    const pptx=await makePowerPointFixture();
+    // Keep the actual OOXML presentation valid, but large enough to check
+    // the incomplete-file state instead of only a completed tiny deck.
+    const pptx=await makePowerPointFixture(2_400_000);
     await host.goto(root);
     await host.getByRole('button',{name:/Create a room/}).click();
     await host.locator('.connection.connected').waitFor();
@@ -1594,7 +1596,13 @@ test('zip.js PowerPoint preview and paired action controls work independently of
       actionGeometry.presentTop>=actionGeometry.rowTop-1 &&
       actionGeometry.presentBottom<=actionGeometry.rowBottom+1,
       'Circular Present must be on the right inside the same action row');
-    await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});
+    const progressBeforeCompletion=Number(await card.locator('.cache-ring')
+      .getAttribute('aria-valuenow'));
+    if(progressBeforeCompletion<100) {
+      assert.equal(await presentButton.isEnabled(),false,
+        'A partially cached PPTX cannot start presenting in full-file mode');
+    }
+    await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:45000});
     assert.equal(await presentButton.isEnabled(),true);
     assert.equal(await downloadButton.isEnabled(),true);
     [popup]=await Promise.all([host.waitForEvent('popup'),presentButton.click()]);
@@ -1606,6 +1614,9 @@ test('zip.js PowerPoint preview and paired action controls work independently of
       .filter({hasText:'FlashView PowerPoint Test'}).count(),1,
       'zip.js extracts and renders the actual slide text');
     assert.equal(await popup.locator('.flashview-pptx-state').count(),0);
+    assert.equal(await popup.getByText('100% cached').count(),1);
+    assert.equal(await popup.getByText('Full-file zip.js comparison', {exact:false}).count(),1,
+      'This test uses completed bytes, not a progressive ZIP range viewer');
     const [dl]=await Promise.all([host.waitForEvent('download'),downloadButton.click()]);
     const got=await readFile(await dl.path());
     assert.equal(createHash('sha256').update(got).digest('hex'),

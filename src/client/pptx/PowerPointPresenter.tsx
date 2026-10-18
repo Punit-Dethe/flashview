@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { PdfManifest } from '../../shared/protocol';
-import type { CacheProgress } from '../pdf/roomCache';
-import type { PdfRangeSource } from '../presentation';
-import { CachedPptxReader } from './zipRange';
-import { PartialPptxArchive, type PptxSlide } from './slideModel';
+import { readCompletedFile } from '../pdf/roomCache';
+import { CompletedPptxArchive, type PptxSlide } from './slideModel';
 import '../styles.powerpoint.css';
 
-type Props = { file: PdfManifest; source: PdfRangeSource; cached?: CacheProgress | null;
+type Props = { file: PdfManifest; roomId: string;
   close: () => void; onFirstSlideRendered?: () => void };
 
 function PptxCanvas({ slide }: { slide: PptxSlide }) {
@@ -34,11 +32,12 @@ function PptxCanvas({ slide }: { slide: PptxSlide }) {
   </div>;
 }
 
-/** Experimental progressive PPTX preview. zip.js extracts cached slide parts;
- * it does NOT implement PowerPoint animations. All network transfer remains
- * controlled by the host's independent background cache scheduler. */
-export default function PowerPointPresenter({ file, source, cached, close, onFirstSlideRendered }: Props) {
-  const archiveRef = useRef<PartialPptxArchive | null>(null);
+/** Controlled full-download comparison: the original file is assembled from
+ * IndexedDB, then zip.js reads that COMPLETE byte array. No network-dependent
+ * slide ranges, early painting, or ZIP-tail transfer prioritization. This is
+ * still a limited experimental renderer, not a full PowerPoint implementation. */
+export default function PowerPointPresenter({ file, roomId, close, onFirstSlideRendered }: Props) {
+  const archiveRef = useRef<CompletedPptxArchive | null>(null);
   const slideCache = useRef(new Map<string, PptxSlide>());
   const pending = useRef(new Map<string, Promise<PptxSlide>>());
   const firstShown = useRef(false);
@@ -46,35 +45,38 @@ export default function PowerPointPresenter({ file, source, cached, close, onFir
   const [paths, setPaths] = useState<string[]>([]);
   const [slideIndex, setSlideIndex] = useState(0);
   const [slide, setSlide] = useState<PptxSlide | null>(null);
-  const [state, setState] = useState<'index' | 'loading' | 'partial' | 'ready' | 'error'>('index');
+  const [state, setState] = useState<'index' | 'loading' | 'ready' | 'error'>('index');
   const [error, setError] = useState('');
   const [retryCount, retry] = useState(0);
   const [indexRetry, retryIndex] = useState(0);
-  const percent = cached?.complete ? 100 : Math.round(
-    Math.max(0, Math.min(100, (cached?.bytes ?? 0) / Math.max(file.size, 1) * 100)));
-
   useEffect(() => {
     let disposed = false;
-    const reader = new CachedPptxReader(file, source);
-    const archive = new PartialPptxArchive(reader);
-    archiveRef.current = archive;
+    let archive: CompletedPptxArchive | null = null;
+    archiveRef.current = null;
     setState('index'); setPaths([]); setSlide(null); setSlideIndex(0);
     slideCache.current.clear(); pending.current.clear(); firstShown.current = false;
-    void archive.index().then(slidePaths => {
+    void (async () => {
+      // The viewer never uses the partial cache reader. If IndexedDB is missing
+      // even one chunk, fail explicitly rather than silently drawing half a slide.
+      const bytes = await readCompletedFile(roomId, file);
+      if (disposed) return;
+      if (!bytes) throw Error('The PowerPoint is not fully cached. Reopen when it reaches 100%.');
+      archive = new CompletedPptxArchive(bytes);
+      archiveRef.current = archive;
+      const slidePaths = await archive.index();
       if (disposed) return;
       setPaths(slidePaths); setState('loading');
-    }).catch(e => {
+    })().catch(e => {
       if (disposed) return;
-      setError(e instanceof Error ? e.message : 'Unable to inspect PowerPoint archive');
+      setError(e instanceof Error ? e.message : 'Unable to open complete PowerPoint');
       setState('error');
     });
     return () => {
       disposed = true;
-      reader.close();
-      void archive.close().catch(() => {});
+      if (archive) void archive.close().catch(() => {});
       if (archiveRef.current === archive) archiveRef.current = null;
     };
-  }, [file.fileId, file.size, source, indexRetry]);
+  }, [file.fileId, file.size, roomId, indexRetry]);
 
   const markVisible = useCallback(() => {
     if (firstShown.current) return;
@@ -94,10 +96,10 @@ export default function PowerPointPresenter({ file, source, cached, close, onFir
     setSlide(null); setState('loading'); setError('');
     let task = pending.current.get(path);
     if (!task) {
-      task = archive.slide(path, early => {
-        slideCache.current.set(path, early);
-        if (active) { setSlide(early); setState('partial'); markVisible(); }
-      });
+      // Do not paint text ahead of images in this baseline. Only the
+      // fully extracted slide model is shown, so missing layering is not
+      // attributable to an early partial slide paint.
+      task = archive.slide(path, () => {});
       pending.current.set(path, task);
     }
     void task.then(result => {
@@ -125,8 +127,8 @@ export default function PowerPointPresenter({ file, source, cached, close, onFir
       {slide ? <PptxCanvas slide={slide}/> : <div className="flashview-pptx-state" role="status">
         {state !== 'error' && <span className="spinner"/>}
         <h1>{state === 'error' ? 'Slide unavailable' :
-          state === 'index' ? 'Reading PowerPoint slide index…' : 'Waiting for slide data…'}</h1>
-        <p>{state === 'error' ? error : 'Previewing available bytes. Original file transfer continues independently.'}</p>
+          state === 'index' ? 'Opening complete PowerPoint…' : 'Rendering slide…'}</h1>
+        <p>{state === 'error' ? error : 'Rendering from the fully downloaded PowerPoint in your browser.'}</p>
         {state === 'error' && <button type="button" onClick={() => {
           setError('');
           if (!paths.length) retryIndex(n => n + 1);
@@ -136,9 +138,6 @@ export default function PowerPointPresenter({ file, source, cached, close, onFir
             retry(n => n + 1);
           }
         }}>Retry slide</button>}
-      </div>}
-      {slide && state === 'partial' && <div className="flashview-pptx-image-progress" role="status">
-        Slide visible · remaining images loading
       </div>}
     </div>
     <div className="flashview-pptx-controls">
@@ -151,8 +150,8 @@ export default function PowerPointPresenter({ file, source, cached, close, onFir
       <button type="button" onClick={close} aria-label="Close presentation">Close</button>
     </div>
     <div className="flashview-pptx-caption" aria-live="polite">
-      <span>Experimental static PPTX preview · animations not supported</span>
-      <span>{percent}% downloaded</span>
+      <span>Full-file zip.js comparison · limited static rendering</span>
+      <span>100% cached</span>
     </div>
   </div>;
 }

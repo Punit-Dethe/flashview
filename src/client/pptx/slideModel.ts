@@ -1,7 +1,6 @@
-import { ZipReader, TextWriter, BlobWriter } from '@zip.js/zip.js';
-import type { CachedPptxReader } from './zipRange';
+import { ZipReader, Uint8ArrayReader, TextWriter, BlobWriter } from '@zip.js/zip.js';
 
-type ZipEntry = Awaited<ReturnType<ZipReader<undefined>['getEntries']>>[number];
+type ZipEntry = Awaited<ReturnType<ZipReader<Uint8Array>['getEntries']>>[number];
 export type PptxSlideItem = {
   id: string;
   kind: 'text' | 'shape' | 'image';
@@ -59,13 +58,15 @@ function resolve(path: string, target: string): string {
   return output.join('/');
 }
 
-export class PartialPptxArchive {
-  private readonly zip: ZipReader<undefined>;
+export class CompletedPptxArchive {
+  private readonly zip: ZipReader<Uint8Array>;
   private entries = new Map<string, ZipEntry>();
   private slides: string[] = [];
   private dimensions = { width: 9144000, height: 5143500 };
   private ownedUrls = new Set<string>();
-  constructor(reader: CachedPptxReader) { this.zip = new ZipReader(reader); }
+  /** Entire verified file is already in local memory. zip.js has no incomplete
+   stream, network or cache dependency in this fidelity baseline. */
+  constructor(bytes: Uint8Array) { this.zip = new ZipReader(new Uint8ArrayReader(bytes)); }
   getSlidePaths(): string[] { return this.slides; }
   private async text(path: string): Promise<string> {
     const entry = this.entries.get(path);

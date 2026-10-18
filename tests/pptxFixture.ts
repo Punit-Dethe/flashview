@@ -1,7 +1,7 @@
-import { ZipWriter, Uint8ArrayWriter, TextReader } from '@zip.js/zip.js';
+import { ZipWriter, Uint8ArrayWriter, Uint8ArrayReader, TextReader } from '@zip.js/zip.js';
 
 /** Minimal genuine OOXML slideshow. No network fixture or third-party Office converter. */
-export async function makePowerPointFixture(): Promise<Buffer> {
+export async function makePowerPointFixture(extraBytes = 0): Promise<Buffer> {
   const ct='application/vnd.openxmlformats-officedocument.presentationml.';
   const relns='http://schemas.openxmlformats.org/package/2006/relationships';
   const presns='http://schemas.openxmlformats.org/presentationml/2006/main';
@@ -68,6 +68,13 @@ hlink="hlink" folHlink="folHlink" bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2"/>
   };
   const archive = new ZipWriter(new Uint8ArrayWriter());
   for(const [name,xml] of Object.entries(parts)) await archive.add(name,new TextReader(xml));
+  if (extraBytes > 0) {
+    // Valid extra binary OOXML media part, deliberately uncompressed so the
+    // browser test can observe an incompletely cached PowerPoint.
+    const padding = new Uint8Array(extraBytes);
+    for (let i = 0; i < extraBytes; i++) padding[i] = (i * 73 + (i >> 6)) & 255;
+    await archive.add('ppt/media/unreferenced-test.bin', new Uint8ArrayReader(padding), { level: 0 });
+  }
   const bytes=await archive.close();
   return Buffer.from(bytes);
 }

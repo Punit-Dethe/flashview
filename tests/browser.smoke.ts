@@ -1798,3 +1798,69 @@ test('phone and relay enforce the same ten-file room limit without phantom uploa
     child.kill('SIGTERM');
   }
 });
+
+test('a transient host IndexedDB write failure recovers without reuploading the entire file', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  const original = makePdf(2100);
+  try {
+    await host.addInitScript(() => {
+      const put = IDBObjectStore.prototype.put;
+      let rejected = false;
+      IDBObjectStore.prototype.put = function(value: unknown, key?: IDBValidKey) {
+        if (!rejected && this.name === 'chunks') {
+          rejected = true;
+          (window as typeof window & { __testFailedWrite?: boolean }).__testFailedWrite = true;
+          throw new DOMException('Synthetic transient storage failure', 'QuotaExceededError');
+        }
+        return key === undefined ? put.call(this, value) : put.call(this, value, key);
+      };
+    });
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const code = (await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await student.locator('.student-drive').waitFor();
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'recover-storage.pdf', mimeType: 'application/pdf', buffer: original,
+    });
+    const row = host.locator('.document-row').filter({ hasText: 'recover-storage.pdf' });
+    await row.waitFor();
+    await host.waitForFunction(() => (window as typeof window & { __testFailedWrite?: boolean }).__testFailedWrite === true);
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 40000 });
+    const actualDigest = await host.evaluate(async room => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('flashview-room-cache');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const records = await new Promise<Array<{ index: number; data: ArrayBuffer }>>((resolve, reject) => {
+        const request = database.transaction('chunks', 'readonly').objectStore('chunks')
+          .index('room').getAll(IDBKeyRange.only(room));
+        request.onsuccess = () => resolve(request.result as Array<{ index: number; data: ArrayBuffer }>);
+        request.onerror = () => reject(request.error);
+      });
+      records.sort((a, b) => a.index - b.index);
+      const length = records.reduce((sum, item) => sum + item.data.byteLength, 0);
+      const bytes = new Uint8Array(length);
+      let offset = 0;
+      for (const item of records) {
+        bytes.set(new Uint8Array(item.data), offset);
+        offset += item.data.byteLength;
+      }
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      return Array.from(hash, b => b.toString(16).padStart(2, '0')).join('');
+    }, code);
+    assert.equal(actualDigest, createHash('sha256').update(original).digest('hex'),
+      'Recovery must preserve original bytes exactly');
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

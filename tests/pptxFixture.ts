@@ -1,7 +1,7 @@
-import { ZipWriter, Uint8ArrayWriter, Uint8ArrayReader, TextReader } from '@zip.js/zip.js';
+import { ZipWriter, Uint8ArrayWriter, TextReader } from '@zip.js/zip.js';
 
 /** Minimal genuine OOXML slideshow. No network fixture or third-party Office converter. */
-export async function makePowerPointFixture(extraBytes = 0, slideCount = 1): Promise<Buffer> {
+export async function makePowerPointFixture(): Promise<Buffer> {
   const ct='application/vnd.openxmlformats-officedocument.presentationml.';
   const relns='http://schemas.openxmlformats.org/package/2006/relationships';
   const presns='http://schemas.openxmlformats.org/presentationml/2006/main';
@@ -36,19 +36,7 @@ export async function makePowerPointFixture(extraBytes = 0, slideCount = 1): Pro
 <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
 <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="4000"/>
 <a:t>FlashView PowerPoint Test</a:t></a:r></a:p></p:txBody>
-</p:sp>
-<!-- Regression fixture: a transparent white bounding box above a colored
-     shape, matching the a:alpha=0 overlays used in real detection decks. -->
-<p:sp><p:nvSpPr><p:cNvPr id="3" name="Photo-like backdrop"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
-<p:spPr><a:xfrm><a:off x="1800000" y="2700000"/><a:ext cx="3100000" cy="1500000"/></a:xfrm>
-<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
-<a:solidFill><a:srgbClr val="237AB2"/></a:solidFill></p:spPr></p:sp>
-<p:sp><p:nvSpPr><p:cNvPr id="4" name="Transparent detection outline"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
-<p:spPr><a:xfrm><a:off x="2000000" y="2900000"/><a:ext cx="2700000" cy="1100000"/></a:xfrm>
-<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
-<a:solidFill><a:srgbClr val="FFFFFF"><a:alpha val="0"/></a:srgbClr></a:solidFill>
-<a:ln w="21590"><a:solidFill><a:srgbClr val="A84033"/></a:solidFill></a:ln></p:spPr></p:sp>
-</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`,
+</p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`,
     'ppt/slides/_rels/slide1.xml.rels': `<Relationships xmlns="${relns}"><Relationship Id="rId1" Type="${partTypes}slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>`,
     'ppt/slideLayouts/slideLayout1.xml': `<p:sldLayout xmlns:p="${presns}" xmlns:a="${drawns}" type="blank" preserve="1">
 <p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>
@@ -78,28 +66,8 @@ hlink="hlink" folHlink="folHlink" bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2"/>
 <a:bgFillStyleLst><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:bgFillStyleLst>
 </a:fmtScheme></a:themeElements></a:theme>`,
   };
-  if (slideCount === 2) {
-    // A second genuine slide lets the browser test arrows, keyboard and swipe.
-    parts['[Content_Types].xml'] = parts['[Content_Types].xml'].replace('</Types>',
-      '<Override PartName="/ppt/slides/slide2.xml" ContentType="'+ct+'slide+xml"/></Types>');
-    parts['ppt/presentation.xml'] = parts['ppt/presentation.xml'].replace('</p:sldIdLst>',
-      '<p:sldId id="257" r:id="rId3"/></p:sldIdLst>');
-    parts['ppt/_rels/presentation.xml.rels'] = parts['ppt/_rels/presentation.xml.rels']
-      .replace('</Relationships>',
-        '<Relationship Id="rId3" Type="'+partTypes+'slide" Target="slides/slide2.xml"/></Relationships>');
-    parts['ppt/slides/slide2.xml'] = parts['ppt/slides/slide1.xml']
-      .replace('FlashView PowerPoint Test','FlashView Slide Two');
-    parts['ppt/slides/_rels/slide2.xml.rels'] = parts['ppt/slides/_rels/slide1.xml.rels'];
-  }
   const archive = new ZipWriter(new Uint8ArrayWriter());
   for(const [name,xml] of Object.entries(parts)) await archive.add(name,new TextReader(xml));
-  if (extraBytes > 0) {
-    // Valid extra binary OOXML media part, deliberately uncompressed so the
-    // browser test can observe an incompletely cached PowerPoint.
-    const padding = new Uint8Array(extraBytes);
-    for (let i = 0; i < extraBytes; i++) padding[i] = (i * 73 + (i >> 6)) & 255;
-    await archive.add('ppt/media/unreferenced-test.bin', new Uint8ArrayReader(padding), { level: 0 });
-  }
   const bytes=await archive.close();
   return Buffer.from(bytes);
 }

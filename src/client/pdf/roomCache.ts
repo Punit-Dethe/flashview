@@ -523,8 +523,6 @@ export class RoomPdfCache {
     }
     const currentWindow = this.fixedTransfer ? BACKGROUND_WINDOW : this.tuner(file.fileId).limit;
     if ((this.activePerFileRequests.get(file.fileId) ?? 0) >= currentWindow) return [];
-    // Full-file PPTX baseline: normal forward cache schedule. The presentation
-    // renderer reads only after completion and never changes scheduling.
     const cursor = this.nextIndex.get(file.fileId) ?? 0;
     const selected = selectMissingChunkGroup(total, cursor, cached, reserved, this.networkChunks);
     if (!selected.length) return [];

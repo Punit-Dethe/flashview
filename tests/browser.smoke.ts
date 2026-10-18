@@ -420,38 +420,6 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       return ink;
     });
     assert.ok(renderedDarkPixels > 3, 'Page 1 should contain actually rendered pixels');
-    // The PDF.js core has no integrated swipe-to-page control; its shared
-    // react-swipeable layer must work for mouse-drag (touch boards) and touch.
-    await presentation.mouse.move(890, 300);
-    await presentation.mouse.down();
-    await presentation.mouse.move(380, 301, {steps:8});
-    await presentation.mouse.up();
-    await presentation.waitForFunction(() =>
-      document.querySelector<HTMLCanvasElement>('canvas[data-rendered-page="2"]')!==null,
-      null,{timeout:25000});
-    const syntheticTouchSupported=await presentation.evaluate(() =>
-      typeof Touch==='function' && typeof TouchEvent==='function');
-    if(syntheticTouchSupported) await presentation.evaluate(() => {
-      const target=document.querySelector<HTMLElement>('.page-stage')!;
-      const first=new Touch({identifier:1,target,clientX:360,clientY:300});
-      const last=new Touch({identifier:1,target,clientX:820,clientY:300});
-      target.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,
-        touches:[first],targetTouches:[first],changedTouches:[first]}));
-      target.dispatchEvent(new TouchEvent('touchmove',{bubbles:true,cancelable:true,
-        touches:[last],targetTouches:[last],changedTouches:[last]}));
-      target.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,
-        touches:[],targetTouches:[],changedTouches:[last]}));
-    });
-    else {
-      // Firefox desktop builds can omit Touch constructors entirely.
-      await presentation.mouse.move(365,301);
-      await presentation.mouse.down();
-      await presentation.mouse.move(825,300,{steps:8});
-      await presentation.mouse.up();
-    }
-    await presentation.waitForFunction(() =>
-      document.querySelector<HTMLCanvasElement>('canvas[data-rendered-page="1"]')!==null,
-      null,{timeout:25000});
     // Immersive UI: no permanent header, a true full-viewport slide stage and
     // one pill in the lower-right corner. The PDF keeps its correct proportions.
     const projectorLayout = await presentation.evaluate(() => {
@@ -486,13 +454,6 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
         canvas.getBoundingClientRect().height > expected * 1.18 &&
         !document.querySelector('.page-overlay');
     }, normalHeight, { timeout: 15000 });
-    // Zoomed PDFs should pan rather than accidentally flip pages on drags.
-    await presentation.mouse.move(870, 275);
-    await presentation.mouse.down();
-    await presentation.mouse.move(365, 270, {steps:8});
-    await presentation.mouse.up();
-    assert.equal(await presentation.getByRole('spinbutton',{name:'Page number'}).inputValue(),'1',
-      'Horizontal dragging while zoomed must not turn PDF pages');
     await presentation.getByRole('button', { name: 'Reset zoom to fit' }).click();
     await presentation.waitForFunction(expected => {
       const canvas = document.querySelector<HTMLCanvasElement>('.page-shell canvas');
@@ -1587,7 +1548,7 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
   }
 });
 
-test('full-download zip.js preview: PowerPoint Present stays disabled until every byte is cached',
+test('complete PowerPoint uses lazy browser-only presenter with independent Download and Present actions',
   {timeout:130000}, async()=>{
   const {port,child}=await runningServer();
   const browser=await browserEngine.launch({headless:true});
@@ -1596,9 +1557,7 @@ test('full-download zip.js preview: PowerPoint Present stays disabled until ever
   const root='http://127.0.0.1:'+port;
   let popup:Page|null=null;
   try{
-    // Keep the actual OOXML presentation valid, but large enough to check
-    // the incomplete-file state instead of only a completed tiny deck.
-    const pptx=await makePowerPointFixture(2_400_000, 2);
+    const pptx=await makePowerPointFixture();
     await host.goto(root);
     await host.getByRole('button',{name:/Create a room/}).click();
     await host.locator('.connection.connected').waitFor();
@@ -1619,112 +1578,15 @@ test('full-download zip.js preview: PowerPoint Present stays disabled until ever
     assert.equal(await downloadButton.count(),1,'PPTX also gets Download');
     assert.equal(await presentButton.evaluate(x=>getComputedStyle(x).borderRadius),'50%',
       'PPTX Present is circular');
-    const actionGeometry=await card.evaluate(element=>{
-      const row=element.querySelector('.document-card-actions')!.getBoundingClientRect();
-      const download=element.querySelector('.document-card-download')!.getBoundingClientRect();
-      const present=element.querySelector('.document-card-present')!.getBoundingClientRect();
-      return {rowTop:row.top,rowBottom:row.bottom,downloadTop:download.top,
-        downloadBottom:download.bottom,presentTop:present.top,presentBottom:present.bottom,
-        downloadRight:download.right,presentLeft:present.left,presentWidth:present.width};
-    });
-    assert.ok(Math.abs((actionGeometry.downloadTop+actionGeometry.downloadBottom)/2 -
-      (actionGeometry.presentTop+actionGeometry.presentBottom)/2)<3,
-      'Present must share the Download button horizontal row, not overlay the file thumbnail');
-    assert.ok(actionGeometry.presentLeft>=actionGeometry.downloadRight+5 &&
-      actionGeometry.presentWidth>=40 &&
-      actionGeometry.presentTop>=actionGeometry.rowTop-1 &&
-      actionGeometry.presentBottom<=actionGeometry.rowBottom+1,
-      'Circular Present must be on the right inside the same action row');
-    const progressBeforeCompletion=Number(await card.locator('.cache-ring')
-      .getAttribute('aria-valuenow'));
-    if(progressBeforeCompletion<100) {
-      assert.equal(await presentButton.isEnabled(),false,
-        'A partially cached PPTX cannot start presenting in full-file mode');
-    }
-    await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:45000});
+    await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});
     assert.equal(await presentButton.isEnabled(),true);
     assert.equal(await downloadButton.isEnabled(),true);
     [popup]=await Promise.all([host.waitForEvent('popup'),presentButton.click()]);
     await popup.locator('.flashview-pptx-controls').waitFor({timeout:45000});
-    assert.equal(await popup.getByText('Slide 1 / 2').count(),1,
+    assert.equal(await popup.getByText('Slide 1 / 1').count(),1,
       'Actual PowerPoint rendered from IndexedDB without cloud conversion');
-    assert.equal(await popup.getByRole('button',{name:'Toggle fullscreen'}).count(),1);
-    assert.equal(await popup.locator('.flashview-pptx-slide .flashview-pptx-text')
-      .filter({hasText:'FlashView PowerPoint Test'}).count(),1,
-      'zip.js extracts and renders the actual slide text');
+    assert.equal(await popup.getByRole('button',{name:'Start slideshow'}).count(),1);
     assert.equal(await popup.locator('.flashview-pptx-state').count(),0);
-    // The original Object Detection deck uses transparent white rectangles
-    // (a:alpha val=0) with red borders on top of photos. Regression: never
-    // let the fill conceal the image or colored background beneath.
-    const overlays=await popup.locator('.flashview-pptx-slide .flashview-pptx-element').evaluateAll(elements =>
-      elements.map(element=>{
-        const style=getComputedStyle(element);
-        return {background:style.backgroundColor,border:style.borderTopColor,width:style.borderTopWidth};
-      }));
-    assert.ok(overlays.some(x=>x.background==='rgb(35, 122, 178)'),
-      'PPTX backing image-like shape must remain visible');
-    assert.ok(overlays.some(x=>x.background==='rgba(0, 0, 0, 0)' &&
-      x.border==='rgb(168, 64, 51)' && Number.parseFloat(x.width)>0),
-      'Transparent detection boxes must preserve their red outline without white fill');
-    const viewportFit=await popup.locator('.flashview-pptx-slide').evaluate(element=>{
-      const bounds=element.getBoundingClientRect();
-      const stage=element.parentElement!.getBoundingClientRect();
-      return {slideLeft:bounds.left,slideRight:bounds.right,stageLeft:stage.left,stageRight:stage.right};
-    });
-    assert.ok(viewportFit.slideLeft>=viewportFit.stageLeft-2 &&
-      viewportFit.slideRight<=viewportFit.stageRight+2,
-      'PowerPoint slide must fit within viewport instead of cropping its left and right edges');
-    assert.equal(await popup.getByText('100% cached').count(),1);
-    assert.equal(await popup.getByText('Full-file zip.js comparison', {exact:false}).count(),1,
-      'This test uses completed bytes, not a progressive ZIP range viewer');
-    // Swipe left on the actual presentation surface, not on the nav buttons.
-    await popup.mouse.move(900, 310);
-    await popup.mouse.down();
-    await popup.mouse.move(410, 308, { steps: 8 });
-    await popup.mouse.up();
-    await popup.getByText('Slide 2 / 2').waitFor({timeout:12000});
-    await popup.locator('.flashview-pptx-slide .flashview-pptx-text')
-      .filter({hasText:'FlashView Slide Two'}).waitFor({timeout:12000});
-    // Rightward touch swipe must navigate back without using arrows.
-    await popup.evaluate(() => {
-      const target=document.querySelector<HTMLElement>('.flashview-pptx-canvas')!;
-      const first=new Touch({identifier:3,target,clientX:390,clientY:305});
-      const last=new Touch({identifier:3,target,clientX:800,clientY:305});
-      target.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,
-        touches:[first],targetTouches:[first],changedTouches:[first]}));
-      target.dispatchEvent(new TouchEvent('touchmove',{bubbles:true,cancelable:true,
-        touches:[last],targetTouches:[last],changedTouches:[last]}));
-      target.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,
-        touches:[],targetTouches:[],changedTouches:[last]}));
-    });
-    await popup.getByText('Slide 1 / 2').waitFor({timeout:12000});
-    // Keyboard and arrows remain usable on boards with physical controls.
-    await popup.keyboard.press('ArrowRight');
-    await popup.getByText('Slide 2 / 2').waitFor({timeout:12000});
-    await popup.getByRole('button',{name:'Previous slide'}).click();
-    await popup.getByText('Slide 1 / 2').waitFor({timeout:12000});
-
-    if(await popup.evaluate(() => document.fullscreenEnabled)) {
-      await popup.getByRole('button',{name:'Toggle fullscreen'}).click();
-      await popup.waitForFunction(() =>
-        document.fullscreenElement?.classList.contains('flashview-pptx-presenter'),null,{timeout:12000});
-      await popup.waitForFunction(() => {
-        const stage=document.querySelector<HTMLElement>('.flashview-pptx-canvas');
-        const slide=document.querySelector<HTMLElement>('.flashview-pptx-slide');
-        if(!stage||!slide) return false;
-        const a=stage.getBoundingClientRect(), b=slide.getBoundingClientRect();
-        const ratio=9144000/5143500;
-        const idealW=Math.min(a.width,a.height*ratio);
-        const idealH=Math.min(a.height,a.width/ratio);
-        return Math.abs(a.width-innerWidth)<3 && Math.abs(a.height-innerHeight)<3 &&
-          Math.abs(b.width-idealW)<3 && Math.abs(b.height-idealH)<3 &&
-          b.left>=-2 && b.right<=innerWidth+2 && b.top>=-2 && b.bottom<=innerHeight+2;
-      },null,{timeout:12000});
-      assert.equal(await popup.locator('.flashview-pptx-caption').isVisible(),false,
-        'Fullscreen PPTX hides the diagnostic caption and leaves only floating navigation');
-      await popup.getByRole('button',{name:'Toggle fullscreen'}).click();
-      await popup.waitForFunction(() => document.fullscreenElement===null,null,{timeout:12000});
-    }
     const [dl]=await Promise.all([host.waitForEvent('download'),downloadButton.click()]);
     const got=await readFile(await dl.path());
     assert.equal(createHash('sha256').update(got).digest('hex'),

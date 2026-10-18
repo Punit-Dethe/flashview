@@ -33,7 +33,7 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
   },[pdf,previewUrl,file.fileId]);
   const cached=Boolean(progress?.complete);
   const percent=cached?100:Math.max(0,Math.min(100,(progress?.bytes??0)/Math.max(1,file.size)*100));
-  const available=pdf?(file.status==='approved'||cached):(powerpoint&&cached);
+  const available=pdf?(file.status==='approved'||cached):powerpoint&&cached;
   const imageFailed=imageState.url===previewUrl&&imageState.failed;
   const showingImage=pdf&&Boolean(previewUrl)&&imageState.url===previewUrl&&imageState.ready&&!imageFailed;
   const showIcon=!pdf||imageFailed||(!previewUrl&&(fallbackTimeout||file.status==='offline'));
@@ -90,7 +90,7 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
         className={'document-card-open document-card-present'+(available?' ready':' is-disabled')}
         disabled={!available} onClick={onPresent}
         aria-label={'Present '+file.name}
-        title={available?'Present '+file.name:(powerpoint?'Ready after the entire PowerPoint downloads':'Waiting for sender')}>
+        title={available?'Present '+file.name:(powerpoint?'Available after complete download':'Waiting for sender')}>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
           <path d="M8.5 5.5 18 12l-9.5 6.5z" fill="currentColor"/>
         </svg>

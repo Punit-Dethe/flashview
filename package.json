@@ -31,7 +31,7 @@
     "react-dom": "^19.2.0",
     "ws": "^8.18.3",
     "tsx": "^4.20.6",
-    "react-swipeable": "^7.0.2"
+    "pptx-vanilla-viewer": "3.42.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

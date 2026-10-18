@@ -1,70 +1,33 @@
-/* Lightweight, full-file PPTX renderer. Fullscreen uses the entire screen;
-   the ResizeObserver in the presenter fits the actual slide aspect ratio. */
+/* An isolated, black browser-only PPTX presentation surface. Not shipped to
+   the classroom dashboard; the PPTX engine itself is lazy-loaded. */
 .flashview-pptx-presenter {
-  position:relative; width:100%; height:100vh; height:100dvh;
-  min-height:0; display:flex; flex-direction:column; overflow:hidden;
-  background:#090a0e; color:#fff;
+  position:relative; width:100%; height:100vh; height:100dvh; background:#090a0e;
+  display:flex; flex-direction:column; color:white; overflow:hidden;
 }
-.flashview-pptx-canvas {
-  flex:1 1 auto; min-height:0; width:100%; display:flex;
-  align-items:center; justify-content:center; position:relative;
-  overflow:hidden; padding:0; touch-action:pan-y; user-select:none;
-}
-.flashview-pptx-slide {
-  position:relative; max-width:100%; max-height:100%;
-  flex:none; overflow:hidden; background:#fff; user-select:none;
-  box-shadow:none;
-}
-.flashview-pptx-element { position:absolute; box-sizing:border-box; overflow:hidden; }
-.flashview-pptx-text {
-  display:flex; align-items:center; font-family:Arial,Helvetica,sans-serif;
-  line-height:1.24; overflow-wrap:anywhere; white-space:pre-wrap; padding:0;
-}
-.flashview-pptx-placeholder { border:1px dashed #c7cfdb; background:#f1f3f8; }
+.flashview-pptx-canvas { width:100%; min-height:0; flex:1 1 auto; background:#090a0e; }
 .flashview-pptx-state {
-  position:absolute; inset:0; display:flex; align-items:center;
-  justify-content:center; flex-direction:column; text-align:center;
-  background:#090a0e; color:white; padding:24px;
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  flex-direction:column; padding:24px; text-align:center; background:#090a0e;
+  color:#f6f7fb; z-index:10;
 }
-.flashview-pptx-state h1 { font:600 22px/1.25 system-ui,sans-serif; margin:20px 0 7px; }
-.flashview-pptx-state p { color:#b6bcc9; max-width:460px; font-size:14px; line-height:1.6; }
-.flashview-pptx-state button { margin-top:14px; padding:10px 19px; color:white; background:#303540; border:1px solid #535c67; border-radius:99px; cursor:pointer; }
+.flashview-pptx-state h1 { font-size:25px; margin:18px 0 6px; }
+.flashview-pptx-state p { max-width:420px; color:#b6bcc9; line-height:1.6; }
+.flashview-pptx-state button { border:1px solid #8e96a5; background:transparent; color:white; border-radius:99px; padding:10px 18px; }
 .flashview-pptx-controls {
-  z-index:4; position:absolute; bottom:42px; right:18px;
-  display:flex; align-items:center; gap:8px; padding:8px; border:1px solid #41434b;
-  border-radius:99px; background:rgba(18,20,26,.94); color:white;
+  z-index:2; position:absolute; bottom:20px; right:20px; display:flex;
+  align-items:center; gap:8px; background:rgba(18,20,26,.9); color:#fff;
+  border:1px solid #41434b; padding:8px; border-radius:99px;
 }
-.flashview-pptx-controls span { font:500 12px system-ui,sans-serif; padding:0 12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.flashview-pptx-controls button { min-height:36px; padding:0 11px; color:white; background:#303540; border:0; border-radius:99px; cursor:pointer; font-size:13px; }
+.flashview-pptx-controls span { font-size:12px; padding:0 12px; font-variant-numeric:tabular-nums; }
+.flashview-pptx-controls button { border:0; background:#34363f; color:white; border-radius:99px; min-height:37px; padding:0 12px; cursor:pointer; font-size:13px; }
 .flashview-pptx-controls button:disabled { opacity:.35; cursor:default; }
-.flashview-pptx-controls button:focus-visible { outline:2px solid white; outline-offset:2px; }
-.flashview-pptx-caption {
-  z-index:3; position:absolute; bottom:10px; left:18px; right:18px;
-  display:flex; justify-content:space-between; gap:12px;
-  color:#9ba6b6; font:11px system-ui,sans-serif;
+.flashview-pptx-controls button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+.flashview-pptx-warning {
+  position:absolute; left:20px; bottom:80px; max-width:450px; padding:10px 15px;
+  color:white; background:#672f35; border-radius:12px; z-index:3;
 }
-.flashview-pptx-image-progress { position:absolute; left:24px; top:22px;
-  padding:8px 12px; color:#fff; border-radius:14px; background:#222833;
-  font:12px system-ui,sans-serif; }
-@media(max-width:680px) {
-  .flashview-pptx-controls { left:10px; right:10px; bottom:40px; gap:4px; justify-content:center; }
+@media(max-width:600px) {
+  .flashview-pptx-controls { left:10px; right:10px; bottom:10px; justify-content:center; gap:5px; }
   .flashview-pptx-controls button { padding:0 9px; }
   .flashview-pptx-controls span { padding:0 5px; }
-  .flashview-pptx-caption { left:12px; right:12px; font-size:10px; }
 }
-
-/* Fullscreen elements live in the browser top layer. Never subtract toolbar
-   space or use a 16:9 assumption: the actual PPTX shape is measured in JS. */
-.flashview-pptx-presenter:fullscreen {
-  width:100vw; height:100vh; height:100dvh;
-  max-width:none; max-height:none; margin:0; padding:0; border:0;
-  background:#000;
-}
-.flashview-pptx-presenter:fullscreen .flashview-pptx-canvas {
-  width:100%; height:100%; min-height:0; padding:0; background:#000;
-}
-.flashview-pptx-presenter:fullscreen .flashview-pptx-slide {
-  box-shadow:none; margin:0;
-}
-.flashview-pptx-presenter:fullscreen .flashview-pptx-caption { display:none; }
-.flashview-pptx-slide img { -webkit-user-drag:none; user-select:none; }

@@ -201,6 +201,10 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
             size: file.size, complete: next === file.size,
           });
         }
+        // A duplicate finished-file notice is a retry, not a new download.
+        // Always receipt it, even if the previous receipt was lost.
+        if (next === file.size)
+          send(ws, { type: 'cache.progress.receipt', fileId: file.fileId, bytes: next });
       }
       return;
     }

@@ -1723,11 +1723,27 @@ test('host handover never sends a stale offline event; new host still receives t
         const raw = delivered.data;
         const headerLength = new DataView(new Uint8Array(raw).buffer).getUint16(0);
         const resultBytes = raw.slice(2 + headerLength);
-        return { staleOffline, matches: JSON.stringify(resultBytes) === JSON.stringify(bytes) };
+        const completion = JSON.stringify({
+          v: 1, type: 'cache.progress', fileId, bytes: bytes.length,
+        });
+        replacement.ws.send(completion);
+        const firstReceipt = await wait(replacement, 'cache.progress.receipt');
+        await wait(phone, 'cache.progress');
+        // Model a lost confirmation: sender never saw the receipt and
+        // resends the same whole-file message. The relay must re-receipt it.
+        replacement.ws.send(completion);
+        const retriedReceipt = await wait(replacement, 'cache.progress.receipt');
+        const acknowledged = firstReceipt.bytes === bytes.length &&
+          retriedReceipt.bytes === bytes.length &&
+          firstReceipt.fileId === fileId && retriedReceipt.fileId === fileId;
+        return { staleOffline, acknowledged,
+          matches: JSON.stringify(resultBytes) === JSON.stringify(bytes) };
       } finally {
         for (const ws of sockets) ws.close();
       }
-    })()`) as { staleOffline: number; matches: boolean };
+    })()`) as { staleOffline: number; matches: boolean; acknowledged: boolean };
+    assert.equal(result.acknowledged, true,
+      'Duplicate completion acknowledgments must receive idempotent relay receipts');
     assert.equal(result.staleOffline, 0,
       'An obsolete host socket cannot announce host.offline after the replacement comes online');
     assert.equal(result.matches, true, 'An uninterrupted relay handover must preserve original bytes');

@@ -298,6 +298,10 @@ export class ClassroomRoom extends DurableObject<Env> {
               size: file.size, complete: next === file.size,
             });
           }
+          // This acknowledgment is deliberately returned even if the relay
+          // already held the same cachedBytes. Lost receipts are safe to retry.
+          if (next === file.size)
+            send(ws, { type: 'cache.progress.receipt', fileId: file.fileId, bytes: next });
         }
         return;
       }

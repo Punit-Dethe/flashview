@@ -83,12 +83,19 @@ export function App() {
   const [phonePreviews, setPhonePreviews] = useState<Record<string, string>>({});
   const [hostAvailable, setHostAvailable] = useState(true);
   const hostFilesRef = useRef<PdfManifest[]>([]);
+  // Do not mistake "WebSocket.send returned" for "relay stored completion".
+  // The relay explicitly receipts an idempotent completion message; if its
+  // receipt is missed, the next low-frequency room sync will retry it.
   const completionAcks = useRef(new Set<string>());
+  const completionLastSent = useRef(new Map<string, number>());
+  const cacheProgressSnapshot = useRef(cacheProgress);
+  cacheProgressSnapshot.current = cacheProgress;
   const acknowledgeComplete = (fileId: string, bytes: number): void => {
     if (modeRef.current !== 'host' || !socket.connected || completionAcks.current.has(fileId)) return;
-    if (socket.send({ type: 'cache.progress', fileId, bytes })) {
-      completionAcks.current.add(fileId);
-    }
+    const now = Date.now();
+    if (now - (completionLastSent.current.get(fileId) ?? -Infinity) < 7000) return;
+    if (socket.send({ type: 'cache.progress', fileId, bytes }))
+      completionLastSent.current.set(fileId, now);
   };
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
   const previewLookups = useRef(new Set<string>());
@@ -337,7 +344,10 @@ export function App() {
     socket.onStatus = status => {
       setSocketStatus(status);
       if (status === 'connected') {
-        if (modeRef.current === 'host') completionAcks.current.clear();
+        if (modeRef.current === 'host') {
+          completionAcks.current.clear();
+          completionLastSent.current.clear();
+        }
         presentation.resume();
         if (modeRef.current === 'student') {
           // A file selected during mobile reconnect must be announced as
@@ -401,8 +411,14 @@ export function App() {
     // This is lightweight metadata, NOT a full PDF transfer.
     const syncTimer = setInterval(() => {
       if (!socket.connected || document.visibilityState !== 'visible') return;
-      if (modeRef.current === 'host') socket.send({ type: 'room.sync' });
-      else if (modeRef.current === 'student') {
+      if (modeRef.current === 'host') {
+        socket.send({ type: 'room.sync' });
+        // Only whole-file receipts; never add per-chunk relay metadata traffic.
+        for (const file of hostFilesRef.current) {
+          if (cacheProgressSnapshot.current[file.fileId]?.complete)
+            acknowledgeComplete(file.fileId, file.size);
+        }
+      } else if (modeRef.current === 'student') {
         socket.send({ type: 'file.sync' });
         // Retry only file announcements for which no server receipt arrived.
         for (const [id, entry] of filesOnPhone.current) {
@@ -412,6 +428,15 @@ export function App() {
     }, 20_000);
     socket.onMessage = message => {
       const type = message.type;
+      if (type === 'cache.progress.receipt' && modeRef.current === 'host' &&
+          typeof message.fileId === 'string' &&
+          typeof message.bytes === 'number') {
+        const file = hostFilesRef.current.find(file => file.fileId === message.fileId);
+        if (file && file.size === message.bytes) {
+          completionAcks.current.add(file.fileId);
+          completionLastSent.current.delete(file.fileId);
+        }
+      }
       if (type === 'room.state') {
         setStudents(Array.isArray(message.students) ? message.students as StudentInfo[] : []);
         const files = Array.isArray(message.files) ? message.files as PdfManifest[] : [];
@@ -625,6 +650,7 @@ export function App() {
       setDownloadSpeed({});
       hostFilesRef.current = [];
       completionAcks.current.clear();
+      completionLastSent.current.clear();
       transferSamples.current.clear();
       presentation.setRoom(newSession.code);
       socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });

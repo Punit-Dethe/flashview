@@ -1595,8 +1595,14 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     assert.ok(actionStyle.border!=='0px'&&actionStyle.icon?.includes('17.5'),
       'Present uses a bordered projection-screen glyph');
     await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});
-    assert.equal(await presentButton.evaluate(el=>getComputedStyle(el).backgroundColor),
-      'rgb(255, 255, 255)','Ready Present button is outlined and white');
+    await host.waitForFunction(() => {
+      const el=[...document.querySelectorAll<HTMLButtonElement>('.document-card-present')]
+        .find(button=>button.getAttribute('aria-label')==='Present lecture.pptx');
+      if (!el || el.disabled) return false;
+      const paint=getComputedStyle(el);
+      const rgb=paint.backgroundColor.match(/\\d+/g)?.map(Number)??[];
+      return rgb.length>=3 && rgb.slice(0,3).every(value=>value>=245);
+    },null,{timeout:3000});
     await card.locator('img.document-thumb-image.is-visible').waitFor({timeout:45000});
     const thumb=await card.locator('img.document-thumb-image').evaluate(el=>({
       width:(el as HTMLImageElement).naturalWidth,

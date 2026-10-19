@@ -5,6 +5,7 @@ import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
 import { packetChunksFromQuery, selectMissingChunkGroup } from './networkPacket';
 import { shouldReconnectForRangeFailure } from './transferRecovery';
 import { storageRetryDelay } from './storageRecovery';
+import { withStorageDeadline } from './storageWatchdog';
 
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
@@ -14,6 +15,7 @@ const MAX_BACKGROUND_REQUESTS = 16; // Each slot represents one network request,
 const DB_NAME = 'flashview-room-cache';
 const DB_VERSION = 2;
 const MAX_MEMORY_BYTES = 48 * 1024 * 1024;
+const STORAGE_DEADLINE_MS = 8_000;
 type ChunkRecord = { key: string; room: string; document: string; index: number; data: ArrayBuffer };
 type StorageRecovery = {
   file: PdfManifest; record: ChunkRecord; attempts: number;
@@ -25,7 +27,8 @@ export type CacheProgress = { fileId: string; bytes: number; size: number; compl
 let openDatabase: Promise<IDBDatabase> | null = null;
 function database(): Promise<IDBDatabase> {
   if (!openDatabase) {
-    openDatabase = new Promise<IDBDatabase>((resolve, reject) => {
+    let timedOut = false;
+    const pending = new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
@@ -40,14 +43,22 @@ function database(): Promise<IDBDatabase> {
           store.createIndex('room', 'room', { unique: false });
         }
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        // An open request cannot be aborted. If it completes after the
+        // watchdog rejected it, close that orphaned connection immediately.
+        if (timedOut) request.result.close();
+        else resolve(request.result);
+      };
       request.onerror = () => reject(request.error || new Error('Local document storage unavailable'));
-    }).catch(error => {
+    });
+    openDatabase = withStorageDeadline(pending, 'Open browser storage', STORAGE_DEADLINE_MS,
+      () => { timedOut = true; }).catch(error => {
+      // Do not pin a permanently rejected promise; a later retry may work.
       openDatabase = null;
       throw error;
     });
   }
-  return openDatabase!;
+  return openDatabase;
 }
 
 function completion(file: PdfManifest, indices: Set<number>): CacheProgress {
@@ -61,26 +72,33 @@ function completion(file: PdfManifest, indices: Set<number>): CacheProgress {
 
 async function readChunk(key: string): Promise<ArrayBuffer | null> {
   const db = await database();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction('chunks', 'readonly').objectStore('chunks').get(key);
+  const tx = db.transaction('chunks', 'readonly');
+  const pending = new Promise<ArrayBuffer | null>((resolve, reject) => {
+    const request = tx.objectStore('chunks').get(key);
     request.onsuccess = () => resolve((request.result as ChunkRecord | undefined)?.data ?? null);
     request.onerror = () => reject(request.error);
+    tx.onabort = () => reject(tx.error || Error('Browser storage read aborted'));
   });
+  return withStorageDeadline(pending, 'Read cached chunk', STORAGE_DEADLINE_MS,
+    () => { try { tx.abort(); } catch { /* Already settled. */ } });
 }
 async function saveChunk(record: ChunkRecord): Promise<void> {
   const db = await database();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('chunks', 'readwrite');
+  const tx = db.transaction('chunks', 'readwrite');
+  const pending = new Promise<void>((resolve, reject) => {
     tx.objectStore('chunks').put(record);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || Error('Browser storage write aborted'));
   });
+  await withStorageDeadline(pending, 'Persist cached chunk', STORAGE_DEADLINE_MS,
+    () => { try { tx.abort(); } catch { /* Already settled. */ } });
 }
 async function cachedIndices(room: string, fileId: string): Promise<Set<number>> {
   const db = await database();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction('chunks', 'readonly').objectStore('chunks')
+  const tx = db.transaction('chunks', 'readonly');
+  const pending = new Promise<Set<number>>((resolve, reject) => {
+    const request = tx.objectStore('chunks')
       .index('document').getAllKeys(IDBKeyRange.only(room + '/' + fileId));
     request.onsuccess = () => {
       const indices = (request.result as string[])
@@ -89,7 +107,10 @@ async function cachedIndices(room: string, fileId: string): Promise<Set<number>>
       resolve(new Set(indices));
     };
     request.onerror = () => reject(request.error);
+    tx.onabort = () => reject(tx.error || Error('Browser storage index lookup aborted'));
   });
+  return withStorageDeadline(pending, 'List cached chunks', STORAGE_DEADLINE_MS,
+    () => { try { tx.abort(); } catch { /* Already settled. */ } });
 }
 /**
  * Read an entire completed PDF from the teacher's local browser.
@@ -285,9 +306,13 @@ export class RoomPdfCache {
   private indexSet(fileId: string): Promise<Set<number>> {
     let pending = this.indices.get(fileId);
     if (!pending) {
-      pending = cachedIndices(this.roomId, fileId).catch(() => {
+      pending = cachedIndices(this.roomId, fileId).catch(error => {
         this.warning();
-        return new Set<number>();
+        // A timeout says NOTHING about whether the original chunks exist.
+        // Discard the failed lookup and retry later; treating it as an empty
+        // cache would retransmit existing bytes and mask the storage problem.
+        this.indices.delete(fileId);
+        throw error;
       });
       this.indices.set(fileId, pending);
     }
@@ -718,7 +743,17 @@ export class RoomPdfCache {
               this.jobs.delete(fileId); continue;
             }
             if (Date.now() < (this.cooldown.get(fileId) ?? 0)) continue;
-            const cached = await this.indexSet(fileId);
+            let cached: Set<number>;
+            try {
+              cached = await this.indexSet(fileId);
+            } catch {
+              // An IndexedDB lookup timeout is file-local. Other students
+              // must continue, and a later query may succeed. Never restart
+              // the shared relay socket or assume existing bytes are absent.
+              this.cooldown.set(fileId, Date.now() + 4500);
+              retryAfter = 4500;
+              continue;
+            }
             if (this.stopped) return;
             const total = Math.ceil(file.size / CHUNK_BYTES);
             if (cached.size === total) {

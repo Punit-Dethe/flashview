@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
+import { SiteHeader } from './SiteHeader';
 import { assignParticipantColors } from './participantColors';
 import { MAX_FILE_BYTES, MAX_STUDENT_FILES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { isPdfName, isPowerPointName, safeDownloadName } from '../shared/fileTypes';
@@ -233,7 +234,7 @@ export function App() {
       }).catch(error => {
         // Don't permanently silence a transient browser/image decode failure.
         // Only one delayed retry; never let retries affect the transfer queue.
-        console.warn('[FlashView] PPTX thumbnail attempt failed:', error);
+        console.warn('[WarpView] PPTX thumbnail attempt failed:', error);
         if (attempt === 0 && previewRoom.current === room) {
           setTimeout(() => {
             if (previewRoom.current === room)
@@ -407,7 +408,7 @@ export function App() {
       setRetryingBlockedStorage(false);
     };
     presentation.onStalled = () => setError(
-      'File transfer stalled. FlashView is reconnecting and retrying automatically; keep both devices open.',
+      'File transfer stalled. WarpView is reconnecting and retrying automatically; keep both devices open.',
     );
     // On mobile, background tabs may have their timers and connections suspended.
     // Returning to the tab checks the socket and resumes it if necessary.
@@ -922,25 +923,7 @@ export function App() {
     <div className={'app premium-app' + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
       (mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending') ? ' is-student-room' : '')}>
       {mode !== 'host' && !(mode === 'student' && joinState !== 'idle' && joinState !== 'rejected') && (
-        <header className="site-header reference-nav">
-          <div className="brand" onClick={startFresh} role="button" tabIndex={0}
-            onKeyDown={e=>{if(e.key==='Enter')startFresh();}} aria-label="FlashView home">
-            <span className="reference-logo-mark" aria-hidden="true">
-              <svg viewBox="0 0 26 26"><rect width="26" height="26" rx="8" fill="#0e0f14"/>
-                <path d="M14.5 4 7 14.5h5L10.5 22 19 11h-5z" fill="#fff"/></svg>
-            </span>
-            <span>flashview</span>
-          </div>
-          <nav aria-label="Site navigation">
-            <a href="#how">How it works</a>
-            <a href="#privacy">Privacy</a>
-            <a href="#how">Share any file</a>
-          </nav>
-          <button type="button" className="primary-button reference-pill nav-start"
-            onClick={()=>document.getElementById('start-room')?.scrollIntoView({behavior:'smooth',block:'center'})}>
-            Start a room
-          </button>
-        </header>
+        <SiteHeader landing={mode === 'welcome'} onHome={startFresh}/>
       )}
       <main className="app-content">
         {mode === 'welcome' && (
@@ -1031,7 +1014,7 @@ export function App() {
               </div>
             </section>
             <footer className="reference-footer">
-              <span>Flashview. An easier way to present.</span>
+              <span>WarpView. An easier way to present.</span>
               <span>Made for classrooms and conference rooms</span>
             </footer>
           </div>
@@ -1045,7 +1028,7 @@ export function App() {
                 <div className="mobile-host-toolbar">
                   <div className="mobile-host-identity">
                     <strong className="mobile-host-code">{hostSession.code}</strong>
-                    <span className="mobile-host-byline">by flashview</span>
+                    <span className="mobile-host-byline">by warpview</span>
                   </div>
                   <button type="button" className="mobile-host-config-toggle"
                     aria-expanded={mobileHostConfigOpen} aria-controls="mobile-host-config-panel"
@@ -1058,7 +1041,7 @@ export function App() {
                   </button>
                 </div>
                 <div className="mobile-host-config-panel" id="mobile-host-config-panel">
-                  <div className="sidebar-brand" aria-label="FlashView">flashview</div>
+                  <div className="sidebar-brand" aria-label="WarpView">warpview</div>
                 <section className="room-card premium-invite" aria-label="Live room QR code">
                   <div className="qr-side">
                     <div className="qr-plate">
@@ -1066,7 +1049,7 @@ export function App() {
                     </div>
                   </div>
                   <div className="invite-content">
-                    <div className="room-code-label">Or enter this code on FlashView</div>
+                    <div className="room-code-label">Or enter this code on WarpView</div>
                     <div className="room-code">{hostSession.code}</div>
                     <div className="invite-actions">
                       <button type="button" className="outline-button reference-pill"
@@ -1121,7 +1104,7 @@ export function App() {
                     <div className="storage-blocked" role="alert" data-testid="storage-blocked">
                       <strong>Browser storage is full — {blockedStorageFiles.length} {blockedStorageFiles.length === 1 ? 'file' : 'files'} paused.</strong>
                       <p>Free browser or device space, then retry saving. Keep senders connected.
-                        Do not clear FlashView site data during this room; cached chunks may be lost.</p>
+                        Do not clear WarpView site data during this room; cached chunks may be lost.</p>
                       <button type="button" disabled={retryingBlockedStorage} onClick={() => {
                         setRetryingBlockedStorage(true);
                         presentation.retryBlockedStorage();
@@ -1203,7 +1186,7 @@ export function App() {
               <div className="student-drive">
                 <header className="student-drive-header">
                   <div className="student-drive-header-copy">
-                    <div className="student-drive-logo">flashview<span>.</span></div>
+                    <div className="student-drive-logo">warpview<span>.</span></div>
                     <span className="student-drive-room">Room {currentRoomCode || '••••••'}</span>
                   </div>
                   <button type="button" className="student-leave-button" onClick={startFresh}
@@ -1256,7 +1239,7 @@ export function App() {
               <div className="eyebrow">END ROOM / {hostSession.code}</div>
               <h2 id="end-title">End this room?</h2>
               <p>This will close all presentation tabs, disconnect students, and delete the files
-                and previews FlashView has cached on <strong>this computer</strong> for this room.</p>
+                and previews WarpView has cached on <strong>this computer</strong> for this room.</p>
               <p>Original files on students' devices won't be touched. This action cannot be undone.</p>
               <label className="end-check">
                 <input type="checkbox" checked={endAcknowledged}
@@ -1276,7 +1259,7 @@ export function App() {
         {error && <div className="global-error" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
       </main>
       <PerfPanel/>
-      <footer className="site-footer"><span>FLASHVIEW / AN OPEN CLASSROOM PROJECT</span><span>Designed for the time between sharing and seeing.</span></footer>
+      <footer className="site-footer"><span>WARPVIEW / AN OPEN CLASSROOM PROJECT</span><span>Designed for the time between sharing and seeing.</span></footer>
     </div>
   );
 }

@@ -2027,3 +2027,62 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
     child.kill('SIGTERM');
   }
 });
+
+test('a stalled IndexedDB index query times out and retries without losing a phone file', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  const pdf = makePdf(750);
+  try {
+    await host.addInitScript(() => {
+      const getAllKeys = IDBIndex.prototype.getAllKeys;
+      let blocked = false;
+      IDBIndex.prototype.getAllKeys = function (...args) {
+        if (!blocked && this.name === 'document') {
+          blocked = true;
+          (window as typeof window & { __blockedIndexOnce?: boolean }).__blockedIndexOnce = true;
+          // Deliberately never notify onsuccess/onerror. The transaction
+          // itself is allowed to finish to reproduce the browser edge case.
+          return { onsuccess: null, onerror: null } as unknown as IDBRequest<IDBValidKey[]>;
+        }
+        return getAllKeys.apply(this, args);
+      };
+    });
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const code = (await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button', { name: /Join room/ }).click();
+    await student.locator('.student-drive').waitFor();
+    await student.locator('input[type=file]').setInputFiles({
+      name: 'index-timeout.pdf', mimeType: 'application/pdf', buffer: pdf,
+    });
+    await host.waitForFunction(() =>
+      (window as typeof window & { __blockedIndexOnce?: boolean }).__blockedIndexOnce === true);
+    const row = host.locator('.document-row').filter({ hasText: 'index-timeout.pdf' });
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 35000 });
+    const actual = await host.evaluate(async room => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('flashview-room-cache');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      return new Promise<Array<{index: number; data: ArrayBuffer}>>((resolve, reject) => {
+        const req = db.transaction('chunks', 'readonly').objectStore('chunks').index('room')
+          .getAll(IDBKeyRange.only(room));
+        req.onsuccess = () => resolve(req.result as Array<{index: number; data: ArrayBuffer}>);
+        req.onerror = () => reject(req.error);
+      });
+    }, code);
+    actual.sort((a, b) => a.index - b.index);
+    assert.equal(Buffer.concat(actual.map(row => Buffer.from(row.data))).equals(pdf), true,
+      'The resumed transfer must persist every original byte');
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

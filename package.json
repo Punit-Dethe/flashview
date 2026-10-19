@@ -13,7 +13,7 @@
     "build": "tsc --noEmit && vite build",
     "start": "node --import tsx src/server/index.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:browser": "node --import tsx --test tests/browser.smoke.ts",
+    "test:browser": "node --import tsx --test tests/browser.smoke.ts tests/transferRecovery.browser.ts",
     "dev:cloudflare": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "check:cloudflare": "wrangler deploy --dry-run --outdir .wrangler/dry-run",

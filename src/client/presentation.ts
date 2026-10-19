@@ -62,7 +62,7 @@ export class PresentationHost {
     this.cache = null;
     if (cache) await cache.clear();
   }
-  resume(): void { this.cache?.resume(); }
+  resume(): void { this.cache?.connectionRestored(); }
   retryBlockedStorage(): void { this.cache?.retryBlockedStorage(); }
   /** Reuse the first-slide image already stored for the presenter, without extra PDF requests. */
   async getPreview(fileId: string): Promise<string | null> {

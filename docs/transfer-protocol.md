@@ -37,6 +37,19 @@ Control messages are UTF-8 JSON over WebSocket and include `{ "v": 1, "type": ".
 
 The relay's role is message validation and **routing**, not processing or retaining the original document.
 
+On foreground/file-picker return, a two-second liveness probe checks a seemingly
+open socket or unfinished join. Missing replies retire that socket locally;
+reconnection does not wait for a close acknowledgement from a dead network.
+Repeated foreground events share the same deadline. Ordinary background outage
+retries retain exponential backoff; the two seconds are a detection deadline,
+not a guarantee of network reconnection time.
+
+After sender resume, the relay sends the restored file manifest **before**
+replaying that sender's still-outstanding `range.request` messages. Request IDs,
+offsets and original deadlines stay unchanged, cancelled requests stay cancelled,
+and duplicate/late binary replies cannot satisfy a different request. Receivers
+retain committed chunks and release old network retry delays after authentication.
+
 ## Binary file data
 
 Byte payloads use a compact frame built by `encodeRangePacket`:

@@ -208,6 +208,12 @@ export class ClassroomRoom extends DurableObject<Env> {
           type: previous.approved ? 'join.resumed' : 'join.pending',
           roomCode: cfg.code, resumeToken: previous.token, files: ownFiles,
         });
+        // Recover requests sent into the previous half-open phone socket.
+        // Keep IDs/deadlines: duplicate or late responses remain harmless.
+        for (const [requestId, range] of this.ranges) {
+          if (range.senderId === previous.id && this.files.get(range.fileId)?.status === 'approved')
+            send(ws, { type: 'range.request', requestId, fileId: range.fileId, begin: range.begin, end: range.end });
+        }
         this.sendHost({
           type: 'student.updated',
           student: { id: previous.id, name: previous.name, approved: previous.approved },

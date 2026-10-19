@@ -511,7 +511,8 @@ export function App() {
         if (typeof message.roomCode === 'string') setCurrentRoomCode(message.roomCode);
         setJoinState('accepted');
         setHostAvailable(true);
-        setError('');
+        // Joining can finish after a quick file selection. Preserve local
+        // validation errors (for example an eleventh file) across that reply.
         socket.send({ type: 'file.sync' });
         if (Array.isArray(message.files)) reconcileFiles(message.files as PdfManifest[]);
         else socket.send({ type: 'file.sync' });

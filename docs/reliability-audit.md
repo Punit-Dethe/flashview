@@ -1,6 +1,6 @@
 # FlashView — Reliability Audit Tracker
 
-**Status:** Living engineering document · **Last updated:** 19 October 2026 · **Baseline audit:** `0581111e2` · **Latest verified main:** [`e717844`](https://github.com/Punit-Dethe/flashview/commit/e717844b471952b09b9acef9263bada935bb6d24) (full post-merge CI green). [#32](https://github.com/Punit-Dethe/flashview/pull/32) is in progress and must pass CI before merge.
+**Status:** Living engineering document · **Last updated:** 19 October 2026 · **Baseline audit:** `0581111e2` · **Latest merged fix:** [`30f011b`](https://github.com/Punit-Dethe/flashview/commit/30f011b2931d7d3891466897e0ee262dba93eb9e) (PR #32's full CI passed; post-merge main CI was started). The original audit remains at 9 resolved, 3 partial and 18 open/unverified.
 
 This document tracks the original **30 reliability findings** (H1–H10, M1–M14, L1–L6). It is not a new audit, and it does **not** count PRs as bugs: one PR may fix multiple symptoms; several PRs may address one finding.
 
@@ -30,7 +30,7 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 | H7 | **Resolved** | Lost completion acknowledgments could leave student-side Done/progress stale. | Add relay-receipted, idempotent completion notices and replay until receipted. | [`2ceaa43`](https://github.com/Punit-Dethe/flashview/commit/2ceaa43) |
 | H8 | **Resolved** | Classroom could expire two hours after *creation* despite continued use. | Node and Durable Object now expire after the latest authenticated host activity; test alarm/recovery behavior. | [#23](https://github.com/Punit-Dethe/flashview/pull/23) |
 | H9 | **Resolved** | Selecting an eleventh file produced an impossible phantom upload when the sender already had ten shares. | Enforce the existing ten-file-per-sender limit in picker and both relays; reject before creating a local card. | [`6b53c40`](https://github.com/Punit-Dethe/flashview/commit/6b53c40) |
-| H10 | **Partial** | Large completed files amplified memory through bulk IndexedDB reads and duplicate full-size JavaScript buffers. | Cursor-based sequential reconstruction [#28](https://github.com/Punit-Dethe/flashview/pull/28); [#32](https://github.com/Punit-Dethe/flashview/pull/32) (in progress) builds verified browser Blob parts for download without a second full-size JS buffer. **Left:** renderer allocations, real-device 50–200 MiB memory tests and pressure UX. | [#28](https://github.com/Punit-Dethe/flashview/pull/28), [#32](https://github.com/Punit-Dethe/flashview/pull/32) |
+| H10 | **Partial** | Large completed files amplified memory through bulk IndexedDB reads and duplicate full-size JavaScript buffers. | Cursor-based sequential reconstruction [#28](https://github.com/Punit-Dethe/flashview/pull/28); [#32](https://github.com/Punit-Dethe/flashview/pull/32) merged after full CI: downloads now build verified Blob parts without a second full-size JS buffer. **Left:** renderer allocations, real-device 50–200 MiB memory tests and pressure UX. | [#28](https://github.com/Punit-Dethe/flashview/pull/28), [#32](https://github.com/Punit-Dethe/flashview/pull/32) |
 
 ## Medium priority
 

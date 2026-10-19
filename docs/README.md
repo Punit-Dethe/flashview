@@ -10,6 +10,7 @@ This directory is the **current, code-backed documentation** for FlashView. The 
 | [Deployment](./deployment.md) | Operators | Node, HTTPS/WSS, Cloudflare config and smoke checks |
 | [Security and reliability](./security-and-reliability.md) | Developers, operators | Trust model, failure recovery and production caveats |
 | [Reliability audit tracker](./reliability-audit.md) | Maintainers | Original 30-issue audit, verified fixes, partial work and next priorities |
+| [Foreground reconnect proposal](./reconnection-design-proposal.md) | Maintainers | Research, alternatives and proposed immediate-resume policy; not shipped behavior |
 | [Original engineering plan (archive)](./archive/initial-engineering-plan.md) | Historical reference | Outdated PDF-first design; **do not use as an implementation specification** |
 
 ## Documentation conventions

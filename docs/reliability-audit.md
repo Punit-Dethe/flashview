@@ -97,7 +97,7 @@ the unmerged architecture changes separate while this recovery fix is validated.
 Validation of recovery commit `b30c32c`: 48 unit/protocol tests passed; complete
 Chromium browser suites passed on Node (22/22) and Cloudflare (22/22); Firefox
 passed the interrupted-transfer scenario. On the isolated live Worker, two
-mid-file interruptions recovered in 3.815 and 3.865 seconds with matching cached
+mid-file interruptions reached renewed cache progress in 3.815 and 3.865 seconds with matching cached
 SHA-256; the existing main deployment failed the same simulated picker-return
 check before promotion. Three alternating live 20 MiB binary transfers per
 deployment gave median cache completion of 4.249 seconds before and 4.198 seconds
@@ -105,6 +105,12 @@ with the patch, all hash-verified. This small same-PC comparison shows comparabl
 ordinary throughput; it does not measure physical phone/Wi-Fi reliability. The
 cache-repair test also now releases future reads when ending its artificial
 pause, removing a race in the test harness itself.
+
+Timing clarification: those interruption-to-progress figures include a 600 ms
+injected pre-return outage, as well as the probe and reconnect work. They are not
+isolated foreground-to-reconnect measurements. See the separate
+[foreground reconnect proposal](./reconnection-design-proposal.md) for the
+researched immediate-attempt policy and measurement plan; it is not deployed yet.
 
 ## How to keep this tracker current
 

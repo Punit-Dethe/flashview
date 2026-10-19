@@ -22,7 +22,7 @@ async function runningServer() {
   const port = await unusedPort();
   const useCloudflare = process.env.FLASHVIEW_BACKEND === 'cloudflare';
   const child = spawn(process.execPath, useCloudflare
-    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--port', String(port), '--ip', '127.0.0.1']
+    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--inspector-port', '0', '--port', String(port), '--ip', '127.0.0.1']
     : ['--import', 'tsx', 'src/server/index.ts'], {
     cwd: process.cwd(),
     env: { ...process.env, PORT: String(port), NODE_ENV: 'test', BROWSER: 'none' },

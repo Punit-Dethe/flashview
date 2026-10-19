@@ -73,7 +73,7 @@ async function unusedPort(): Promise<number> {
 async function startServer(): Promise<{ port: number; child: ChildProcessWithoutNullStreams }> {
   const port = await unusedPort();
   const child = spawn(process.execPath, process.env.FLASHVIEW_BACKEND === 'cloudflare'
-    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--port', String(port), '--ip', '127.0.0.1']
+    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--inspector-port', '0', '--port', String(port), '--ip', '127.0.0.1']
     : ['--import', 'tsx', 'src/server/index.ts'], {
     cwd: process.cwd(),
     env: { ...process.env, PORT: String(port), NODE_ENV: 'test' },

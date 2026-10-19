@@ -94,6 +94,18 @@ using `RECOVERY_ORIGIN`. These simulations cannot establish phone/network timing
 or prove the cause of every reported large-file stall. Keep transfer tuning and
 the unmerged architecture changes separate while this recovery fix is validated.
 
+Validation of recovery commit `b30c32c`: 48 unit/protocol tests passed; complete
+Chromium browser suites passed on Node (22/22) and Cloudflare (22/22); Firefox
+passed the interrupted-transfer scenario. On the isolated live Worker, two
+mid-file interruptions recovered in 3.815 and 3.865 seconds with matching cached
+SHA-256; the existing main deployment failed the same simulated picker-return
+check before promotion. Three alternating live 20 MiB binary transfers per
+deployment gave median cache completion of 4.249 seconds before and 4.198 seconds
+with the patch, all hash-verified. This small same-PC comparison shows comparable
+ordinary throughput; it does not measure physical phone/Wi-Fi reliability. The
+cache-repair test also now releases future reads when ending its artificial
+pause, removing a race in the test harness itself.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

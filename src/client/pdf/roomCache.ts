@@ -794,7 +794,7 @@ export class RoomPdfCache {
               this.jobs.delete(fileId); continue;
             }
             if (Date.now() < (this.cooldown.get(fileId) ?? 0)) continue;
-            let cached: Set<number>;
+            let cached: CachedChunkIndex;
             try {
               cached = await this.indexSet(file);
             } catch {

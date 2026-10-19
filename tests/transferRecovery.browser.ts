@@ -57,6 +57,7 @@ async function digest(page: Page, room: string, name: string): Promise<string> {
 
 test('suspended file picker and repeated mid-file disconnects recover promptly with exact cached bytes', { timeout: 90000 }, async t => {
   const remote = process.env.RECOVERY_ORIGIN;
+  const policyQuery = process.env.RECOVERY_POLICY ? 'resumePolicy=' + encodeURIComponent(process.env.RECOVERY_POLICY) + '&' : '';
   const { origin, child } = remote ? { origin: new URL(remote).origin, child: null } : await backend();
   const engine = process.env.FLASHVIEW_BROWSER === 'firefox' ? firefox : chromium;
   const browser = await engine.launch({ headless: true });
@@ -87,6 +88,12 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
           super(...args);
           window.__sockets.push(this);
           this.addEventListener('message', event => {
+            if (window.__sockets[0] === this && location.search.includes('loseJoinAck=1') &&
+                typeof event.data === 'string' && JSON.parse(event.data).type === 'join.accepted') {
+              window.__lostJoinAck = true;
+              event.stopImmediatePropagation();
+              return;
+            }
             if (this.__dead) event.stopImmediatePropagation();
           });
         }
@@ -104,22 +111,35 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
         return blob;
       };
     }`);
-    await host.goto(origin);
+    await host.goto(origin + '/?' + policyQuery);
     await host.getByRole('button', { name: /Create a room/ }).click();
     await host.locator('.connection.connected').waitFor();
     const code = (await host.locator('.room-code').innerText()).trim();
-    await student.goto(origin);
+    await student.goto(origin + '/?' + policyQuery + 'loseJoinAck=1');
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await student.locator('.student-drive').waitFor();
+    await student.waitForFunction('window.__lostJoinAck === true');
+    // The picker is disabled until admission. First recover a backgrounded
+    // initial join whose acknowledgement was lost, retaining its identity.
+    await student.evaluate(`{
+      document.dispatchEvent(new Event('freeze'));
+      document.dispatchEvent(new Event('resume'));
+    }`);
     // Simulate suspension inside the native picker before choosing a file.
+    const chooserReady = student.waitForEvent('filechooser');
+    await student.locator('.student-add-fab').click();
+    const chooser = await chooserReady;
     await student.evaluate(`window.__sockets.at(-1).__dead = true`);
-    await student.locator('input[type=file]').setInputFiles({
+    await chooser.setFiles({
       name: 'picker.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(768 * 1024, 73),
     });
     const first = host.locator('.document-row').filter({ hasText: 'picker.bin' });
     await first.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 6500 });
     assert.equal(await digest(host, code, 'picker.bin'), createHash('sha256').update(Buffer.alloc(768 * 1024, 73)).digest('hex'));
+    assert.equal(await host.locator('.participant-row').count(), 1,
+      'Losing the first join acknowledgement must not create a ghost participant');
+    t.diagnostic('Initial picker recovery events: ' + JSON.stringify(trace.slice(0, 18)));
     await host.getByRole('button', { name: /End (room|session)/ }).click();
     await host.getByRole('checkbox', { name: /I understand/ }).check();
     await host.getByRole('button', { name: 'End & clear cache' }).click();
@@ -127,7 +147,7 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
     await host.getByRole('button', { name: /Create a room/ }).click();
     await host.locator('.connection.connected').waitFor();
     const nextCode = (await host.locator('.room-code').innerText()).trim();
-    await student.goto(origin);
+    await student.goto(origin + '/?' + policyQuery);
     await student.locator('#code').fill(nextCode);
     await student.getByRole('button', { name: /Join room/ }).click();
     await student.locator('.student-drive').waitFor();
@@ -144,14 +164,40 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
       const started = Date.now();
       await student.evaluate(`{
         window.__sockets.at(-1).__dead = true;
+        document.dispatchEvent(new Event('freeze'));
       }`);
       // Let all phone reads finish against the dead socket. The receiver's
       // next window of requests is now stranded at the relay, not in JS reads.
       await delay(600);
-      await student.evaluate(`window.dispatchEvent(new Event('focus'))`);
+      const returned = Date.now();
+      const resume = await student.evaluate(`(() => {
+        const before = window.__sockets.length;
+        const began = performance.now();
+        document.dispatchEvent(new Event('resume'));
+        window.dispatchEvent(new Event('focus'));
+        window.dispatchEvent(new Event('pageshow'));
+        return { newConnections: window.__sockets.length - before, handlerMs: performance.now() - began };
+      })()`);
       await host.waitForFunction(previous => Number(document.querySelector('.cache-ring')?.getAttribute('aria-valuenow')) > previous,
         before, { timeout: 6500 });
       t.diagnostic('Mid-file recovery ' + (round + 1) + ': ' + (Date.now() - started) + ' ms');
+      t.diagnostic('Return to persisted progress ' + (round + 1) + ': ' + (Date.now() - returned) + ' ms');
+      t.diagnostic('Return handler: ' + JSON.stringify(resume));
+    }
+    // Also return from a healthy picker without adding another file. Recovery
+    // must preserve the active transfer and not create a duplicate file card.
+    const healthyChooserReady = student.waitForEvent('filechooser');
+    await student.locator('.student-add-fab').click();
+    await (await healthyChooserReady).setFiles([]);
+    if (process.env.RECOVERY_POLICY !== 'probe') {
+      const hostReconnect = host.waitForEvent('websocket');
+      await host.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        window.dispatchEvent(new Event('online'));
+        Reflect.deleteProperty(document, 'visibilityState');
+        window.dispatchEvent(new Event('focus'));
+      });
+      await hostReconnect;
     }
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 30000 });
     assert.equal(await digest(host, nextCode, 'large.bin'), createHash('sha256').update(bytes).digest('hex'));

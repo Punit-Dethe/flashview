@@ -223,7 +223,9 @@ export class ClassroomRoom extends DurableObject<Env> {
       if (this.students().length >= MAX_STUDENTS) return void send(ws, { type: 'error', message: 'Room is full' });
       const approved = cfg.autoApprove === true;
       const newSession: ResumeSession = {
-        id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved, token: token(32),
+        id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved,
+        token: typeof msg.resumeToken === 'string' && /^[a-f0-9]{64}$/.test(msg.resumeToken)
+          ? msg.resumeToken : token(32),
       };
       this.sessions.set(newSession.token, newSession);
       await this.persistSessions();

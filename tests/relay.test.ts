@@ -89,6 +89,38 @@ async function startServer(): Promise<{ port: number; child: ChildProcessWithout
   throw new Error('Server never started: ' + output);
 }
 
+test('retry before the first join acknowledgement preserves one pending student and approval', { timeout: 20000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken });
+    peers.push(host);
+    await host.wait('room.state');
+    const resumeToken = 'ab'.repeat(32);
+    const phone = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken });
+    peers.push(phone);
+    // Intentionally don't use any capability from the first acknowledgement.
+    const pending = await host.wait('student.pending');
+    const replacement = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken });
+    peers.push(replacement);
+    assert.equal((await replacement.wait('join.pending')).resumeToken, resumeToken);
+    host.send({ type: 'room.sync' });
+    const state = await host.wait('room.state');
+    const students = state.students as Array<{ id: string; approved: boolean }>;
+    assert.equal(students.length, 1);
+    assert.equal(students[0].approved, false);
+    assert.equal(students[0].id, (pending.student as { id: string }).id);
+    host.send({ type: 'student.accept', studentId: students[0].id });
+    await replacement.wait('join.accepted');
+  } finally {
+    for (const peer of peers) peer.close();
+    child.kill('SIGTERM');
+  }
+});
+
 test('phone takeover replays only its outstanding uncancelled byte requests after restoring its manifest', { timeout: 20000 }, async () => {
   const { port, child } = await startServer();
   const peers: TestPeer[] = [];

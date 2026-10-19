@@ -30,6 +30,11 @@ export class RoomSocket {
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private openingSince = 0;
   private heartbeatPaused = false;
+  private reconnectOnWake = false;
+  private foregroundAttempt: WebSocket | null = null;
+  // Reversible same-deployment A/B control, like the existing packet/window
+  // experiments. No UI setting, identity change, or file-content logging.
+  private immediateResume = true;
   private wakeTimeout: ReturnType<typeof setTimeout> | null = null;
   onMessage: (message: ServerMessage) => void = () => {};
   onStatus: (status: SocketStatus) => void = () => {};
@@ -38,8 +43,17 @@ export class RoomSocket {
     this.stopConnection();
     this.stopped = false;
     this.identity = { ...identity };
+    this.immediateResume = new URLSearchParams(window.location.search).get('resumePolicy') !== 'probe';
+    if (identity.role === 'student' && typeof identity.resumeToken !== 'string') {
+      // Know the resume capability before sending hello, so losing the FIRST
+      // acknowledgement cannot turn an immediate retry into a second student.
+      this.identity.resumeToken = Array.from(crypto.getRandomValues(new Uint8Array(32)),
+        byte => byte.toString(16).padStart(2, '0')).join('');
+    }
     this.retryCount = 0;
     this.heartbeatPaused = false;
+    this.reconnectOnWake = false;
+    this.foregroundAttempt = null;
     this.open();
   }
 
@@ -54,7 +68,10 @@ export class RoomSocket {
   }
 
   /** The system file picker may suspend a mobile webview without a visibility event. */
-  pauseHeartbeat(): void {
+  pauseHeartbeat(frozen = false): void {
+    // A phone picker/background interval can invalidate an apparently OPEN
+    // socket. Receiver tab switches alone must not interrupt healthy transfers.
+    this.reconnectOnWake ||= frozen || this.identity?.role === 'student';
     this.heartbeatPaused = true;
     this.stopHeartbeat();
   }
@@ -84,9 +101,20 @@ export class RoomSocket {
   }
 
   /** Call when returning from another tab or when internet access resumes. */
-  wake(): void {
+  wake(reason: 'focus' | 'online' = 'focus'): void {
     if (this.stopped || !this.identity) return;
+    const suspended = this.reconnectOnWake;
+    this.reconnectOnWake = false;
     this.heartbeatPaused = false;
+    if (this.immediateResume && (suspended || reason === 'online')) {
+      // One new attempt for the return, without a serial old-socket probe.
+      // Coalesce online/focus/pageshow/change events against that attempt.
+      if (!suspended && this.foregroundAttempt && this.ws === this.foregroundAttempt && !this.authenticated) return;
+      this.restartStalledTransfer();
+      this.foregroundAttempt = this.ws;
+      return;
+    }
+    if (this.foregroundAttempt && this.ws === this.foregroundAttempt && !this.authenticated) return;
     // pauseHeartbeat already discarded any suspended deadline. Repeated focus,
     // pageshow and file-change events must not postpone the new probe forever.
     this.startHeartbeat();

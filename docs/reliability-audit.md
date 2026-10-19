@@ -81,9 +81,10 @@ real-device validation is still needed, not grounds to mark those scenarios fixe
 
 | New ID | Status | Reproduced failure | Targeted correction |
 | --- | --- | --- | --- |
-| N7 | **In progress** | Repeated foreground events reset the 12-second probe; heartbeat/authentication timeouts then depend on an eventual WebSocket close event. | Keep one foreground probe with a two-second deadline, retire obsolete sockets locally, and preserve room/resume credentials. Healthy sockets remain in use. |
+| N7 | **In progress** | Repeated foreground events reset the 12-second probe; heartbeat/authentication timeouts then depend on an eventual WebSocket close event. | Retire obsolete sockets locally. Follow-up removes the probe wait after recorded sender suspension, freeze or network restoration; duplicate signals reuse one attempt. Ordinary focus and healthy receiver tab switches keep their connection. |
 | N8 | **In progress** | When a replacement phone socket authenticates before the old socket closes, outstanding byte requests remain stranded on the old connection. | Both relays replay that sender's outstanding, uncancelled requests after its restored manifest, retaining request IDs and deadlines. The receiver clears old network backoff on authenticated reconnection. |
 | N9 | **In progress** | A delayed join acknowledgement erases a file-selection validation error, including the ten-file limit warning. | Keep local validation errors when a join/resume response arrives after selection. |
+| N10 | **In progress** | Losing the first join acknowledgement can make a replacement socket join as a second participant. | Generate the private resume capability before first hello; both relays adopt it. Verify pending approval, one participant and cached bytes across first-acknowledgement loss. |
 
 `tests/socketRecovery.test.ts` reproduces N7 with a socket that never acknowledges
 closure. `tests/transferRecovery.browser.ts` reproduces N8 with a blackholed phone
@@ -109,8 +110,11 @@ pause, removing a race in the test harness itself.
 Timing clarification: those interruption-to-progress figures include a 600 ms
 injected pre-return outage, as well as the probe and reconnect work. They are not
 isolated foreground-to-reconnect measurements. See the separate
-[foreground reconnect proposal](./reconnection-design-proposal.md) for the
-researched immediate-attempt policy and measurement plan; it is not deployed yet.
+[foreground reconnect decision](./reconnection-design-proposal.md) and its
+[two-policy evaluation](./reconnection-evaluation.md). The selected implementation
+initiates replacement immediately after recorded sender suspension, freeze or
+network restoration, coalesces return events, and preserves healthy receiver
+focus. Researching twelve alternatives did not mean trialling all twelve.
 
 ## How to keep this tracker current
 

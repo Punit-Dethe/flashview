@@ -154,7 +154,8 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       ws, id: randomUUID(), role: 'student', room,
       name: acceptableText(msg.name, 32) || 'Student', approved,
     };
-    const resumeToken = randomToken(32);
+    const resumeToken = typeof msg.resumeToken === 'string' && /^[a-f0-9]{64}$/.test(msg.resumeToken)
+      ? msg.resumeToken : randomToken(32);
     room.sessions.set(resumeToken, { id: peer.id, token: resumeToken, name: peer.name, approved });
     room.students.set(peer.id, peer);
     connections.set(ws, peer);

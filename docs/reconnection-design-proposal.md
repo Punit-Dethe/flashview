@@ -1,10 +1,12 @@
 # Foreground reconnection: research and proposed decision
 
-**19 October 2026 — proposal, not deployed behavior.** Code examined at
-`13d8161`. The live recovery patch still probes an apparently open connection
-for two seconds before replacing it. This document recommends changing that
-policy for genuine suspension and network-restoration events. It does not
-claim that one universally optimal reconnect algorithm exists.
+**19 October 2026 — research and selected implementation.** The initial research
+examined `13d8161`, whose recovery policy waited for a two-second probe. The
+selected immediate-resume policy below is now implemented in PR #37 and evaluated
+against that reference. See [the evaluation](./reconnection-evaluation.md) for
+measurements and release status. There is no claim that one universally optimal
+reconnect algorithm exists. The other alternatives below were researched, not
+all implemented or experimentally trialled.
 
 ## Decision for FlashView
 

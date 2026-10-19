@@ -423,10 +423,24 @@ export function App() {
     };
     // focus is essential on mobile: an OS file picker doesn't always trigger
     // visibilitychange, and browsers may suspend the heartbeat while browsing.
-    const online = () => wake();
+    const online = () => {
+      if (document.visibilityState !== 'visible') {
+        socket.pauseHeartbeat(true);
+        return;
+      }
+      socket.wake('online');
+      wake();
+    };
+    const freeze = () => socket.pauseHeartbeat(true);
+    const pagehide = (event: PageTransitionEvent) => {
+      if (event.persisted) freeze();
+    };
     document.addEventListener('visibilitychange', visibility);
+    document.addEventListener('freeze', freeze);
+    document.addEventListener('resume', wake);
     window.addEventListener('focus', wake);
-    window.addEventListener('pageshow', online);
+    window.addEventListener('pageshow', wake);
+    window.addEventListener('pagehide', pagehide);
     window.addEventListener('online', online);
     // Repair missed WebSocket notifications while the page is actually in use.
     // This is lightweight metadata, NOT a full PDF transfer.
@@ -623,8 +637,11 @@ export function App() {
     });
     return () => {
       document.removeEventListener('visibilitychange', visibility);
+      document.removeEventListener('freeze', freeze);
+      document.removeEventListener('resume', wake);
       window.removeEventListener('focus', wake);
-      window.removeEventListener('pageshow', online);
+      window.removeEventListener('pageshow', wake);
+      window.removeEventListener('pagehide', pagehide);
       window.removeEventListener('online', online);
       clearInterval(syncTimer);
       presentation.dispose();

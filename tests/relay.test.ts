@@ -49,7 +49,8 @@ class TestPeer {
 }
 
 async function connect(port: number, auth: Record<string, unknown>): Promise<TestPeer> {
-  const ws = new WebSocket('ws://127.0.0.1:' + port + '/ws', {
+  const room = String(auth.code ?? auth.joinToken ?? auth.roomId ?? '').split('.')[0];
+  const ws = new WebSocket('ws://127.0.0.1:' + port + '/ws?room=' + encodeURIComponent(room), {
     origin: 'http://127.0.0.1:' + port,
   });
   const peer = new TestPeer(ws);
@@ -71,13 +72,15 @@ async function unusedPort(): Promise<number> {
 }
 async function startServer(): Promise<{ port: number; child: ChildProcessWithoutNullStreams }> {
   const port = await unusedPort();
-  const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
+  const child = spawn(process.execPath, process.env.FLASHVIEW_BACKEND === 'cloudflare'
+    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--port', String(port), '--ip', '127.0.0.1']
+    : ['--import', 'tsx', 'src/server/index.ts'], {
     cwd: process.cwd(),
     env: { ...process.env, PORT: String(port), NODE_ENV: 'test' },
   });
   let output = '';
   child.stderr.on('data', data => { output += String(data); });
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 150; i++) {
     if (child.exitCode !== null) throw new Error('Server crashed: ' + output);
     try {
       const response = await fetch('http://127.0.0.1:' + port + '/health');
@@ -88,6 +91,129 @@ async function startServer(): Promise<{ port: number; child: ChildProcessWithout
   child.kill();
   throw new Error('Server never started: ' + output);
 }
+
+test('replaced peers cannot stop files or end the room while their close handshake is pending', { timeout: 25000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; code: string; hostToken: string; joinToken: string;
+    };
+    const auth = { role: 'host', roomId: room.roomId, token: room.hostToken };
+    const host = await connect(port, auth); peers.push(host); await host.wait('room.state');
+    const phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone);
+    const joined = await phone.wait('join.accepted');
+    phone.send({ type: 'file.offer', fileId: 'active-handover', name: 'original.bin', size: 4 });
+    await phone.wait('file.approved'); await host.wait('file.announced');
+    phone.ws.pause(); // Keep the obsolete client OPEN without receiving the relay's close frame.
+    const nextPhone = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: joined.resumeToken }); peers.push(nextPhone);
+    await nextPhone.wait('join.resumed');
+    phone.send({ type: 'file.revoke', fileId: 'active-handover' });
+    await delay(100);
+    nextPhone.send({ type: 'file.sync' });
+    const manifest = await nextPhone.wait('file.manifest');
+    assert.equal((manifest.files as Array<{ status: string }>)[0].status, 'approved');
+    host.ws.pause();
+    const nextHost = await connect(port, auth); peers.push(nextHost); await nextHost.wait('room.state');
+    host.send({ type: 'room.end' });
+    await delay(100);
+    nextHost.send({ type: 'room.sync' });
+    assert.equal((await nextHost.wait('room.state')).code, room.code);
+  } finally {
+    for (const peer of peers) { peer.ws.resume(); peer.ws.terminate(); }
+    child.kill('SIGTERM');
+  }
+});
+
+test('receiver takeover releases all obsolete pending range slots immediately', { timeout: 25000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const auth = { role: 'host', roomId: room.roomId, token: room.hostToken };
+    const host = await connect(port, auth); peers.push(host); await host.wait('room.state');
+    const phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone);
+    await phone.wait('join.accepted');
+    phone.send({ type: 'file.offer', fileId: 'handover-slots', name: 'original.bin', size: 4 });
+    await phone.wait('file.approved'); await host.wait('file.announced');
+    for (let i = 0; i < 48; i++) {
+      host.send({ type: 'range.request', requestId: 'obsolete-' + i, fileId: 'handover-slots', begin: 0, end: 4 });
+      await phone.wait('range.request');
+    }
+    const next = await connect(port, auth); peers.push(next); await next.wait('room.state');
+    next.send({ type: 'range.request', requestId: 'current-range', fileId: 'handover-slots', begin: 0, end: 4 });
+    assert.equal((await phone.wait('range.request')).requestId, 'current-range');
+    const bytes = Uint8Array.of(8, 0, 33, 255);
+    phone.ws.send(encodeRangePacket({ type: 'range.data', requestId: 'current-range', fileId: 'handover-slots', begin: 0 }, bytes.buffer));
+    const result = await next.waitBinary();
+    assert.deepEqual(decodeRangePacket(Uint8Array.from(result).buffer).bytes, bytes);
+  } finally { for (const peer of peers) peer.close(); child.kill('SIGTERM'); }
+});
+
+test('an existing phone resumes while the receiver is offline without losing its files or approval', { timeout: 25000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const auth = { role: 'host', roomId: room.roomId, token: room.hostToken };
+    const host = await connect(port, auth); peers.push(host); await host.wait('room.state');
+    const phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone);
+    const joined = await phone.wait('join.accepted');
+    phone.send({ type: 'file.offer', fileId: 'retained-file', name: 'retained.bin', size: 4 });
+    await phone.wait('file.approved'); await host.wait('file.announced');
+    host.close(); await phone.wait('host.offline');
+    const replacement = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: joined.resumeToken });
+    peers.push(replacement);
+    const resumed = await replacement.wait('join.resumed');
+    assert.equal((resumed.files as Array<{ fileId: string }>)[0].fileId, 'retained-file');
+    await replacement.wait('host.offline');
+    const next = await connect(port, auth); peers.push(next);
+    const state = await next.wait('room.state');
+    assert.equal((state.students as unknown[]).length, 1);
+    await replacement.wait('host.online');
+    next.send({ type: 'range.request', requestId: 'resumed-range', fileId: 'retained-file', begin: 0, end: 4 });
+    await replacement.wait('range.request');
+    const bytes = Uint8Array.of(42, 10, 0, 255);
+    replacement.ws.send(encodeRangePacket({ type: 'range.data', requestId: 'resumed-range', fileId: 'retained-file', begin: 0 }, bytes.buffer));
+    assert.deepEqual(decodeRangePacket(Uint8Array.from(await next.waitBinary()).buffer).bytes, bytes);
+  } finally { for (const peer of peers) peer.close(); child.kill('SIGTERM'); }
+});
+
+test('an explicit file stop cancels requests and remains terminal after reconnect and offer replay', { timeout: 25000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken }); peers.push(host);
+    await host.wait('room.state');
+    const phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone);
+    const joined = await phone.wait('join.accepted');
+    const offer = { type: 'file.offer', fileId: 'stopped-file', name: 'original.bin', size: 4 };
+    phone.send(offer); await phone.wait('file.approved'); await host.wait('file.announced');
+    host.send({ type: 'range.request', requestId: 'stop-request', fileId: offer.fileId, begin: 0, end: 4 });
+    await phone.wait('range.request');
+    phone.send({ type: 'file.revoke', fileId: offer.fileId });
+    await host.wait('file.updated');
+    assert.equal((await host.wait('range.error')).requestId, 'stop-request');
+    const next = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: joined.resumeToken }); peers.push(next);
+    const resumed = await next.wait('join.resumed');
+    const file = (resumed.files as Array<{ status: string; revoked?: boolean }>)[0];
+    assert.equal(file.status, 'offline'); assert.equal(file.revoked, true);
+    next.send(offer);
+    assert.equal(((await next.wait('file.state')).file as { status: string }).status, 'offline');
+    next.ws.send(encodeRangePacket({ type: 'range.data', requestId: 'stop-request', fileId: offer.fileId, begin: 0 }, Uint8Array.of(1, 2, 3, 4).buffer));
+    host.send({ type: 'range.request', requestId: 'stopped-retry', fileId: offer.fileId, begin: 0, end: 4 });
+    assert.equal((await host.wait('range.error')).requestId, 'stopped-retry');
+    await delay(50);
+    assert.equal(host.events.some(e => e.binary), false, 'A late stopped response cannot reach the receiver');
+  } finally { for (const peer of peers) peer.close(); child.kill('SIGTERM'); }
+});
 
 test('retry before the first join acknowledgement preserves one pending student and approval', { timeout: 20000 }, async () => {
   const { port, child } = await startServer();

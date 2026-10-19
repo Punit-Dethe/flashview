@@ -9,6 +9,7 @@ class SuspendedSocket {
   static instances: SuspendedSocket[] = [];
   readyState = 0;
   binaryType = '';
+  bufferedAmount = 0;
   sent: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
@@ -135,6 +136,20 @@ test('the initial hello already carries a private high-entropy resume capability
   const next = SuspendedSocket.instances.at(-1)!;
   next.accept();
   assert.notEqual(JSON.parse(next.sent[0]).resumeToken, initial, 'A deliberately new join gets a new identity');
+});
+
+test('old async range success and failure cannot use the replacement connection', async t => {
+  const { socket } = setup(t);
+  const obsolete = socket.rangeResponse('same-request', 'same-file', 0);
+  socket.pauseHeartbeat(); socket.wake();
+  const replacement = SuspendedSocket.instances.at(-1)!;
+  replacement.accept(); replacement.message({ type: 'join.resumed' });
+  const sent = replacement.sent.length;
+  obsolete.fail('Old file read failed');
+  assert.equal(await obsolete.send(new ArrayBuffer(4)), false);
+  assert.equal(replacement.sent.length, sent, 'Neither stale bytes nor errors reach the replacement');
+  const replay = socket.rangeResponse('same-request', 'same-file', 0);
+  assert.equal(await replay.send(new ArrayBuffer(4)), true, 'The replay can still send its own bytes');
 });
 
 test('the comparison policy preserves the old probe behavior on the same deployment', t => {

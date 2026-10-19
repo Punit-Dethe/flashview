@@ -15,6 +15,8 @@ export interface FileManifest {
   ownerId: string;
   ownerName: string;
   status: 'pending' | 'approved' | 'rejected' | 'offline';
+  /** Explicit owner stop: reconnecting must never resume this file ID. */
+  revoked?: boolean;
   /** Cached bytes last acknowledged by the classroom computer (not sent bytes). */
   cachedBytes?: number;
 }

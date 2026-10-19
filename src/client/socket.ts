@@ -310,6 +310,23 @@ export class RoomSocket {
     }
   }
 
+  /** A response belongs to the connection that requested it, including async reads. */
+  rangeResponse(requestId: string, fileId: string, begin: number): {
+    send: (bytes: ArrayBuffer) => Promise<boolean>;
+    fail: (message: string) => void;
+  } {
+    const ws = this.ws;
+    const current = () => ws !== null && this.ws === ws && this.connected;
+    return {
+      send: bytes => current()
+        ? this.sendBytesWhenReady(requestId, fileId, begin, bytes)
+        : Promise.resolve(false),
+      fail: message => {
+        if (current()) this.send({ type: 'range.error', requestId, message });
+      },
+    };
+  }
+
   /**
    * Stage 1: backpressure-aware response sender. A temporarily congested
    * browser WebSocket must NOT cause an immediate range.error and 4.5-second

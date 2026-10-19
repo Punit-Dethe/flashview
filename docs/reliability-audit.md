@@ -116,6 +116,41 @@ initiates replacement immediately after recorded sender suspension, freeze or
 network restoration, coalesces return events, and preserves healthy receiver
 focus. Researching twelve alternatives did not mean trialling all twelve.
 
+## 20 October handover regression pass (in progress)
+
+Review baseline: `ee20017` (the deployed WarpView header, on top of PR #37).
+Both #37 and #38 passed GitHub CI. That did not cover the cases below.
+These gaps also exist before the recent recovery changes; more frequent socket
+replacement makes correct handover especially important. They are not proof
+that every reported phone stall has the same cause. The original 9/3/18 audit
+counts remain unchanged; these new IDs are separate and unmerged.
+
+| New ID | Status | Reproduced failure | Correction and evidence |
+| --- | --- | --- | --- |
+| N11 | **In progress** | An obsolete Node phone can still revoke a file while its close handshake is pending. An obsolete Cloudflare host can still end the room. | Retire authenticated authority before sending close; clear Cloudflare's serialized attachment as well. Re-check host authority after awaiting storage. A protocol test pauses old clients' inbound close frames and tries both actions after takeover. |
+| N12 | **In progress** | Node retains all 48 outstanding requests after receiver takeover; the new host cannot request bytes until old entries leave the table. Cloudflare already clears these requests. | Clear obsolete receiver requests before announcing authenticated room state. Fill all 48 slots, replace the receiver, and immediately transfer verified original bytes. |
+| N13 | **In progress** | Both relays reject an existing phone's resume while the host is briefly offline. The client treats that rejection as leaving the room and loses its retained File references. | Authenticate a known private resume capability independently of host presence, preserve approval/manifest, and explicitly report `host.offline`. New admissions still require a host. Reconnect both ends and compare original bytes. |
+| N14 | **In progress** | Explicit Stop sharing becomes approved again after sender reconnection. Cloudflare also retains the stopped file's outstanding requests. | Port the previously isolated terminal-stop slice from #35: persist `revoked`, share the transition helper, cancel requests, and reject late bytes. Test stop, replacement, replayed offer, rejected retry and late response on both backends. |
+| N15 | **In progress** | An old asynchronous phone file read rejects after reconnect, sending `range.error` on the new socket and cancelling its replayed request. | Give each range response a connection-bound handle for both bytes and errors. The browser fault test holds old reads, reconnects, then rejects the held reads; before the fix, four stale errors reached the receiver. Verify exact final bytes and no stale errors after the fix. |
+
+Before corrections, all four new relay scenarios failed against Node. Against
+Cloudflare, N11/N13/N14 failed and the existing N12 behavior passed. After
+corrections, all four pass against each backend. Node unit/protocol tests pass
+59/59 after N15. Full Chromium browser suites passed 22/22 on each backend before
+the final N15 response-handle change. On the final build, PDF transfer under
+backpressure, universal binary integrity and the expanded interruption/late-read
+scenario passed 4/4 on each backend; Firefox passed the expanded scenario too.
+The latter verifies a 20 MiB cached SHA-256 after the injected failures. Final
+release validation is recorded in the PR. These local timings are not campus
+or physical-phone performance measurements.
+The Cloudflare relay contract suite now runs in CI as well as Node's suite.
+
+N14 advances Phase 0 of the [implementation plan](./architecture-improvement-plan.md).
+It intentionally ports only terminal file state from #35; R2 remains deferred.
+The independent lease/end-room work on #36 remains unmerged and is not part of
+this patch. Mobile OS suspension and campus-network behavior still require
+physical-device verification.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

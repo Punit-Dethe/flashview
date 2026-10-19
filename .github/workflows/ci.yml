@@ -19,6 +19,10 @@ jobs:
       - run: npm run build
       - run: npm run check:cloudflare
       - run: npm test
+      - name: Relay contract tests — Cloudflare Durable Objects
+        run: node --import tsx --test tests/relay.test.ts
+        env:
+          FLASHVIEW_BACKEND: cloudflare
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       - name: Install Firefox for fullscreen compatibility checks

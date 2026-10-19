@@ -656,20 +656,21 @@ export function App() {
     const { requestId, fileId, begin, end } = message;
     if (typeof requestId !== 'string' || typeof fileId !== 'string' ||
         typeof begin !== 'number' || typeof end !== 'number') return;
+    const response = socket.rangeResponse(requestId, fileId, begin);
     const shared = filesOnPhone.current.get(fileId);
     if (!shared || shared.status !== 'approved' || begin < 0 || end > shared.file.size || begin >= end) {
-      socket.send({ type: 'range.error', requestId, message: 'File is no longer available' });
+      response.fail('File is no longer available');
       return;
     }
     try {
       const readStart = perf.enabled ? performance.now() : 0;
       const bytes = await shared.file.slice(begin, end).arrayBuffer();
       if (perf.enabled) perf.record('sender_read_ms', performance.now() - readStart, { bytes: bytes.byteLength });
-      if (!await socket.sendBytesWhenReady(requestId, fileId, begin, bytes)) {
-        socket.send({ type: 'range.error', requestId, message: 'Network sender is busy' });
+      if (!await response.send(bytes)) {
+        response.fail('Network sender is busy');
       }
     } catch {
-      socket.send({ type: 'range.error', requestId, message: 'Cannot read file from sender device' });
+      response.fail('Cannot read file from sender device');
     }
   }
 

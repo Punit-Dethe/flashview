@@ -5,6 +5,7 @@ import { AdaptiveTransferWindow, WINDOW_INITIAL } from './adaptiveWindow';
 import { packetChunksFromQuery, selectMissingChunkGroup } from './networkPacket';
 import { shouldReconnectForRangeFailure } from './transferRecovery';
 import { storageRetryDelay } from './storageRecovery';
+import { isQuotaError, quotaExhausted } from './quotaRecovery';
 import { withStorageDeadline } from './storageWatchdog';
 
 export const CHUNK_BYTES = 65_536;
@@ -19,6 +20,7 @@ const STORAGE_DEADLINE_MS = 8_000;
 type ChunkRecord = { key: string; room: string; document: string; index: number; data: ArrayBuffer };
 type StorageRecovery = {
   file: PdfManifest; record: ChunkRecord; attempts: number;
+  consecutiveQuota: number; blocked: boolean;
   timer: ReturnType<typeof setTimeout> | null;
 };
 type RoomRecord = { id: string; expires: number };
@@ -265,6 +267,8 @@ export class RoomPdfCache {
   private storageRecovery = new Map<string, StorageRecovery>();
   onProgress: (progress: CacheProgress) => void = () => {};
   onStorageWarning: (text: string) => void = () => {};
+  onStorageBlocked: (fileId: string) => void = () => {};
+  onStorageRecovered: (fileId: string) => void = () => {};
   onStalled: (fileId: string) => void = () => {};
   private warned = false;
 
@@ -280,19 +284,22 @@ export class RoomPdfCache {
    * Retry the exact original bytes with bounded backoff; never re-request
    * already received network data merely to test whether storage recovered.
    */
-  private storageWriteFailed(file: PdfManifest, record: ChunkRecord): void {
+  private storageWriteFailed(file: PdfManifest, record: ChunkRecord, error: unknown): void {
     this.warning();
     this.storageFailedFiles.add(file.fileId);
     this.jobs.delete(file.fileId);
     if (this.storageRecovery.has(file.fileId)) return;
-    const state: StorageRecovery = { file, record, attempts: 0, timer: null };
+    const state: StorageRecovery = {
+      file, record, attempts: 0, consecutiveQuota: isQuotaError(error) ? 1 : 0,
+      blocked: false, timer: null,
+    };
     this.storageRecovery.set(file.fileId, state);
     state.timer = setTimeout(() => void this.retryStorage(file.fileId), storageRetryDelay(0));
   }
 
   private async retryStorage(fileId: string): Promise<void> {
     const state = this.storageRecovery.get(fileId);
-    if (!state || this.stopped) return;
+    if (!state || this.stopped || state.blocked) return;
     state.timer = null;
     try {
       const writing = saveChunk(state.record);
@@ -309,14 +316,36 @@ export class RoomPdfCache {
       this.notifyCacheWaiters(state.record.key);
       this.storageRecovery.delete(fileId);
       this.storageFailedFiles.delete(fileId);
+      this.onStorageRecovered(fileId);
       // Rejoining the scheduler is safe: it skips all successfully persisted
       // chunks, and never restarts a shared socket or a healthy peer transfer.
       if (state.file.status === 'approved') this.prefetch(state.file);
-    } catch {
+    } catch (error) {
       if (this.stopped || this.storageRecovery.get(fileId) !== state) return;
+      state.consecutiveQuota = isQuotaError(error) ? state.consecutiveQuota + 1 : 0;
+      if (quotaExhausted(error, state.consecutiveQuota)) {
+        // Don't retry forever against a permanently full origin. Keep one
+        // failed chunk's original bytes, never send false completion, and let
+        // the host deliberately retry after freeing storage.
+        state.blocked = true;
+        this.onStorageBlocked(fileId);
+        return;
+      }
       state.attempts++;
       state.timer = setTimeout(() => void this.retryStorage(fileId),
         storageRetryDelay(state.attempts));
+    }
+  }
+
+  /** Retry only files explicitly paused after repeated quota failures. */
+  retryBlockedStorage(): void {
+    if (this.stopped) return;
+    for (const [fileId, state] of this.storageRecovery) {
+      if (!state.blocked) continue;
+      state.blocked = false;
+      state.consecutiveQuota = 0;
+      state.attempts = 0;
+      void this.retryStorage(fileId);
     }
   }
 
@@ -325,6 +354,7 @@ export class RoomPdfCache {
     if (state?.timer !== null && state?.timer !== undefined) clearTimeout(state.timer);
     this.storageRecovery.delete(fileId);
     this.storageFailedFiles.delete(fileId);
+    if (state?.blocked) this.onStorageRecovered(fileId);
   }
   private key(fileId: string, index: number): string {
     return this.roomId + '/' + fileId + '/' + index;
@@ -518,8 +548,8 @@ export class RoomPdfCache {
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
         if (!this.stopped) this.onProgress(state);
         this.notifyCacheWaiters(key);
-      } catch {
-        this.storageWriteFailed(file, record);
+      } catch (error) {
+        this.storageWriteFailed(file, record, error);
         // Storage can fail while an in-memory copy remains viewable.
         this.notifyCacheWaiters(key);
       }
@@ -578,8 +608,8 @@ export class RoomPdfCache {
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
         if (!this.stopped) this.onProgress(state);
         this.notifyCacheWaiters(key);
-      } catch {
-        this.storageWriteFailed(file, record);
+      } catch (error) {
+        this.storageWriteFailed(file, record, error);
         // A persisted chunk is never acknowledged before its transaction
         // commits. In-memory bytes can still satisfy existing viewers.
         this.notifyCacheWaiters(key);

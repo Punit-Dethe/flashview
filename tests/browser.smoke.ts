@@ -2147,3 +2147,72 @@ test('large binary download streams IndexedDB records without a getAll whole-fil
     child.kill('SIGTERM');
   }
 });
+
+test('persistent quota triggers visible pause and explicit byte-exact recovery', {timeout: 105000}, async () => {
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({acceptDownloads:true});
+  const student=await browser.newPage();
+  const root='http://127.0.0.1:'+port;
+  const original=Buffer.alloc(410_123);
+  for(let i=0;i<original.length;i++)original[i]=(i*13+(i>>8))&255;
+  try {
+    await host.addInitScript(() => {
+      const put=IDBObjectStore.prototype.put;
+      let full=true;
+      let failures=0;
+      const scope=window as typeof window & {
+        __quotaFailures?: () => number; __restoreStorage?: () => void;
+      };
+      scope.__quotaFailures=()=>failures;
+      scope.__restoreStorage=()=>{full=false;};
+      IDBObjectStore.prototype.put=function(value: unknown, key?: IDBValidKey) {
+        if(this.name==='chunks' && full) {
+          failures++;
+          throw new DOMException('Synthetic persistent quota failure','QuotaExceededError');
+        }
+        return key===undefined ? put.call(this,value) : put.call(this,value,key);
+      };
+    });
+    await host.goto(root);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-drive').waitFor();
+    await student.locator('input[type=file]').setInputFiles({
+      name:'quota-blocked.bin',mimeType:'application/octet-stream',buffer:original,
+    });
+    const row=host.locator('.document-row').filter({hasText:'quota-blocked.bin'});
+    await row.waitFor();
+    const banner=host.getByTestId('storage-blocked');
+    await banner.waitFor({timeout:55000});
+    assert.match(await banner.innerText(),/Browser storage is full/i);
+    assert.equal(await row.locator('.cache-ring[aria-valuenow="100"]').count(),0);
+    assert.equal(await host.locator('.connection.connected').count(),1,
+      'Full browser quota should never restart the shared room socket');
+    const before=await host.evaluate(()=>
+      (window as typeof window & {__quotaFailures?:()=>number}).__quotaFailures?.() ?? -1);
+    await delay(1800);
+    const after=await host.evaluate(()=>
+      (window as typeof window & {__quotaFailures?:()=>number}).__quotaFailures?.() ?? -1);
+    assert.equal(after,before,'Storage retries must stop after the persistent quota threshold');
+    await host.evaluate(()=>
+      (window as typeof window & {__restoreStorage?:()=>void}).__restoreStorage?.());
+    await banner.getByRole('button',{name:'Retry saving'}).click();
+    await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:45000});
+    await banner.waitFor({state:'hidden',timeout:12000});
+    const [download]=await Promise.all([
+      host.waitForEvent('download',{timeout:15000}),
+      row.getByRole('button',{name:'Download quota-blocked.bin'}).click(),
+    ]);
+    const saved=await readFile(await download.path());
+    assert.equal(createHash('sha256').update(saved).digest('hex'),
+      createHash('sha256').update(original).digest('hex'));
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

@@ -1,8 +1,11 @@
 # Phase 0 results — 19 October 2026
 
-**Decision: keep production R2 migration gated.** The implemented experiment
-works and preserves original bytes in private browser cache, but neither tested
-R2 layout has demonstrated comparable live speed on this connection yet.
+**Decision: defer R2 and retain the existing relay.** After trying the deployed
+pilot, the user also reported substantially slower transfers and chose to skip
+R2 for now. This is additional qualitative feedback, not another controlled
+timing sample. Neither tested R2 layout demonstrated comparable live speed in
+the measured pilot. Continue the worker/cache/reliability improvements through
+the [relay-first implementation plan](./architecture-improvement-plan.md).
 
 ## Live pilot
 
@@ -58,9 +61,11 @@ Validation completed: TypeScript, application build, production Worker dry-run,
 benchmark observer test, local R2 API/fault test, 45 ordinary tests (plus the R2
 test separately), all three relay tests on both Node and local Cloudflare, and
 three Chromium smoke scenarios covering PDF flow, mobile progress, and general
-binary integrity. Full browser/Firefox/WebKit/campus testing remains outstanding.
+binary integrity. The subsequent full PR #35 CI run on `f2b21b4` also passed
+Chromium, Firefox presenter checks, local Cloudflare browser checks and benchmark
+comparisons. WebKit and physical classroom/device fault testing remain outstanding.
 
-## Next gate
+## Deferred experiment and evidence to preserve
 
 A real-device pilot is now implemented alongside the automated runner. It has
 expiring role-scoped invitations, worker-owned source hashing/upload and FIFO
@@ -78,15 +83,17 @@ cross-device timing. Use the automated overall metric or an external stopwatch
 for that comparison. New part diagnostics separate authorization, provider/body
 streaming, and durable receipt; they do not by themselves explain the whole gap.
 
-Before selecting the production layout, use the new gateway diagnostics and
+If R2 is explicitly revisited later, use the gateway diagnostics and
 isolate cache reads further; remove unnecessary
 per-file/control round trips and test notification-driven transfer pipelining
 against the current polling prototype. Test actual representative files and
 physical phones on campus, including WSS-blocked operation and recovery.
 
-A small speed tradeoff may be justified by improved connectivity and durable
-receipt. The present gap has not been accepted. The classroom application still
-uses its existing byte path; only isolated test deployments use R2.
+A small speed tradeoff might be justified by improved connectivity and durable
+receipt, but the present gap was not accepted. R2 tuning and production migration
+are deferred. The classroom application retains its existing byte path; only
+isolated test deployments use R2. Their resources and prototype code have not
+been deleted as part of this decision.
 
 Raw local reports are in ignored `test-artifacts/`. Reproduction instructions
 and limitations are in [the experiment guide](../benchmarks/r2/README.md).

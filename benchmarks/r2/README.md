@@ -1,5 +1,10 @@
 # Isolated R2 experiment
 
+**Deferred after live testing.** The user chose to retain the faster relay for
+now. This prototype and its reproduction instructions remain for reference;
+they are not the active production migration. Worker-owned transfer, OPFS and
+completed-file viewing continue in the [relay-first plan](../../docs/architecture-improvement-plan.md).
+
 This is the first Phase 0 implementation slice. It tests a complete R2 object
 upload followed by verified receipt into **private browser OPFS**. It is separate
 from production rooms, original-byte WebSocket routing, and presentation code.
@@ -145,9 +150,9 @@ for a test does not select it for production.
 
 ## Current decision status
 
-The upload/cache path and local tests are implemented, and protected live test
-deployments exist. **Production R2 adoption remains gated on comparable speed**,
-including connection success, retry/recovery,
+The upload/cache path and local tests are implemented, and isolated live test
+deployments exist. **R2 adoption and tuning are deferred by the user.** If revisited,
+acceptance would require comparable speed, connection success, retry/recovery,
 and time to all files being verified in private browser cache. Small latency
-differences can be accepted for better connectivity; large regressions require
-reconsidering the data path.
+differences could be accepted for better connectivity; the current regression
+was not accepted.

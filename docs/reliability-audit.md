@@ -15,7 +15,7 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 
 **Status meanings:** `Resolved` = an identified failure path has a merged, passing regression test; `Partial` = important mitigations merged but the full category is still open; `Open` = known issue with outstanding work; `Needs baseline wording` = no confirmed original issue description was retained, so its resolution cannot be asserted. CI success verifies tested scenarios, **not** every device/network/production environment. The counts above treat all unverified entries as *not verified resolved*, not necessarily reproduced bugs.
 
-**Product guardrails:** prioritize file-transfer reliability and speed over PDF/PPTX cosmetic work; never restart a whole room to repair one file; avoid introducing per-chunk relay metadata traffic; preserve the original file bytes and no-cloud-file-storage architecture. Make one isolated change at a time, with Node, Cloudflare, browser, and integrity/performance checks as appropriate.
+**Product guardrails:** prioritize file-transfer reliability and speed over PDF/PPTX cosmetic work; never restart a whole room to repair one file; avoid introducing per-chunk relay metadata traffic; preserve original file bytes and private browser caching. Retain the relay while R2 is deferred after live testing. Make one isolated change at a time, with Node, Cloudflare, browser, and integrity/performance checks as appropriate. Follow the [current implementation plan](./architecture-improvement-plan.md) for the remaining architecture work.
 
 ## High priority
 
@@ -74,11 +74,12 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 
 | ID | Status | Finding and evidence |
 |---|---|---|
-| N1 | Implemented locally; not merged/deployed | Explicit stop previously used the same offline state as disconnection and could be undone on resume. A shared file lifecycle now persists a terminal `revoked` marker; both relays cancel pending ranges. `tests/relay.test.ts` verifies stop, late bytes, reconnect, replay and normal disconnect recovery against Node and local Cloudflare. |
-| N2 | Implemented locally; not merged/deployed | Benchmark reported the first completed file as all completed, accepted rounded percentages, and mislabeled default packet size. The v2 observer measures every explicit completion/retraction; SHA-256 cache readback checks original bytes. Browser observer regression and simultaneous-sender local benchmarks pass. Historical v1 performance results are not equivalent to v2. |
+| N1 | In progress — PR #35 CI passed; unmerged | Explicit stop previously used the same offline state as disconnection and could be undone on resume. A shared file lifecycle now persists a terminal `revoked` marker; both relays cancel pending ranges. `tests/relay.test.ts` verifies stop, late bytes, reconnect, replay and normal disconnect recovery against Node and local Cloudflare. The isolated relay deployment includes the fix; main/production release remains pending. |
+| N2 | In progress — PR #35 CI passed; unmerged | Benchmark reported the first completed file as all completed, accepted rounded percentages, and mislabeled default packet size. The v2 observer measures every explicit completion/retraction; SHA-256 cache readback checks original bytes. Browser observer regression, simultaneous-sender local benchmarks and full CI pass. Historical v1 performance results are not equivalent to v2. |
 
-These entries do not change the original audit's resolved counts. Live R2 and
-physical campus/device performance remain separate verification gates.
+These entries do not change the original audit's resolved counts. R2 is now
+deferred; physical campus/device reliability and performance remain verification
+gates for the retained relay and its future worker/cache improvements.
 
 ## How to keep this tracker current
 

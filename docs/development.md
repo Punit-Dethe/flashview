@@ -108,6 +108,9 @@ endpoint does not replace the application's current room API.
 
 ## Real-device R2 pilot
 
+R2 is deferred after the user's live test; this isolated pilot remains for
+reference. Continue application changes through the relay-first implementation plan.
+
 `npm run build:pilot` builds the isolated host/sender UI; `npm run test:pilot`
 checks original-byte OPFS receipt after sender closure and local-only preview.
 After deploying the experiment, `npm run bench:invite` creates an ignored local

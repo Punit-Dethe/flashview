@@ -1,6 +1,6 @@
 # FlashView — Reliability Audit Tracker
 
-**Status:** Living engineering document · **Last updated:** 19 October 2026 · **Baseline audit:** `0581111e2` · **Last fully CI-verified fix before this change:** [`6148744`](https://github.com/Punit-Dethe/flashview/commit/6148744284a6c8178bbf8725fef25f8adb7c08fd) (PR #30). [#31](https://github.com/Punit-Dethe/flashview/pull/31) requires full CI and merge before the updated resolution count applies to main.
+**Status:** Living engineering document · **Last updated:** 19 October 2026 · **Baseline audit:** `0581111e2` · **Latest verified main:** [`e717844`](https://github.com/Punit-Dethe/flashview/commit/e717844b471952b09b9acef9263bada935bb6d24) (full post-merge CI green). [#32](https://github.com/Punit-Dethe/flashview/pull/32) is in progress and must pass CI before merge.
 
 This document tracks the original **30 reliability findings** (H1–H10, M1–M14, L1–L6). It is not a new audit, and it does **not** count PRs as bugs: one PR may fix multiple symptoms; several PRs may address one finding.
 
@@ -30,7 +30,7 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 | H7 | **Resolved** | Lost completion acknowledgments could leave student-side Done/progress stale. | Add relay-receipted, idempotent completion notices and replay until receipted. | [`2ceaa43`](https://github.com/Punit-Dethe/flashview/commit/2ceaa43) |
 | H8 | **Resolved** | Classroom could expire two hours after *creation* despite continued use. | Node and Durable Object now expire after the latest authenticated host activity; test alarm/recovery behavior. | [#23](https://github.com/Punit-Dethe/flashview/pull/23) |
 | H9 | **Resolved** | Selecting an eleventh file produced an impossible phantom upload when the sender already had ten shares. | Enforce the existing ten-file-per-sender limit in picker and both relays; reject before creating a local card. | [`6b53c40`](https://github.com/Punit-Dethe/flashview/commit/6b53c40) |
-| H10 | **Partial** | Large completed files amplified memory by loading all IndexedDB chunk records plus another assembled buffer. | Cursor-based 64 KiB sequential reconstruction [#28](https://github.com/Punit-Dethe/flashview/pull/28), integrity-tested at 12 MiB. **Left:** full-size viewer/download buffers, device peak-RAM profiles, memory-pressure UX. | [#28](https://github.com/Punit-Dethe/flashview/pull/28) |
+| H10 | **Partial** | Large completed files amplified memory through bulk IndexedDB reads and duplicate full-size JavaScript buffers. | Cursor-based sequential reconstruction [#28](https://github.com/Punit-Dethe/flashview/pull/28); [#32](https://github.com/Punit-Dethe/flashview/pull/32) (in progress) builds verified browser Blob parts for download without a second full-size JS buffer. **Left:** renderer allocations, real-device 50–200 MiB memory tests and pressure UX. | [#28](https://github.com/Punit-Dethe/flashview/pull/28), [#32](https://github.com/Punit-Dethe/flashview/pull/32) |
 
 ## Medium priority
 
@@ -65,7 +65,7 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 ## Next engineering queue (not extra IDs)
 
 1. **H5 — persistent quota UX ([#30](https://github.com/Punit-Dethe/flashview/pull/30)).** Visible pause after repeated quota errors and deliberate retry; verify on real low-storage phones and define a safe fallback that does not delete live room data.
-2. **H10 — remaining memory pressure.** Measure realistic 50–200 MiB downloads/PPTX renders, remove avoidable buffer copies, preserve integrity and disabled-retry semantics.
+2. **H10 — remaining memory pressure.** With [#32](https://github.com/Punit-Dethe/flashview/pull/32) limiting JS copies for downloads, profile PDF/PPTX rendering and 50–200 MiB mobile memory usage; verify missing-cache integrity and memory-pressure handling.
 3. **H3 — remaining real-device stalls.** Validate long-lived host sessions, background tab suspension, student phone lock/reconnect and different internet connections.
 4. **M2 — IndexedDB write amplification.** Evaluate the existing opt-in batching experiment on real devices with explicit throughput, fairness, and atomicity checks. M1 was addressed in [#31](https://github.com/Punit-Dethe/flashview/pull/31).
 5. **M4–M14 and L1–L6.** Recover the original 17 missing descriptions from the 18 October 2026 read-only audit, or re-audit the current code and **explicitly assign new descriptions** (do not present guesses as original findings).

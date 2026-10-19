@@ -158,6 +158,54 @@ export async function readCompletedPdf(roomId: string, file: PdfManifest): Promi
   return complete ? bytes : null;
 }
 
+/**
+ * Assemble completed downloads as browser-owned Blob parts instead of creating
+ * a second contiguous, file-sized JavaScript Uint8Array. The presenter still
+ * uses its own complete Uint8Array, as required by the rendering libraries.
+ */
+export async function readCompletedBlob(roomId: string, file: PdfManifest): Promise<Blob | null> {
+  const db = await database();
+  const documentId = roomId + '/' + file.fileId;
+  const count = Math.ceil(file.size / CHUNK_BYTES);
+  const parts: (Blob | undefined)[] = new Array(count);
+  let received = 0;
+  const tx = db.transaction('chunks', 'readonly');
+  const pending = new Promise<boolean>((resolve, reject) => {
+    const request = tx.objectStore('chunks').index('document')
+      .openCursor(IDBKeyRange.only(documentId));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve(received === count);
+        return;
+      }
+      const record = cursor.value as ChunkRecord;
+      const index = record.index;
+      // IndexedDB keys sort alphabetically (0,1,10,2...), not numerically.
+      const expected = Number.isSafeInteger(index) && index >= 0 && index < count
+        ? Math.min(CHUNK_BYTES, file.size - index * CHUNK_BYTES) : -1;
+      if (expected < 0 || parts[index] !== undefined ||
+          record.room !== roomId || record.document !== documentId ||
+          record.key !== documentId + '/' + index ||
+          !(record.data instanceof ArrayBuffer) ||
+          record.data.byteLength !== expected) {
+        resolve(false);
+        return;
+      }
+      // Turn each 64 KiB IDB record into browser-native data immediately,
+      // without holding every JS ArrayBuffer until file assembly.
+      parts[index] = new Blob([record.data]);
+      received++;
+      cursor.continue();
+    };
+    request.onerror = () => reject(request.error || Error('Cannot read completed download'));
+    tx.onabort = () => reject(tx.error || Error('Completed download read aborted'));
+  });
+  const complete = await withStorageDeadline(pending, 'Read completed download', 45_000,
+    () => { try { tx.abort(); } catch { /* Transaction already settled. */ } });
+  return complete ? new Blob(parts as Blob[], { type: 'application/octet-stream' }) : null;
+}
+
 /** The exact same chunk assembly also reconstructs arbitrary completed files.
  * Kept as an alias so the PDF viewer and its existing cache path stay intact. */
 export const readCompletedFile = readCompletedPdf;

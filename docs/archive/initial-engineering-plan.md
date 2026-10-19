@@ -1,3 +1,14 @@
+# Archived initial engineering plan
+
+> **Historical document — not the current architecture or feature specification.**
+> This is the original PDF-focused proposal, preserved for design history.
+> It predates general file sharing, PPTX/PPSX rendering, the completed Cloudflare implementation,
+> and subsequent reliability/performance work. For current behavior use
+> [Architecture](../architecture.md), [Transfer protocol](../transfer-protocol.md),
+> and the [Reliability audit](../reliability-audit.md). The original content follows unchanged.
+
+---
+
 # FlashView — Engineering Plan
 
 **Status:** Cloudflare Workers Free / Durable Objects relay implemented. Build, Wrangler dry-run, Node relay tests and Cloudflare-emulated Chromium end-to-end PDF test passed (16 October 2026). Public deployment, campus firewall tests, HTTP fallback, and broader PDF fixtures are pending.  

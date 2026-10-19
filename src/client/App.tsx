@@ -12,7 +12,7 @@ import { DocumentCard } from './DocumentCard';
 import { StudentTransferCard } from './StudentTransferCard';
 import { TransferPill } from './TransferPill';
 import { summarizeTransfers } from './transferProgress';
-import { cleanExpiredRoomCaches, readCompletedFile, type CacheProgress } from './pdf/roomCache';
+import { cleanExpiredRoomCaches, readCompletedBlob, readCompletedFile, type CacheProgress } from './pdf/roomCache';
 import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
@@ -789,9 +789,10 @@ export function App() {
     try {
       // Never download partial/corrupt files. The presenter and downloads
       // share the SAME already-committed 64 KiB browser cache.
-      const bytes = await readCompletedFile(hostSession.code, file);
-      if (!bytes) throw Error('File is not fully cached yet. Retry once received.');
-      const blob = new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' });
+      // Downloading only needs immutable browser-native Blob bytes, unlike
+      // the presenter which needs a full JavaScript buffer for rendering.
+      const blob = await readCompletedBlob(hostSession.code, file);
+      if (!blob) throw Error('File is not fully cached yet. Retry once received.');
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

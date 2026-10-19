@@ -2131,6 +2131,23 @@ test('large binary download streams IndexedDB records without a getAll whole-fil
     });
     const card=host.locator('.document-row').filter({hasText:'large-payload.bin'});
     await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:90000});
+    // Trap a second full-size JavaScript allocation only during the download.
+    // The network path remains free to allocate its small range packets.
+    await host.evaluate(() => {
+      const Original = Uint8Array;
+      const state = window as typeof window & { __largeDownloadAllocations?: number };
+      state.__largeDownloadAllocations = 0;
+      (window as typeof window & { Uint8Array: typeof Uint8Array }).Uint8Array =
+        new Proxy(Original, {
+          construct(target, args, newTarget) {
+            if (typeof args[0] === 'number' && args[0] > 2 * 1024 * 1024) {
+              state.__largeDownloadAllocations!++;
+              throw Error('Download allocated a second whole-file JS buffer');
+            }
+            return Reflect.construct(target, args, newTarget);
+          },
+        });
+    });
     const [download]=await Promise.all([
       host.waitForEvent('download',{timeout:30000}),
       card.getByRole('button',{name:'Download large-payload.bin'}).click(),
@@ -2142,6 +2159,10 @@ test('large binary download streams IndexedDB records without a getAll whole-fil
     assert.equal(await host.evaluate(()=>
       (window as typeof window & {__bulkCacheReads?: number}).__bulkCacheReads ?? -1),0,
       'A completed-file read must never bulk-clone every chunk into JS memory');
+    assert.equal(await host.evaluate(() =>
+      (window as typeof window & {__largeDownloadAllocations?: number})
+        .__largeDownloadAllocations ?? -1), 0,
+      'Saving should not allocate a second file-sized Uint8Array');
   } finally {
     await browser.close();
     child.kill('SIGTERM');

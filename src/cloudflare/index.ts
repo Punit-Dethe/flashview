@@ -3,6 +3,7 @@ import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
 import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle';
+import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl';
 import {
   MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
@@ -14,7 +15,8 @@ interface Env {
 }
 type Role = 'host' | 'student' | null;
 interface Peer { id: string; role: Role; name: string; approved: boolean }
-interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; lastActivityAt?: number; autoApprove?: boolean }
+interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; lastActivityAt?: number; autoApprove?: boolean;
+  roomGeneration?: string; leaseToken?: string }
 interface ResumeSession { id: string; name: string; approved: boolean; token: string }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
 const MAX_STUDENTS = 30;
@@ -95,6 +97,10 @@ export class ClassroomRoom extends DurableObject<Env> {
     await this.ctx.storage.put('sessions', [...this.sessions.values()]);
   }
   private async terminate(): Promise<void> {
+    // Commit termination before announcing it. A lost response can be retried
+    // against this generation without resurrecting it or ending a reused code.
+    await this.ctx.storage.deleteAll();
+    this.config = null;
     for (const ws of this.peers.keys()) {
       send(ws, { type: 'room.closed' });
       ws.close(1000, 'Classroom ended');
@@ -103,8 +109,6 @@ export class ClassroomRoom extends DurableObject<Env> {
     this.files.clear();
     this.sessions.clear();
     this.ranges.clear();
-    this.config = null;
-    await this.ctx.storage.deleteAll();
   }
   private expired(): boolean {
     return !this.config || Date.now() >= roomExpiresAt(this.config.created, this.config.lastActivityAt);
@@ -125,22 +129,52 @@ export class ClassroomRoom extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/init' && request.method === 'POST') {
-      if (!this.expired()) return new Response('Room code in use', { status: 409 });
-      if (this.config) await this.terminate();
       const incoming = await request.json() as Partial<RoomConfig>;
       if (!/^\d{6}$/.test(incoming.code ?? '') ||
           typeof incoming.hostToken !== 'string' || incoming.hostToken.length < 32 ||
           typeof incoming.joinToken !== 'string' || incoming.joinToken.length < 32) {
         return new Response('Invalid room', { status: 400 });
       }
-      const created = Date.now();
-      this.config = {
-        code: incoming.code!, hostToken: incoming.hostToken, joinToken: incoming.joinToken, created,
-        lastActivityAt: created, autoApprove: incoming.autoApprove === true,
-      };
-      await this.ctx.storage.put('config', this.config);
-      await this.ctx.storage.setAlarm(created + ROOM_TTL_MS);
-      return json({ roomId: this.config.code, code: this.config.code }, 201);
+      return this.ctx.blockConcurrencyWhile(async () => {
+        if (!this.expired()) return new Response('Room code in use', { status: 409 });
+        if (this.config) await this.terminate();
+        const created = Date.now();
+        this.config = {
+          code: incoming.code!, hostToken: incoming.hostToken!, joinToken: incoming.joinToken!, created,
+          lastActivityAt: created, autoApprove: incoming.autoApprove === true,
+          roomGeneration: incoming.roomGeneration ?? crypto.randomUUID(), leaseToken: incoming.leaseToken ?? token(32),
+        };
+        await this.ctx.storage.put('config', this.config);
+        await this.ctx.storage.setAlarm(created + ROOM_TTL_MS);
+        return json({ roomId: this.config.code, code: this.config.code }, 201);
+      });
+    }
+    if (url.pathname === '/lease' || url.pathname === '/end') {
+      if (request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      const capability = request.headers.get('Authorization')?.replace(/^Bearer /, '');
+      if (!validControlToken(capability)) return json({ error: 'Authorization required' }, 401);
+      if (request.headers.get('Content-Type') !== 'application/json') return json({ error: 'JSON required' }, 415);
+      const reader = request.body?.getReader();
+      let generation: string;
+      try { generation = await readRoomControlGeneration(reader); }
+      catch (error) { return json({ error: 'Invalid control command' }, error instanceof RoomControlInputError ? error.status : 400); }
+      finally { reader?.releaseLock(); }
+      const action = url.pathname === '/lease' ? 'lease' : 'end';
+      // The storage gate also serializes close/recreate against a renewal.
+      return this.ctx.blockConcurrencyWhile(async () => {
+        const cfg = this.config;
+        const config = cfg?.roomGeneration && cfg.leaseToken ? { ...cfg,
+          roomGeneration: cfg.roomGeneration, leaseToken: cfg.leaseToken } : null;
+        const decision = authorizeRoomControl(config, generation, capability, action, Date.now());
+        if (decision === 'denied') return json({ error: 'Invalid capability' }, 403);
+        if (decision === 'absent') return json({ roomGeneration: generation, state: 'absent' });
+        if (decision === 'expired' || action === 'end') {
+          await this.terminate();
+          return json({ roomGeneration: generation, state: 'closed' });
+        }
+        await this.touchHostActivity();
+        return json({ roomGeneration: generation, state: 'active', expiresAt: roomExpiresAt(cfg!.created, cfg!.lastActivityAt) });
+      });
     }
     if (url.pathname !== '/ws' || request.method !== 'GET') return new Response('Not found', { status: 404 });
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
@@ -165,6 +199,11 @@ export class ClassroomRoom extends DurableObject<Env> {
         if (other !== ws && active.role === 'host') other.close(4000, 'Host reconnected');
       }
       this.putPeer(ws, { ...peer, role: 'host', name: 'Host', approved: true });
+      if (!cfg.roomGeneration || !cfg.leaseToken) {
+        cfg.roomGeneration ??= crypto.randomUUID();
+        cfg.leaseToken ??= token(32);
+        await this.ctx.storage.put('config', cfg);
+      }
       await this.touchHostActivity();
       // Requests were owned by the old host socket. After a host resume they
       // cannot be delivered to the new socket safely; clear the volatile map
@@ -172,6 +211,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       this.ranges.clear();
       send(ws, {
         type: 'room.state', id: cfg.code, code: cfg.code, joinToken: cfg.joinToken,
+        roomGeneration: cfg.roomGeneration, leaseToken: cfg.leaseToken,
         students: this.students(), files: [...this.files.values()],
         autoApprove: cfg.autoApprove === true,
       });
@@ -236,6 +276,7 @@ export class ClassroomRoom extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const peer = this.peers.get(ws);
     if (!peer || this.expired()) return;
+    if (peer.role === 'host' && this.host !== ws) return;
     if (typeof message !== 'string') {
       if (peer.role !== 'student' || !peer.approved ||
           message.byteLength > MAX_RANGE_BYTES + 2048) return;
@@ -283,6 +324,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       return void send(ws, {
         type: 'room.state', id: this.config?.code, code: this.config?.code,
         joinToken: this.config?.joinToken, students: this.students(),
+        roomGeneration: this.config?.roomGeneration, leaseToken: this.config?.leaseToken,
         files: [...this.files.values()],
       });
     }
@@ -384,7 +426,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       } else if (msg.type === 'range.cancel' && typeof msg.requestId === 'string') {
         this.ranges.delete(msg.requestId);
       } else if (msg.type === 'room.end') {
-        await this.terminate();
+        await this.ctx.blockConcurrencyWhile(async () => { await this.terminate(); });
       }
       return;
     }
@@ -511,6 +553,7 @@ export default {
         const code = String(100_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000));
         const config: RoomConfig = {
           code, hostToken: token(32), joinToken: code + '.' + token(24), created: Date.now(),
+          roomGeneration: crypto.randomUUID(), leaseToken: token(32),
           autoApprove: url.searchParams.get('autoApprove') === '1',
         };
         const room = env.ROOMS.getByName(code);
@@ -520,12 +563,23 @@ export default {
         if (initialized.status === 201) {
           return json({
             roomId: code, code, joinToken: config.joinToken, hostToken: config.hostToken,
+            roomGeneration: config.roomGeneration, leaseToken: config.leaseToken,
             autoApprove: config.autoApprove,
           }, 201);
         }
         if (initialized.status !== 409) return json({ error: 'Room creation unavailable' }, 503);
       }
       return json({ error: 'Unable to allocate a unique code' }, 503);
+    }
+    const control = /^\/api\/rooms\/(\d{6})\/(lease|end)$/.exec(url.pathname);
+    if (control) {
+      if (request.method !== 'POST') return json({ error: 'POST required' }, 405);
+      if (request.headers.has('Origin') && request.headers.get('Origin') !== url.origin)
+        return json({ error: 'Forbidden origin' }, 403);
+      if (!validControlToken(request.headers.get('Authorization')?.replace(/^Bearer /, '')))
+        return json({ error: 'Authorization required' }, 401);
+      if (request.headers.get('Content-Type') !== 'application/json') return json({ error: 'JSON required' }, 415);
+      return env.ROOMS.getByName(control[1]).fetch(new Request('https://internal/' + control[2], request));
     }
     if (url.pathname === '/ws') {
       if (request.headers.get('Origin') !== url.origin) return new Response('Forbidden origin', { status: 403 });

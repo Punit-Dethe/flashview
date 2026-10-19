@@ -40,6 +40,13 @@ async function runningServer() {
   throw new Error('Server startup timed out: ' + output);
 }
 
+async function waitForPresenterPopup(host: Page): Promise<Page> {
+  const page = await host.waitForEvent('popup');
+  // Host credentials are stripped from an initial blank tab before navigation.
+  await page.waitForURL(url => url.pathname === '/present');
+  return page;
+}
+
 /** Construct a valid single-page PDF with a realistic (200 KB) byte-range surface. */
 function makePdf(fillerLines = 1400): Buffer {
   const pageCount = 10;
@@ -72,6 +79,179 @@ function makePdf(fillerLines = 1400): Buffer {
   pdf += 'startxref\n' + xref + '\n%%EOF\n';
   return Buffer.from(pdf);
 }
+
+async function seedLifecycleCache(page: import('playwright').Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve, reject) => {
+    const session = JSON.parse(sessionStorage.getItem('flashview-host')!);
+    const opened = indexedDB.open('flashview-room-cache');
+    opened.onerror = () => reject(opened.error);
+    opened.onsuccess = () => {
+      const db = opened.result;
+      const tx = db.transaction(['chunks', 'rooms'], 'readwrite');
+      const document = session.code + '/lifecycle-fixture';
+      tx.objectStore('chunks').put({ key: document + '/0', room: session.code, document,
+        index: 0, data: Uint8Array.of(1, 2, 3).buffer });
+      tx.objectStore('rooms').put({ id: session.code, expires: Date.now() + 7_200_000 });
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    };
+  }));
+}
+async function lifecycleCacheCount(page: import('playwright').Page, room: string): Promise<number> {
+  return page.evaluate(code => new Promise<number>((resolve, reject) => {
+    const opened = indexedDB.open('flashview-room-cache');
+    opened.onerror = () => reject(opened.error);
+    opened.onsuccess = () => {
+      const db = opened.result;
+      const tx = db.transaction('chunks', 'readonly');
+      const count = tx.objectStore('chunks').index('room').count(IDBKeyRange.only(code));
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error);
+      tx.oncomplete = () => db.close();
+    };
+  }), room);
+}
+
+test('room lifecycle: failed/lost end responses preserve cache and resume intent across refresh', { timeout: 50000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  try {
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    await seedLifecycleCache(host);
+    const room = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!) as {
+      code: string; roomId: string; roomGeneration: string; leaseToken: string;
+    });
+    await host.route('**/api/rooms/**/end', route => route.abort());
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).waitFor();
+    await host.getByText(/Could not confirm classroom closure/).waitFor();
+    assert.equal(await lifecycleCacheCount(host, room.code), 1);
+    const intent = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    assert.equal(intent.closeRequested, true);
+    assert.notEqual(intent.serverClosed, true);
+    await host.reload();
+    await host.getByText(/Could not confirm classroom closure/).waitFor();
+    assert.equal(await lifecycleCacheCount(host, room.code), 1, 'Refresh retains the uncertain-close cache');
+    await host.unroute('**/api/rooms/**/end');
+    await host.route('**/api/rooms/**/end', async route => {
+      await route.fetch(); // Server commits; its response is lost before the browser receives it.
+      await route.abort();
+    });
+    await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).click();
+    await host.getByText(/Could not confirm classroom closure/).waitFor();
+    assert.equal(await lifecycleCacheCount(host, room.code), 1, 'Even a lost successful receipt cannot erase cache early');
+    const state = await (await fetch(root + '/api/rooms/' + room.roomId + '/lease', { method: 'POST',
+      headers: { Authorization: 'Bearer ' + room.leaseToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomGeneration: room.roomGeneration }) })).json() as { state: string };
+    assert.equal(state.state, 'absent', 'The dropped response really followed server closure');
+    await host.unroute('**/api/rooms/**/end');
+    await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).click();
+    await host.locator('.welcome').waitFor();
+    assert.equal(await lifecycleCacheCount(host, room.code), 0);
+    assert.equal(await host.evaluate(() => sessionStorage.getItem('flashview-host')), null);
+  } finally { await browser.close(); child.kill(); }
+});
+
+test('room lifecycle: failed cache deletion retains its handle and confirmed closure for retry', { timeout: 40000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  try {
+    await host.goto('http://127.0.0.1:' + port);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    await seedLifecycleCache(host);
+    const code = (await host.locator('.room-code').innerText()).trim();
+    await host.evaluate(() => {
+      const original = IDBObjectStore.prototype.delete;
+      let fail = true;
+      IDBObjectStore.prototype.delete = function (key) {
+        if (this.name === 'rooms' && fail) {
+          fail = false;
+          this.transaction.abort();
+          throw Error('Injected room cleanup failure');
+        }
+        return original.call(this, key);
+      };
+    });
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await host.getByText(/classroom is closed.*cache could not be cleared/).waitFor();
+    assert.equal(await lifecycleCacheCount(host, code), 1);
+    assert.equal(await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).serverClosed), true);
+    assert.equal(await host.getByRole('button', { name: 'Keep room open', exact: true }).isDisabled(), true);
+    await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).click();
+    await host.locator('.welcome').waitFor();
+    assert.equal(await lifecycleCacheCount(host, code), 0, 'Retry really deletes the original room cache');
+    assert.equal(await host.evaluate(() => sessionStorage.getItem('flashview-host')), null);
+  } finally { await browser.close(); child.kill(); }
+});
+
+test('room lifecycle: hidden host and visible presenter renew separately; bridge survives two-hour clock advance', { timeout: 60000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage();
+  const student = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  let hostLeases = 0;
+  let presenterLeases = 0;
+  host.on('request', request => { if (request.url().endsWith('/lease')) hostLeases++; });
+  host.context().on('request', request => {
+    if (request.url().endsWith('/lease') && request.frame().page() !== host) presenterLeases++;
+  });
+  try {
+    await host.clock.install();
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const invite = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken as string);
+    await student.goto(root + '/?join=' + encodeURIComponent(invite));
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    await student.locator('input[type=file]').setInputFiles({ name: 'lease.pdf', mimeType: 'application/pdf', buffer: makePdf(1) });
+    const card = host.locator('.document-row').filter({ hasText: 'lease.pdf' });
+    await card.locator('.cache-ring.is-complete').waitFor();
+    const guestLeaseReady = host.context().waitForEvent('response', { predicate: response =>
+      response.url().endsWith('/lease') && response.request().frame().page() !== host && response.status() === 200 });
+    const [presenter] = await Promise.all([waitForPresenterPopup(host), card.getByRole('button', { name: 'Present lease.pdf' }).click()]);
+    await presenter.waitForFunction(() => Boolean(document.querySelector('canvas[data-rendered-page="1"]')));
+    await (await guestLeaseReady).finished();
+    assert.equal(await presenter.evaluate(() => sessionStorage.getItem('flashview-host')), null,
+      'Presenter receives no copy of dashboard host credentials');
+    await student.close();
+    await host.evaluate("Object.defineProperty(document, 'visibilityState', { configurable: true, get() { return 'hidden'; } }); document.dispatchEvent(new Event('visibilitychange'));");
+    const before = hostLeases;
+    await host.clock.fastForward('02:01:00');
+    for (let attempt = 0; attempt < 50 && hostLeases <= before; attempt++) await delay(20);
+    assert.ok(hostLeases > before, 'Hidden dashboard still issues its independent renewal');
+    // A fresh metadata handshake proves the host bridge is still listening;
+    // an already-buffered PDF alone could conceal a silently closed channel.
+    const bridge = await presenter.evaluate(`new Promise((resolve, reject) => {
+      const channel = new BroadcastChannel('flashview-present-' + location.hash.slice(1));
+      const timeout = setTimeout(() => { channel.close(); reject(Error('Presenter bridge stopped')); }, 3000);
+      channel.onmessage = ({ data }) => {
+        if (data.type !== 'metadata') return;
+        clearTimeout(timeout); channel.close();
+        resolve({ leaseKeys: Object.keys(data.lease || {}).sort(), hostToken: data.hostToken });
+      };
+      channel.postMessage({ type: 'ready' });
+    })`) as { leaseKeys: string[]; hostToken?: string };
+    assert.deepEqual(bridge.leaseKeys, ['leaseToken', 'roomGeneration', 'roomId']);
+    assert.equal(bridge.hostToken, undefined);
+    await presenter.evaluate(() => window.dispatchEvent(new Event('focus')));
+    for (let attempt = 0; attempt < 50 && presenterLeases < 2; attempt++) await delay(20);
+    assert.ok(presenterLeases >= 2, 'Presenter renews independently of hidden socket heartbeats');
+    await presenter.getByRole('spinbutton', { name: 'Page number' }).fill('10');
+    await presenter.getByRole('spinbutton', { name: 'Page number' }).press('Enter');
+    await presenter.waitForFunction(() => Boolean(document.querySelector('canvas[data-rendered-page="10"]')));
+  } finally { await browser.close(); child.kill(); }
+});
 
 test('real browser: explicit room start, pinned invite, scrolling documents and room switch', { timeout: 70000 }, async () => {
   const { port, child } = await runningServer();
@@ -386,7 +566,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
       .locator('.cache-ring[role="progressbar"]').waitFor({ timeout: 15000 });
     const [presentation] = await Promise.all([
-      host.waitForEvent('popup'),
+      waitForPresenterPopup(host),
       host.locator('.document-row').getByRole('button', { name: /Present/ }).click(),
     ]);
     // Teacher's queue remains available while the PDF is projected.
@@ -599,7 +779,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
 
     const [secondPresentation] = await Promise.all([
-      host.waitForEvent('popup'),
+      waitForPresenterPopup(host),
       host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).getByRole('button', { name: /Present/ }).click(),
     ]);
     await secondPresentation.waitForFunction(() => {
@@ -621,7 +801,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
       .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 12000 });
     const [offlinePresentation] = await Promise.all([
-      host.waitForEvent('popup'),
+      waitForPresenterPopup(host),
       host.locator('.document-row').filter({ hasText: 'smoke.pdf' })
         .getByRole('button', { name: /Present/ }).click(),
     ]);
@@ -750,7 +930,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     const row = host.locator('.document-row').filter({ hasText: 'progressive.pdf' });
     await row.waitFor();
     [presentation] = await Promise.all([
-      host.waitForEvent('popup'),
+      waitForPresenterPopup(host),
       row.getByRole('button', { name: /Present/ }).click(),
     ]);
     // Exercise a long foreground PDF range request without moving pages.
@@ -1601,13 +1781,17 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
       const paint=getComputedStyle(el.querySelector('.document-card-present')!);
       return {withinRow:right.top>=row.top-2&&right.bottom<=row.bottom+2,
         aligned:Math.abs((left.top+left.bottom)/2-(right.top+right.bottom)/2)<2,
-        follows:left.right+5<=right.left,background:paint.backgroundColor,
+        follows:left.right+5<=right.left,
         border:paint.borderTopWidth,icon:el.querySelector('.document-card-present svg path')?.getAttribute('d')};
     });
     assert.ok(actionStyle.withinRow&&actionStyle.aligned&&actionStyle.follows,
       'Outlined Present must be to the right of Download in the same horizontal row');
-    assert.ok(['rgb(255, 255, 255)','rgb(248, 249, 251)'].includes(actionStyle.background),
-      'Present should be white when ready or pale gray while download is incomplete');
+    // Completion can switch the button during this check. Its background has
+    // a 200 ms CSS transition, so a one-frame midpoint is not an invalid color.
+    await host.waitForFunction(() => {
+      const button = document.querySelector('[aria-label="Present lecture.pptx"]');
+      return button && ['rgb(255, 255, 255)', 'rgb(248, 249, 251)'].includes(getComputedStyle(button).backgroundColor);
+    }, null, { timeout: 3000 });
     assert.ok(actionStyle.border!=='0px'&&actionStyle.icon?.includes('17.5'),
       'Present uses a bordered projection-screen glyph');
     await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});
@@ -1629,7 +1813,7 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
       'Host generates a genuine first-slide JPEG locally after the PPTX download completes');
     assert.equal(await presentButton.isEnabled(),true);
     assert.equal(await downloadButton.isEnabled(),true);
-    [popup]=await Promise.all([host.waitForEvent('popup'),presentButton.click()]);
+    [popup]=await Promise.all([waitForPresenterPopup(host),presentButton.click()]);
     await popup.locator('.flashview-pptx-controls').waitFor({timeout:45000});
     assert.equal(await popup.getByText('Slide 1 / 1').count(),1,
       'Actual PowerPoint rendered from IndexedDB without cloud conversion');

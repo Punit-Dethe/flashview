@@ -17,6 +17,8 @@ export class PresentationHost {
   private lastProgressPaint = new Map<string, number>();
   onProgress: (status: CacheProgress) => void = () => {};
   onWarning: (message: string) => void = () => {};
+  onStorageBlocked: (fileId: string) => void = () => {};
+  onStorageRecovered: (fileId: string) => void = () => {};
   onStalled: (fileId: string) => void = () => {};
   constructor(private readonly socket: RoomSocket) {}
 
@@ -43,6 +45,8 @@ export class PresentationHost {
       }
     };
     cache.onStorageWarning = message => this.onWarning(message);
+    cache.onStorageBlocked = fileId => this.onStorageBlocked(fileId);
+    cache.onStorageRecovered = fileId => this.onStorageRecovered(fileId);
     cache.onStalled = fileId => this.onStalled(fileId);
     this.cache = cache;
     void cleanExpiredRoomCaches(roomId);
@@ -59,6 +63,7 @@ export class PresentationHost {
     if (cache) await cache.clear();
   }
   resume(): void { this.cache?.resume(); }
+  retryBlockedStorage(): void { this.cache?.retryBlockedStorage(); }
   /** Reuse the first-slide image already stored for the presenter, without extra PDF requests. */
   async getPreview(fileId: string): Promise<string | null> {
     return this.cache?.getPreview(fileId) ?? null;

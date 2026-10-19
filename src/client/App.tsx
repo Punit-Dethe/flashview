@@ -70,6 +70,8 @@ export function App() {
   const [hostSession, setHostSession] = useState<HostSession | null>(initialSession);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('disconnected');
   const [error, setError] = useState('');
+  const [blockedStorageFiles, setBlockedStorageFiles] = useState<string[]>([]);
+  const [retryingBlockedStorage, setRetryingBlockedStorage] = useState(false);
   const [joinCode, setJoinCode] = useState(initialJoin);
   const [studentName, setStudentName] = useState('');
   const [joinState, setJoinState] = useState<'idle' | 'connecting' | 'pending' | 'accepted' | 'rejected'>(initialJoin ? 'connecting' : 'idle');
@@ -396,6 +398,14 @@ export function App() {
       }
     };
     presentation.onWarning = message => setError(message);
+    presentation.onStorageBlocked = fileId => {
+      setBlockedStorageFiles(current => current.includes(fileId) ? current : [...current, fileId]);
+      setRetryingBlockedStorage(false);
+    };
+    presentation.onStorageRecovered = fileId => {
+      setBlockedStorageFiles(current => current.filter(id => id !== fileId));
+      setRetryingBlockedStorage(false);
+    };
     presentation.onStalled = () => setError(
       'File transfer stalled. FlashView is reconnecting and retrying automatically; keep both devices open.',
     );
@@ -647,6 +657,8 @@ export function App() {
   async function createRoom(): Promise<void> {
     setBusy(true);
     setError('');
+    setBlockedStorageFiles([]);
+    setRetryingBlockedStorage(false);
     try {
       const response = await fetch('/api/rooms?autoApprove=' + (autoApprove ? '1' : '0'), { method: 'POST' });
       if (!response.ok) throw new Error('Unable to create room (' + response.status + ')');
@@ -848,6 +860,8 @@ export function App() {
     setCurrentRoomCode('');
     setHostAvailable(true);
     setError('');
+    setBlockedStorageFiles([]);
+    setRetryingBlockedStorage(false);
     setStudents([]);
     setDocuments([]);
     setParticipantColors({});
@@ -1084,6 +1098,17 @@ export function App() {
               </aside>
               <section className="workspace-right" aria-label="Shared documents" data-testid="documents-scroll-region">
                 <div className="document-column">
+                  {blockedStorageFiles.length > 0 && (
+                    <div className="storage-blocked" role="alert" data-testid="storage-blocked">
+                      <strong>Browser storage is full — {blockedStorageFiles.length} {blockedStorageFiles.length === 1 ? 'file' : 'files'} paused.</strong>
+                      <p>Free browser or device space, then retry saving. Keep senders connected.
+                        Do not clear FlashView site data during this room; cached chunks may be lost.</p>
+                      <button type="button" disabled={retryingBlockedStorage} onClick={() => {
+                        setRetryingBlockedStorage(true);
+                        presentation.retryBlockedStorage();
+                      }}>{retryingBlockedStorage ? 'Retrying…' : 'Retry saving'}</button>
+                    </div>
+                  )}
                   <div className="list-heading">
                     <div className="list-heading-title">
                       <h1 className="reference-serif">Files <sup>{documents.filter(f=>f.status!=='rejected').length}</sup></h1>

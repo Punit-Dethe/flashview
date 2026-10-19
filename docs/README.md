@@ -10,6 +10,9 @@ This directory is the **current, code-backed documentation** for FlashView. The 
 | [Deployment](./deployment.md) | Operators | Node, HTTPS/WSS, Cloudflare config and smoke checks |
 | [Security and reliability](./security-and-reliability.md) | Developers, operators | Trust model, failure recovery and production caveats |
 | [Reliability audit tracker](./reliability-audit.md) | Maintainers | Original 30-issue audit, verified fixes, partial work and next priorities |
+| [Implementation plan](./architecture-improvement-plan.md) | Maintainers | Relay-first phases for independent transfer, OPFS and completed cached-file viewing |
+| [R2 pilot results](./r2-benchmark-results.md) | Maintainers | Measured live gap and the user's decision to defer R2 |
+| [R2 migration proposal (archive)](./archive/r2-migration-proposal-2026-10-19.md) | Historical reference | Superseded cloud proposal; use the relay-first plan for current work |
 | [Original engineering plan (archive)](./archive/initial-engineering-plan.md) | Historical reference | Outdated PDF-first design; **do not use as an implementation specification** |
 
 ## Documentation conventions

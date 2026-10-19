@@ -10,9 +10,13 @@
  */
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, mkdtemp, unlink, rmdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { chromium } from 'playwright';
+import { chromium, type BrowserContext, type Page } from 'playwright';
+import { createHash, randomBytes } from 'node:crypto';
+import { observeCacheCompletion, waitForAllCached, verifyCachedFile, type CacheObservation } from './benchmarks/cache-observer';
 
 const mib = Number(process.env.BENCH_MIB ?? 2);
 const repeats = Number(process.env.BENCH_RUNS ?? 2);
@@ -21,8 +25,16 @@ const slowReadMs = Number(process.env.BENCH_FILE_READ_DELAY_MS ?? 0);
 const isCloudflare = process.env.FLASHVIEW_BACKEND === 'cloudflare';
 const transferMode = process.env.BENCH_TRANSFER_MODE === 'fixed' ? 'fixed' : 'adaptive';
 const packetKiB = Number(process.env.BENCH_PACKET_KIB ?? 64);
-if (!(mib >= 1 && mib <= 45) || !(repeats >= 1 && repeats <= 10) ||
-    !(studentCount >= 1 && studentCount <= 15) || !(slowReadMs >= 0 && slowReadMs <= 500) ||
+const measureViewer = process.env.BENCH_VIEWER === 'after';
+const binaryFixture = process.env.BENCH_FIXTURE === 'binary';
+const timeoutMs = Number(process.env.BENCH_TIMEOUT_MS ?? 120_000);
+const remoteOrigin = process.env.BENCH_RELAY_ORIGIN;
+const remoteToken = process.env.BENCH_RELAY_TOKEN;
+if (remoteOrigin && (new URL(remoteOrigin).protocol !== 'https:' || !remoteToken || remoteToken.length < 32))
+  throw Error('Live relay requires an HTTPS BENCH_RELAY_ORIGIN and BENCH_RELAY_TOKEN');
+if (!(mib >= 1 && mib <= 200) || !Number.isInteger(repeats) || !(repeats >= 1 && repeats <= 10) ||
+    !Number.isInteger(studentCount) || !(studentCount >= 1 && studentCount <= 30) ||
+    !(timeoutMs >= 1000 && timeoutMs <= 900_000) || !(slowReadMs >= 0 && slowReadMs <= 500) ||
     ![64, 128, 256].includes(packetKiB)) {
   throw new Error('Invalid baseline configuration');
 }
@@ -87,7 +99,11 @@ type Run = {
   repetition: number;
   timeToFirstSlideMs: number | null;
   timeToCacheAllMs: number;
-  pageJumpMs: number;
+  pageJumpMs: number | null;
+  perFile: CacheObservation[];
+  cacheVerificationMs: number;
+  timeToVerifiedCacheAllMs: number;
+  originalBytesVerified: boolean;
   hostMetrics: BenchMetric[];
   studentMetrics: BenchMetric[][];
 };
@@ -96,19 +112,34 @@ function median(nums: number[]) {
   const sorted = [...nums].sort((a,b) => a-b);
   return sorted[Math.floor((sorted.length-1)/2)];
 }
-const fixture = makePdf(mib * 1024 * 1024);
-const backend = await launchBackend();
-const browser = await chromium.launch({headless:true});
+const fixture = binaryFixture ? randomBytes(mib * 1024 * 1024) : makePdf(mib * 1024 * 1024);
+const hashBlockBytes = 8 * 1024 * 1024;
+const hashes: string[] = [];
+for (let offset = 0; offset < fixture.length; offset += hashBlockBytes)
+  hashes.push(createHash('sha256').update(fixture.subarray(offset, offset + hashBlockBytes)).digest('hex'));
+const fixtureDirectory = await mkdtemp(join(tmpdir(), 'flashview-relay-bench-'));
+const fixturePath = join(fixtureDirectory, binaryFixture ? 'synthetic.bin' : 'synthetic.pdf');
+await writeFile(fixturePath, fixture);
+let backend: Awaited<ReturnType<typeof launchBackend>> | undefined;
+let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 const results: Run[] = [];
 try {
+  if (!remoteOrigin) backend = await launchBackend();
+  browser = await chromium.launch({headless:true});
   for (let iteration = 1; iteration <= repeats; iteration++) {
-    const ctx = await browser.newContext();
+    const ctx: BrowserContext = await browser.newContext();
     const host = await ctx.newPage();
-    const senders: Awaited<ReturnType<typeof ctx.newPage>>[] = [];
+    const senders: Page[] = [];
     try {
-      const origin = 'http://127.0.0.1:' + backend.port;
+      const origin = remoteOrigin ?? 'http://127.0.0.1:' + backend!.port;
+      if (remoteOrigin) {
+        const session = await ctx.request.get(origin + '/__benchmark/session', {
+          headers: { Authorization: 'Bearer ' + remoteToken },
+        });
+        if (!session.ok()) throw Error('Live relay session denied: ' + session.status());
+      }
       await host.goto(origin + '/?perf=1' + (transferMode === 'fixed' ? '&transfer=fixed' : '') +
-        (packetKiB !== 64 ? '&packet=' + packetKiB : ''));
+        '&packet=' + packetKiB);
       await host.getByLabel('Require approval').check();
       await host.getByRole('button', {name: /Create a room/}).click();
       const roomCode = await host.locator('.room-code').innerText();
@@ -134,33 +165,34 @@ try {
         await awaiting.getByRole('button',{name:'Allow'}).click();
         await student.locator('.student-drive').waitFor();
       }
+      await observeCacheCompletion(host);
       const start = Date.now();
-      await Promise.all(senders.map(sender => sender.locator('input[type=file]').setInputFiles({
-        name: 'synthetic.pdf', mimeType: 'application/pdf', buffer: fixture,
-      })));
-      const firstRow = host.locator('.document-row').first();
-      await firstRow.waitFor();
-      const [presenter] = await Promise.all([
-        host.waitForEvent('popup'),
-        firstRow.getByRole('button',{name:/Present/}).click(),
-      ]);
+      await Promise.all(senders.map(sender => sender.locator('input[type=file]').setInputFiles(fixturePath)));
+      const perFile = await waitForAllCached(host, studentCount, timeoutMs);
+      const cacheDuration = Math.max(...perFile.map(file => file.completedAtMs));
+      const verificationStart = Date.now();
+      // Sequential readback bounds verification memory across a full classroom.
+      for (const file of perFile) await verifyCachedFile(host, {
+        room: roomCode, fileId: file.fileId, size: fixture.length, hashBlockBytes, hashes,
+      });
+      const cacheVerificationMs = Date.now() - verificationStart;
+      const timeToVerifiedCacheAllMs = Date.now() - start;
       let firstSlide: number | null = null;
-      try {
-        await presenter.waitForFunction(() => {
-          const canvas = document.querySelector('canvas[data-rendered-page="1"]');
-          const img = document.querySelector<HTMLImageElement>('img[data-first-page-preview]');
-          return Boolean(canvas || (img && img.complete && img.naturalWidth > 0));
-        },null,{timeout:45000});
-        firstSlide = Date.now() - start;
-      } catch { /* still measure the full PDF */ }
-      await host.locator('.document-row .cache-ring[aria-valuenow="100"]').first().waitFor({timeout:120000});
-      const cacheDuration = Date.now()-start;
-      await presenter.locator('canvas[data-rendered-page="1"]').waitFor({timeout:45000});
-      const pageStart = Date.now();
-      await presenter.getByRole('spinbutton',{name:'Page number'}).fill('10');
-      await presenter.getByRole('spinbutton',{name:'Page number'}).press('Enter');
-      await presenter.locator('canvas[data-rendered-page="10"]').waitFor({timeout:45000});
-      const pageDuration = Date.now()-pageStart;
+      let pageDuration: number | null = null;
+      if (measureViewer && !binaryFixture) {
+        const firstRow = host.locator('.document-row').first();
+        const viewerStart = Date.now();
+        const [presenter] = await Promise.all([
+          host.waitForEvent('popup'), firstRow.getByRole('button',{name:/Present/}).click(),
+        ]);
+        await presenter.locator('canvas[data-rendered-page="1"]').waitFor({timeout:45000});
+        firstSlide = Date.now() - viewerStart;
+        const pageStart = Date.now();
+        await presenter.getByRole('spinbutton',{name:'Page number'}).fill('10');
+        await presenter.getByRole('spinbutton',{name:'Page number'}).press('Enter');
+        await presenter.locator('canvas[data-rendered-page="10"]').waitFor({timeout:45000});
+        pageDuration = Date.now()-pageStart;
+      }
       const hostMetrics = await host.evaluate(() => {
         const w = window as typeof window & {__flashviewPerf?:{snapshot:()=>{summary:BenchMetric[]}}};
         return w.__flashviewPerf?.snapshot().summary ?? [];
@@ -173,14 +205,15 @@ try {
       // silently producing zero-valued timing reports.
       const hostNames = new Set(hostMetrics.map(m => m.metric));
       for (const metric of ['socket_connect_ms', 'cache_write_ms',
-        'cache_complete_ms', 'page_render_ms']) {
+        'cache_complete_ms']) {
         if (!hostNames.has(metric)) throw new Error('Missing Stage 0 host metric: ' + metric);
       }
       if (studentMetrics.some(metrics => !metrics.some(m => m.metric === 'file_receipt_ms'))) {
         throw new Error('Missing student file acknowledgement timing');
       }
       results.push({repetition:iteration,timeToFirstSlideMs:firstSlide,
-        timeToCacheAllMs:cacheDuration,pageJumpMs:pageDuration,hostMetrics,studentMetrics});
+        timeToCacheAllMs:cacheDuration,pageJumpMs:pageDuration,hostMetrics,studentMetrics,
+        perFile,cacheVerificationMs,timeToVerifiedCacheAllMs,originalBytesVerified:true});
       console.log('Stage 0 host metrics: ' +
         hostMetrics.map(m => m.metric + '=' + m.count).join(', '));
       console.log('Baseline ' + iteration + '/' + repeats + ': first=' +
@@ -191,26 +224,33 @@ try {
     }
   }
 } finally {
-  await browser.close();
-  backend.child.kill('SIGTERM');
+  await browser?.close().catch(() => {});
+  backend?.child.kill('SIGTERM');
+  // Delete only the known generated fixture, then its empty private directory.
+  await unlink(fixturePath);
+  await rmdir(fixtureDirectory);
 }
 const report = {
-  schema: 'flashview-stage0-baseline-v1',
-  label: 'synthetic-headless-localhost-not-real-classroom-speed',
-  backend: isCloudflare ? 'cloudflare-local' : 'node-local',
-  fixture: '10-page-nonlinearized-text-pdf-with-comment-padding',
-  configuration: {mib,repeats,studentCount,simulatedFileReadDelayMs:slowReadMs,transferMode,packetKiB},
+  schema: 'flashview-stage0-baseline-v2',
+  label: remoteOrigin ? 'live-relay-browser-on-this-machine-not-campus-proof' : 'synthetic-headless-localhost-not-real-classroom-speed',
+  backend: remoteOrigin ? 'cloudflare-live-relay' : isCloudflare ? 'cloudflare-local' : 'node-local',
+  fixture: binaryFixture ? 'incompressible-random-binary' : '10-page-nonlinearized-text-pdf-with-comment-padding',
+  measurement: 'all-application-cache-completions-plus-separate-bounded-SHA256-readback',
+  configuration: {mib,actualBytes:fixture.length,repeats,studentCount,
+    simulatedFileReadDelayMs:slowReadMs,transferMode,packetKiB,measureViewer,timeoutMs},
   median: {
     firstSlideMs: median(results.flatMap(x => x.timeToFirstSlideMs === null ? [] : [x.timeToFirstSlideMs])),
     cacheAllMs: median(results.map(x => x.timeToCacheAllMs)),
-    pageJumpMs: median(results.map(x => x.pageJumpMs)),
+    verifiedCacheAllMs: median(results.map(x => x.timeToVerifiedCacheAllMs)),
+    pageJumpMs: median(results.flatMap(x => x.pageJumpMs === null ? [] : [x.pageJumpMs])),
   },
   runs: results,
 };
 await mkdir('test-artifacts',{recursive:true});
-const filename = 'test-artifacts/stage0-' + (isCloudflare?'cloudflare':'node') +
+const filename = 'test-artifacts/stage0-' + (remoteOrigin ? 'cloudflare-live' : isCloudflare?'cloudflare':'node') +
   '-' + mib + 'mib-' + studentCount + 'students-' + slowReadMs + 'ms-' + transferMode +
-  (packetKiB === 64 ? '' : '-packet' + packetKiB + 'kib') + '.json';
+  (packetKiB === 64 ? '' : '-packet' + packetKiB + 'kib') +
+  (binaryFixture ? '-binary' : '') + (measureViewer ? '-viewer-after' : '') + '.json';
 await writeFile(filename,JSON.stringify(report,null,2)+'\n','utf8');
 console.log('Stage 0 report: ' + filename);
 console.log(JSON.stringify(report.median));

@@ -39,7 +39,7 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
   const showIcon=!(pdf||powerpoint)||imageFailed||(!previewUrl&&(fallbackTimeout||file.status==='offline'||powerpoint));
   const progressLabel=cached?'Fully cached':Math.round(percent)+'% cached'+
     (bytesPerSecond>0?' · '+formatBytes(bytesPerSecond)+'/s':'');
-  return <article className="document-row document-card" data-owner-id={file.ownerId}>
+  return <article className="document-row document-card" data-owner-id={file.ownerId} data-file-id={file.fileId}>
     <div className="document-card-visual">
       <div className="document-thumb" aria-hidden="true">
         {(pdf||powerpoint)&&previewUrl&&!imageFailed&&

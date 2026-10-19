@@ -15,11 +15,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - run: npm run build
+      - run: npm run build:pilot
       - run: npm run check:cloudflare
       - run: npm test
       - run: npx playwright install --with-deps chromium
+      - run: npm run test:benchmark
+      - run: npm run test:r2
+      - run: node --import tsx --test tests/r2Pilot.browser.ts
+      - name: Shared relay lifecycle — Cloudflare
+        run: node --import tsx --test tests/relay.test.ts
+        env:
+          FLASHVIEW_BACKEND: cloudflare
       - run: npm run test:browser
       - name: Install Firefox for fullscreen compatibility checks
         run: npx playwright install --with-deps firefox

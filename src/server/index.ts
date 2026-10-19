@@ -4,6 +4,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { roomExpiresAt } from '../shared/roomLifetime.js';
+import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle.js';
 import {
   decodeRangePacket, MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
   type PdfManifest, type StudentInfo,
@@ -129,8 +130,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       connections.set(ws, peer);
       const ownFiles = [...room.files.values()].filter(f => f.ownerId === peer.id);
       for (const file of ownFiles) {
-        if (file.status === 'offline') {
-          file.status = previous.approved ? 'approved' : 'pending';
+        if (resumeDisconnectedFile(file, previous.approved)) {
           notifyHost(room, { type: 'file.updated', file });
         }
       }
@@ -313,7 +313,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
     const file = room.files.get(msg.fileId);
     if (file?.ownerId === peer.id) {
-      file.status = 'offline';
+      revokeFile(file);
       for (const [id, pending] of room.outstanding) {
         if (pending.fileId === msg.fileId) {
           room.outstanding.delete(id);

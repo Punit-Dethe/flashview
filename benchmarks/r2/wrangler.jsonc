@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "flashview-r2-benchmark",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-10-16",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "flashview-benchmark-punit" }],
+  "durable_objects": { "bindings": [
+    { "name": "RUNS", "class_name": "BenchmarkRun" },
+    { "name": "PILOTS", "class_name": "BenchmarkPilot" }
+  ] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["BenchmarkRun"] },
+    { "tag": "v2", "new_sqlite_classes": ["BenchmarkPilot"] }
+  ]
+}

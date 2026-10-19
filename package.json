@@ -21,7 +21,13 @@
     "prepare:pdf": "node scripts/copy-pdf-assets.mjs",
     "prebuild": "npm run prepare:pdf",
     "predev:client": "npm run prepare:pdf",
-    "bench:baseline": "node --import tsx tests/benchmark.baseline.ts"
+    "bench:baseline": "node --import tsx tests/benchmark.baseline.ts",
+    "bench:r2": "node --import tsx tests/benchmarks/r2-runner.ts",
+    "build:pilot": "vite build --config benchmarks/r2/vite.config.ts",
+    "bench:invite": "node --import tsx scripts/create-benchmark-invite.ts",
+    "test:benchmark": "node --import tsx --test tests/benchmarkObserver.browser.ts",
+    "test:r2": "node --import tsx tests/benchmarks/run-r2-tests.ts",
+    "test:pilot": "npm run build:pilot && node --import tsx --test tests/r2Pilot.browser.ts"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.15",

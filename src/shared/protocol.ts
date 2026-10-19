@@ -15,6 +15,8 @@ export interface FileManifest {
   ownerId: string;
   ownerName: string;
   status: 'pending' | 'approved' | 'rejected' | 'offline';
+  /** An explicit stop is terminal; offline without this marker can reconnect. */
+  revoked?: boolean;
   /** Cached bytes last acknowledged by the classroom computer (not sent bytes). */
   cachedBytes?: number;
 }

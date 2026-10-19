@@ -13,5 +13,6 @@
     "types": ["node", "vite/client", "@cloudflare/workers-types"],
     "resolveJsonModule": true
   },
-  "include": ["src", "vite.config.ts", "tests"]
+  "include": ["src", "vite.config.ts", "tests", "benchmarks/**/*.ts", "benchmarks/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "**/.wrangler"]
 }

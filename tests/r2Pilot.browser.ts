@@ -79,6 +79,10 @@ test('real-device pilot: sender closes, original is verified in OPFS, preview st
     hostContext.on('request', request => { if (/\/api\/runs\/[^/]+\/file/.test(request.url())) originalRequests++; });
     await host.getByRole('button', { name: 'Preview cached image' }).click();
     await host.getByRole('img', { name: 'pixel.png', exact: true }).waitFor();
+    await host.waitForFunction(() => {
+      const image = document.querySelector('img[alt="pixel.png"]') as HTMLImageElement | null;
+      return image?.complete && image.naturalWidth === 1;
+    });
     await host.getByRole('button', { name: 'Close preview' }).click();
     assert.equal(originalRequests, 0, 'Viewing only reads verified local cache');
     assert.equal(downloads, 0);

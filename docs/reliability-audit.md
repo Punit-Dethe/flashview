@@ -1,6 +1,6 @@
 # FlashView — Reliability Audit Tracker
 
-**Status:** Living engineering document · **Last updated:** 19 October 2026 · **Baseline audit:** `0581111e2` · **Latest verified main:** [`e898dd8`](https://github.com/Punit-Dethe/flashview/commit/e898dd89db464b4910cd1224081e34b19962a42c) (full post-merge CI green).
+**Status:** Living engineering document · **Last updated:** 19 October 2026 · **Baseline audit:** `0581111e2` · **Last fully CI-verified fix before this change:** [`6148744`](https://github.com/Punit-Dethe/flashview/commit/6148744284a6c8178bbf8725fef25f8adb7c08fd) (PR #30). [#31](https://github.com/Punit-Dethe/flashview/pull/31) requires full CI and merge before the updated resolution count applies to main.
 
 This document tracks the original **30 reliability findings** (H1–H10, M1–M14, L1–L6). It is not a new audit, and it does **not** count PRs as bugs: one PR may fix multiple symptoms; several PRs may address one finding.
 
@@ -9,9 +9,9 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 | Priority | Verified resolved | Partially mitigated | Still open / not verified resolved | Total |
 |---|---:|---:|---:|---:|
 | High (H1–H10) | 7 | 3 | 0 | 10 |
-| Medium (M1–M14) | 1 | 0 | 13 | 14 |
+| Medium (M1–M14) | 2 | 0 | 12 | 14 |
 | Low (L1–L6) | 0 | 0 | 6 | 6 |
-| **Original audit** | **8** | **3** | **19** | **30** |
+| **Original audit** | **9** | **3** | **18** | **30** |
 
 **Status meanings:** `Resolved` = an identified failure path has a merged, passing regression test; `Partial` = important mitigations merged but the full category is still open; `Open` = known issue with outstanding work; `Needs baseline wording` = no confirmed original issue description was retained, so its resolution cannot be asserted. CI success verifies tested scenarios, **not** every device/network/production environment. The counts above treat all unverified entries as *not verified resolved*, not necessarily reproduced bugs.
 
@@ -25,7 +25,7 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 | H2 | **Resolved** | Phone file offers could be delayed while an old host-availability flag stayed false. | Announce/replay offers after authenticated socket readiness even with stale host status. | [`b73bde4`](https://github.com/Punit-Dethe/flashview/commit/b73bde4) |
 | H3 | **Partial** | Healthy files could remain at 0% when scheduler or browser-storage operations stalled. | Scheduler wake-up for new files [#24](https://github.com/Punit-Dethe/flashview/pull/24); IndexedDB deadline and retryable index reads [#27](https://github.com/Punit-Dethe/flashview/pull/27). **Left:** real-device suspended-tab, long-session and persistent-stall verification. | [#24](https://github.com/Punit-Dethe/flashview/pull/24), [#27](https://github.com/Punit-Dethe/flashview/pull/27) |
 | H4 | **Resolved** | A single file/range error could force the entire room socket to reconnect. | Distinguish file-specific failures from genuinely unresponsive room connectivity. | [`3c1baa9`](https://github.com/Punit-Dethe/flashview/commit/3c1baa9) |
-| H5 | **Partial** | One failed IndexedDB write could leave a document permanently stuck and silently incomplete. | Retry the original failed chunk without reuploading [#25](https://github.com/Punit-Dethe/flashview/pull/25); bound stalled writes [#27](https://github.com/Punit-Dethe/flashview/pull/27). **Now addressed in [#30](https://github.com/Punit-Dethe/flashview/pull/30):** repeated confirmed full-quota writes pause the affected file and show a persistent host Retry saving action. **Left:** real-device low-space validation and a larger-memory fallback policy. | [#25](https://github.com/Punit-Dethe/flashview/pull/25), [#27](https://github.com/Punit-Dethe/flashview/pull/27) |
+| H5 | **Partial** | One failed IndexedDB write could leave a document permanently stuck and silently incomplete. | Retry the original failed chunk without reuploading [#25](https://github.com/Punit-Dethe/flashview/pull/25); bound stalled writes [#27](https://github.com/Punit-Dethe/flashview/pull/27). **Now addressed in [#30](https://github.com/Punit-Dethe/flashview/pull/30):** repeated confirmed full-quota writes pause the affected file and show a persistent host Retry saving action. **Left:** real-device low-space validation and a larger-memory fallback policy. | [#25](https://github.com/Punit-Dethe/flashview/pull/25), [#27](https://github.com/Punit-Dethe/flashview/pull/27), [#30](https://github.com/Punit-Dethe/flashview/pull/30) |
 | H6 | **Resolved** | Cloudflare forwarding could drop packets or overfill receiver buffers under backpressure. | Enforce bounded forwarding when queue metrics exist and avoid false rejection when they don't. | [`8ee1550`](https://github.com/Punit-Dethe/flashview/commit/8ee1550), [`6b9e599`](https://github.com/Punit-Dethe/flashview/commit/6b9e599) |
 | H7 | **Resolved** | Lost completion acknowledgments could leave student-side Done/progress stale. | Add relay-receipted, idempotent completion notices and replay until receipted. | [`2ceaa43`](https://github.com/Punit-Dethe/flashview/commit/2ceaa43) |
 | H8 | **Resolved** | Classroom could expire two hours after *creation* despite continued use. | Node and Durable Object now expire after the latest authenticated host activity; test alarm/recovery behavior. | [#23](https://github.com/Punit-Dethe/flashview/pull/23) |
@@ -36,7 +36,7 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 
 | ID | Status | Problem / impact | Work done / what's pending | Evidence |
 |---|---|---|---|---|
-| M1 | **Open** | Chunk-progress aggregation can repeatedly sum a growing set of cached chunks (potential quadratic work). | Profile `completion()`/progress updates and replace repeated scans with correctly updated counters if benchmarks justify it. | [Cache scheduler](../src/client/pdf/roomCache.ts) |
+| M1 | **Resolved** | Progress repeatedly summed an ever-growing set of persisted 64 KiB chunk indexes (quadratic cumulative work). | [#31](https://github.com/Punit-Dethe/flashview/pull/31) maintains an O(1) byte counter updated on each committed add/delete/clear. One initial scan remains for browser cache restoration. Duplicate writes, stale-cache repairs and partial tail chunks have targeted tests, plus existing browser transfer/integrity and benchmark CI. | [#31](https://github.com/Punit-Dethe/flashview/pull/31) |
 | M2 | **Open** | One IndexedDB write transaction per 64 KiB block increases storage overhead. | An **opt-in** batching A/B exists, not a proven default replacement. Profile actual mobile/desktop reliability and throughput before enabling; safeguard atomic resume. | [#15](https://github.com/Punit-Dethe/flashview/pull/15) |
 | M3 | **Resolved** | In-memory cached-index data could claim 100% after a persisted chunk disappeared. | Cross-check persisted keys at completion, invalidate missing memory copies, retract stale Done, re-fetch missing ranges and verify byte hash. | [#26](https://github.com/Punit-Dethe/flashview/pull/26) |
 | M4 | **Needs baseline wording** | Original finding description not available in committed audit records. | Recover exact finding, reproduce or inspect, then define a scoped fix/test. | Baseline `0581111e2` |
@@ -67,7 +67,7 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 1. **H5 — persistent quota UX ([#30](https://github.com/Punit-Dethe/flashview/pull/30)).** Visible pause after repeated quota errors and deliberate retry; verify on real low-storage phones and define a safe fallback that does not delete live room data.
 2. **H10 — remaining memory pressure.** Measure realistic 50–200 MiB downloads/PPTX renders, remove avoidable buffer copies, preserve integrity and disabled-retry semantics.
 3. **H3 — remaining real-device stalls.** Validate long-lived host sessions, background tab suspension, student phone lock/reconnect and different internet connections.
-4. **M1 and M2.** Profile incremental cached-byte counts and write batching, comparing fixed/default vs experimental settings without regressing fairness.
+4. **M2 — IndexedDB write amplification.** Evaluate the existing opt-in batching experiment on real devices with explicit throughput, fairness, and atomicity checks. M1 was addressed in [#31](https://github.com/Punit-Dethe/flashview/pull/31).
 5. **M4–M14 and L1–L6.** Recover the original 17 missing descriptions from the 18 October 2026 read-only audit, or re-audit the current code and **explicitly assign new descriptions** (do not present guesses as original findings).
 
 ## How to keep this tracker current

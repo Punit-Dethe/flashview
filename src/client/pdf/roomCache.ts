@@ -6,6 +6,7 @@ import { packetChunksFromQuery, selectMissingChunkGroup } from './networkPacket'
 import { shouldReconnectForRangeFailure } from './transferRecovery';
 import { storageRetryDelay } from './storageRecovery';
 import { isQuotaError, quotaExhausted } from './quotaRecovery';
+import { CachedChunkIndex } from './chunkProgress';
 import { withStorageDeadline } from './storageWatchdog';
 
 export const CHUNK_BYTES = 65_536;
@@ -61,15 +62,6 @@ function database(): Promise<IDBDatabase> {
     });
   }
   return openDatabase;
-}
-
-function completion(file: PdfManifest, indices: Set<number>): CacheProgress {
-  const count = Math.ceil(file.size / CHUNK_BYTES);
-  let bytes = 0;
-  for (const i of indices) {
-    if (i >= 0 && i < count) bytes += Math.min(CHUNK_BYTES, file.size - i * CHUNK_BYTES);
-  }
-  return { fileId: file.fileId, bytes, size: file.size, complete: indices.size === count && bytes === file.size };
 }
 
 async function readChunk(key: string): Promise<ArrayBuffer | null> {
@@ -238,7 +230,7 @@ export class RoomPdfCache {
   private memory = new Map<string, Uint8Array>();
   private pendingWrites = new Set<Promise<void>>();
   private memoryBytes = 0;
-  private indices = new Map<string, Promise<Set<number>>>();
+  private indices = new Map<string, Promise<CachedChunkIndex>>();
   private verifyingCompleted = new Map<string, Promise<CacheProgress>>();
   private jobs = new Map<string, PdfManifest>();
   private working = false;
@@ -307,11 +299,11 @@ export class RoomPdfCache {
       try { await writing; }
       finally { this.pendingWrites.delete(writing); }
       if (this.stopped || this.storageRecovery.get(fileId) !== state) return;
-      const indexed = await this.indexSet(fileId);
+      const indexed = await this.indexSet(state.file);
       if (this.stopped || this.storageRecovery.get(fileId) !== state) return;
       indexed.add(state.record.index);
       this.notePersistedByte(fileId);
-      const progress = completion(state.file, indexed);
+      const progress = indexed.progress(state.file.fileId);
       this.onProgress(progress);
       this.notifyCacheWaiters(state.record.key);
       this.storageRecovery.delete(fileId);
@@ -359,17 +351,20 @@ export class RoomPdfCache {
   private key(fileId: string, index: number): string {
     return this.roomId + '/' + fileId + '/' + index;
   }
-  private indexSet(fileId: string): Promise<Set<number>> {
+  private indexSet(file: PdfManifest): Promise<CachedChunkIndex> {
+    const fileId = file.fileId;
     let pending = this.indices.get(fileId);
     if (!pending) {
-      pending = cachedIndices(this.roomId, fileId).catch(error => {
-        this.warning();
-        // A timeout says NOTHING about whether the original chunks exist.
-        // Discard the failed lookup and retry later; treating it as an empty
-        // cache would retransmit existing bytes and mask the storage problem.
-        this.indices.delete(fileId);
-        throw error;
-      });
+      // Reconstruct persisted bytes once per room cache hydration. Subsequent
+      // committed writes update both the index and byte total in constant time.
+      pending = cachedIndices(this.roomId, fileId)
+        .then(keys => new CachedChunkIndex(file.size, keys))
+        .catch(error => {
+          this.warning();
+          // A failed lookup is not evidence that stored chunks are missing.
+          this.indices.delete(fileId);
+          throw error;
+        });
       this.indices.set(fileId, pending);
     }
     return pending;
@@ -381,8 +376,8 @@ export class RoomPdfCache {
    * This happens only at the completion boundary and during low-rate room
    * snapshots, never for each chunk or network range.
    */
-  private checkedProgress(file: PdfManifest, indexed: Set<number>): Promise<CacheProgress> {
-    const initial = completion(file, indexed);
+  private checkedProgress(file: PdfManifest, indexed: CachedChunkIndex): Promise<CacheProgress> {
+    const initial = indexed.progress(file.fileId);
     if (!initial.complete) return Promise.resolve(initial);
     const existing = this.verifyingCompleted.get(file.fileId);
     if (existing) return existing;
@@ -406,7 +401,7 @@ export class RoomPdfCache {
         indexed.clear();
         for (const index of persisted) indexed.add(index);
       }
-      const fresh = completion(file, indexed);
+      const fresh = indexed.progress(file.fileId);
       if (stale && !fresh.complete) {
         const repaired = { ...fresh, corrected: true };
         // Correction is authoritative. A previously reported 100% can be
@@ -476,7 +471,7 @@ export class RoomPdfCache {
     } catch { return null; }
   }
   async progress(file: PdfManifest): Promise<CacheProgress> {
-    const indices = await this.indexSet(file.fileId);
+    const indices = await this.indexSet(file);
     const state = await this.checkedProgress(file, indices);
     if (state.corrected && file.status === 'approved' && !this.storageFailedFiles.has(file.fileId))
       this.prefetch(file);
@@ -493,7 +488,7 @@ export class RoomPdfCache {
     // Our room/file index was loaded once from IndexedDB and is kept current
     // after every successful write. Avoid a database transaction for every
     // chunk already known to be missing.
-    const indexed = await this.indexSet(file.fileId);
+    const indexed = await this.indexSet(file);
     if (indexed.has(index)) {
       try {
         const stored = await readChunk(key);
@@ -541,7 +536,7 @@ export class RoomPdfCache {
         await saving;
         if (perf.enabled) perf.record('cache_write_ms', performance.now() - writingSince, { bytes: data.byteLength });
         if (this.stopped) return data;
-        const set = await this.indexSet(file.fileId);
+        const set = await this.indexSet(file);
         set.add(index);
         this.notePersistedByte(file.fileId);
         const state = await this.checkedProgress(file, set);
@@ -601,7 +596,7 @@ export class RoomPdfCache {
         await saving;
         if (perf.enabled) perf.record('cache_write_ms', performance.now() - writingSince, { bytes: piece.byteLength });
         if (this.stopped) return;
-        const set = await this.indexSet(file.fileId);
+        const set = await this.indexSet(file);
         set.add(index);
         this.notePersistedByte(file.fileId);
         const state = await this.checkedProgress(file, set);
@@ -639,7 +634,7 @@ export class RoomPdfCache {
       if (signal?.aborted) throw Error('Presentation range cancelled');
       const memory = this.memory.get(key);
       if (memory?.byteLength === expected) return memory;
-      const indexed = await this.indexSet(file.fileId);
+      const indexed = await this.indexSet(file);
       if (indexed.has(index)) {
         try {
           const bytes = await readChunk(key);
@@ -801,7 +796,7 @@ export class RoomPdfCache {
             if (Date.now() < (this.cooldown.get(fileId) ?? 0)) continue;
             let cached: Set<number>;
             try {
-              cached = await this.indexSet(fileId);
+              cached = await this.indexSet(file);
             } catch {
               // An IndexedDB lookup timeout is file-local. Other students
               // must continue, and a later query may succeed. Never restart

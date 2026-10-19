@@ -2065,21 +2065,29 @@ test('a stalled IndexedDB index query times out and retries without losing a pho
       (window as typeof window & { __blockedIndexOnce?: boolean }).__blockedIndexOnce === true);
     const row = host.locator('.document-row').filter({ hasText: 'index-timeout.pdf' });
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 35000 });
-    const actual = await host.evaluate(async room => {
+    const digest = await host.evaluate(async room => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const req = indexedDB.open('flashview-room-cache');
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });
-      return new Promise<Array<{index: number; data: ArrayBuffer}>>((resolve, reject) => {
+      const chunks = await new Promise<Array<{index: number; data: ArrayBuffer}>>((resolve, reject) => {
         const req = db.transaction('chunks', 'readonly').objectStore('chunks').index('room')
           .getAll(IDBKeyRange.only(room));
         req.onsuccess = () => resolve(req.result as Array<{index: number; data: ArrayBuffer}>);
         req.onerror = () => reject(req.error);
       });
+      chunks.sort((a, b) => a.index - b.index);
+      const bytes = new Uint8Array(chunks.reduce((count, chunk) => count + chunk.data.byteLength, 0));
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(new Uint8Array(chunk.data), offset);
+        offset += chunk.data.byteLength;
+      }
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      return Array.from(hash, n => n.toString(16).padStart(2, '0')).join('');
     }, code);
-    actual.sort((a, b) => a.index - b.index);
-    assert.equal(Buffer.concat(actual.map(row => Buffer.from(row.data))).equals(pdf), true,
+    assert.equal(digest, createHash('sha256').update(pdf).digest('hex'),
       'The resumed transfer must persist every original byte');
   } finally {
     await browser.close();

@@ -7,7 +7,7 @@ For the architecture first, read [Architecture](./architecture.md). This guide f
 Install **Node.js 22+** and npm. From the repository root:
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -31,6 +31,9 @@ Use two browser windows to test a room locally: create it in one, join by its si
 | `npm run test:browser` | Browser E2E suite |
 | `npm run test:browser:cloudflare` | Launch the Cloudflare-backed browser runner |
 | `npm run bench:baseline` | Synthetic transfer benchmark harness |
+| `npm run test:benchmark` | Browser regression for all-file completion measurement |
+| `npm run test:r2` | Isolated local R2 API/integrity/cleanup checks |
+| `npm run bench:r2` | Isolated R2 upload → verified private OPFS cache experiment |
 
 Playwright browsers may need a one-time installation such as `npx playwright install --with-deps chromium`.
 
@@ -83,9 +86,30 @@ Query parameters for controlled transfer comparisons:
 
 Do not infer a faster real-world connection from one localhost throughput sample. Compare consistent fixtures, senders, network conditions and number of students, and keep benchmark artifacts with the PR when useful.
 
+The v2 baseline waits for **every** explicit cache-complete flag, records per-file
+completion independently of viewing, and verifies source SHA-256 blocks against
+bounded browser-cache readback. Rounded `aria-valuenow="100"` is insufficient.
+`BENCH_PACKET_KIB=64` now explicitly selects 64 KiB; old reports could accidentally
+use the production 256 KiB default. Do not compare old v1 reports as equivalent.
+`BENCH_VIEWER=after` optionally measures rendering only after all cache verification;
+the default benchmark does not open a presenter. `BENCH_FIXTURE=binary` selects
+incompressible bytes. Sizes up to 200 MiB and up to 30 senders are accepted.
+
+See [R2 experiment instructions](../benchmarks/r2/README.md) for the separate
+Worker, local tests, measurement boundaries, and live-run prerequisites. Its
+endpoint does not replace the application's current room API.
+
 ## Documentation and review expectations
 
 - A transfer or storage code change updates [Architecture](./architecture.md), [Protocol](./transfer-protocol.md) or [Security and reliability](./security-and-reliability.md) if behavior changes.
 - Every reliability-audit PR updates the matching entry in [the tracker](./reliability-audit.md), including limitations and a specific test or CI result.
 - Historical designs in [the archived plan](./archive/initial-engineering-plan.md) are not implementation authority; avoid copying outdated PDF-only claims into current docs.
 - Never commit tokens, room links, actual user files or confidential logs.
+
+## Real-device R2 pilot
+
+`npm run build:pilot` builds the isolated host/sender UI; `npm run test:pilot`
+checks original-byte OPFS receipt after sender closure and local-only preview.
+After deploying the experiment, `npm run bench:invite` creates an ignored local
+links page with expiring R2 and relay test invitations. See
+[the experiment guide](../benchmarks/r2/README.md) for scope and limitations.

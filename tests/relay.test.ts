@@ -49,7 +49,10 @@ class TestPeer {
 }
 
 async function connect(port: number, auth: Record<string, unknown>): Promise<TestPeer> {
-  const ws = new WebSocket('ws://127.0.0.1:' + port + '/ws', {
+  const room = typeof auth.code === 'string' ? auth.code
+    : typeof auth.joinToken === 'string' ? auth.joinToken.split('.')[0] : String(auth.roomId ?? '');
+  const suffix = process.env.FLASHVIEW_BACKEND === 'cloudflare' ? '?room=' + room : '';
+  const ws = new WebSocket('ws://127.0.0.1:' + port + '/ws' + suffix, {
     origin: 'http://127.0.0.1:' + port,
   });
   const peer = new TestPeer(ws);
@@ -71,13 +74,17 @@ async function unusedPort(): Promise<number> {
 }
 async function startServer(): Promise<{ port: number; child: ChildProcessWithoutNullStreams }> {
   const port = await unusedPort();
-  const child = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
+  const useCloudflare = process.env.FLASHVIEW_BACKEND === 'cloudflare';
+  const child = spawn(process.execPath, useCloudflare
+    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--port', String(port), '--ip', '127.0.0.1']
+    : ['--import', 'tsx', 'src/server/index.ts'], {
     cwd: process.cwd(),
     env: { ...process.env, PORT: String(port), NODE_ENV: 'test' },
   });
   let output = '';
+  child.stdout.on('data', () => {});
   child.stderr.on('data', data => { output += String(data); });
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 200; i++) {
     if (child.exitCode !== null) throw new Error('Server crashed: ' + output);
     try {
       const response = await fetch('http://127.0.0.1:' + port + '/health');
@@ -209,5 +216,62 @@ test('open admission is an explicit room creation choice and preserves sender-on
   } finally {
     for (const peer of peers) peer.close();
     child.kill('SIGTERM');
+  }
+});
+
+test('owner stop cancels pending bytes and remains terminal after reconnect and offer replay', { timeout: 20000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const creation = await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' });
+    const room = await creation.json() as { roomId: string; code: string; hostToken: string; joinToken: string };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken });
+    peers.push(host);
+    await host.wait('room.state');
+    const student = await connect(port, { role: 'student', joinToken: room.joinToken, name: 'Stop tester' });
+    peers.push(student);
+    const joined = await student.wait('join.accepted');
+    const fileId = 'revoked-original';
+    student.send({ type: 'file.offer', fileId, name: 'original.bin', size: 4 });
+    await student.wait('file.approved');
+    await host.wait('file.announced');
+    const requestId = 'pending-revoked-range';
+    host.send({ type: 'range.request', requestId, fileId, begin: 0, end: 4 });
+    await student.wait('range.request');
+    student.send({ type: 'file.revoke', fileId });
+    assert.equal((await host.wait('range.error')).requestId, requestId);
+    const update = await host.wait('file.updated');
+    assert.equal((update.file as { revoked: boolean }).revoked, true);
+    // A late response must never slip through after the cancellation receipt.
+    student.ws.send(encodeRangePacket({ type: 'range.data', requestId, fileId, begin: 0 }, Uint8Array.of(1, 2, 3, 4)));
+    student.send({ type: 'heartbeat.ping' });
+    await student.wait('heartbeat.pong');
+    host.send({ type: 'room.sync' });
+    await host.wait('room.state');
+    assert.ok(host.events.every(event => !event.binary));
+
+    // A different file disconnected by presence alone must still recover.
+    student.send({ type: 'file.offer', fileId: 'resumable-original', name: 'live.bin', size: 4 });
+    await student.wait('file.approved');
+    await host.wait('file.announced');
+    student.close();
+    await host.wait('student.left');
+    const resumed = await connect(port, { role: 'student', joinToken: room.joinToken,
+      name: 'Stop tester', resumeToken: joined.resumeToken });
+    peers.push(resumed);
+    const snapshot = await resumed.wait('join.resumed');
+    const files = snapshot.files as Array<{ fileId: string; status: string; revoked?: boolean }>;
+    assert.equal(files.find(file => file.fileId === fileId)?.status, 'offline');
+    assert.equal(files.find(file => file.fileId === fileId)?.revoked, true);
+    assert.equal(files.find(file => file.fileId === 'resumable-original')?.status, 'approved');
+    resumed.send({ type: 'file.offer', fileId, name: 'original.bin', size: 4 });
+    const replay = await resumed.wait('file.state');
+    assert.equal((replay.file as { status: string }).status, 'offline');
+    assert.equal((replay.file as { revoked: boolean }).revoked, true);
+    host.send({ type: 'range.request', requestId: 'retry-revoked-range', fileId, begin: 0, end: 4 });
+    assert.equal((await host.wait('range.error')).requestId, 'retry-revoked-range');
+  } finally {
+    for (const peer of peers) peer.close();
+    child.kill();
   }
 });

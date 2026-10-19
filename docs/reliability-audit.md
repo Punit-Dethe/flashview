@@ -70,6 +70,16 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 4. **M2 — IndexedDB write amplification.** Evaluate the existing opt-in batching experiment on real devices with explicit throughput, fairness, and atomicity checks. M1 was addressed in [#31](https://github.com/Punit-Dethe/flashview/pull/31).
 5. **M4–M14 and L1–L6.** Recover the original 17 missing descriptions from the 18 October 2026 read-only audit, or re-audit the current code and **explicitly assign new descriptions** (do not present guesses as original findings).
 
+## New implementation findings (outside the original 30)
+
+| ID | Status | Finding and evidence |
+|---|---|---|
+| N1 | Implemented locally; not merged/deployed | Explicit stop previously used the same offline state as disconnection and could be undone on resume. A shared file lifecycle now persists a terminal `revoked` marker; both relays cancel pending ranges. `tests/relay.test.ts` verifies stop, late bytes, reconnect, replay and normal disconnect recovery against Node and local Cloudflare. |
+| N2 | Implemented locally; not merged/deployed | Benchmark reported the first completed file as all completed, accepted rounded percentages, and mislabeled default packet size. The v2 observer measures every explicit completion/retraction; SHA-256 cache readback checks original bytes. Browser observer regression and simultaneous-sender local benchmarks pass. Historical v1 performance results are not equivalent to v2. |
+
+These entries do not change the original audit's resolved counts. Live R2 and
+physical campus/device performance remain separate verification gates.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

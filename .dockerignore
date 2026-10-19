@@ -6,3 +6,9 @@ dist
 .env.*
 coverage
 *.log
+.wrangler
+**/.wrangler
+.dev.vars*
+**/.dev.vars*
+test-artifacts
+public/pdf-assets

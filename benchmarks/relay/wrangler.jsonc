@@ -1,0 +1,12 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "flashview-relay-benchmark",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-10-16",
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "ClassroomRoom" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ClassroomRoom"] }],
+  "assets": {
+    "directory": "../../dist", "binding": "ASSETS", "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/ws", "/health", "/__benchmark/session", "/__benchmark/invite"]
+  }
+}

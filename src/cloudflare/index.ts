@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
+import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle';
 import {
   MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
@@ -196,8 +197,7 @@ export class ClassroomRoom extends DurableObject<Env> {
         });
         let changed = false;
         for (const file of this.files.values()) {
-          if (file.ownerId === previous.id && file.status === 'offline') {
-            file.status = previous.approved ? 'approved' : 'pending';
+          if (file.ownerId === previous.id && resumeDisconnectedFile(file, previous.approved)) {
             this.sendHost({ type: 'file.updated', file });
             changed = true;
           }
@@ -438,7 +438,12 @@ export class ClassroomRoom extends DurableObject<Env> {
     } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
       const file = this.files.get(msg.fileId);
       if (file?.ownerId === peer.id) {
-        file.status = 'offline';
+        revokeFile(file);
+        for (const [requestId, range] of this.ranges) {
+          if (range.fileId !== file.fileId) continue;
+          this.ranges.delete(requestId);
+          this.sendHost({ type: 'range.error', requestId, message: 'File sharing stopped' });
+        }
         await this.persist();
         this.sendHost({ type: 'file.updated', file });
       }

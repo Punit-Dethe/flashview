@@ -37,6 +37,12 @@ Control messages are UTF-8 JSON over WebSocket and include `{ "v": 1, "type": ".
 
 The relay's role is message validation and **routing**, not processing or retaining the original document.
 
+`file.revoke` is terminal for that file ID. For v1 compatibility its manifest
+keeps `status: "offline"` and adds `revoked: true`. Reconnection restores ordinary
+offline manifests only; it never restores explicitly stopped files. Both relays
+cancel outstanding ranges on revoke and ignore their late responses. A new share
+must use a new file ID. Already cached original bytes are not recalled.
+
 ## Binary file data
 
 Byte payloads use a compact frame built by `encodeRangePacket`:

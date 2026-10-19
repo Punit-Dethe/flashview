@@ -116,3 +116,19 @@ checks original-byte OPFS receipt after sender closure and local-only preview.
 After deploying the experiment, `npm run bench:invite` creates an ignored local
 links page with expiring R2 and relay test invitations. See
 [the experiment guide](../benchmarks/r2/README.md) for scope and limitations.
+
+## Relay lifecycle regression checks
+
+`tests/roomControl.test.ts` checks scoped authorization, stale/expired generations,
+bounded metadata, serialized lease renewal and end/cleanup ordering under lost
+responses, deadlines and persistence failures. `tests/relay.test.ts` exercises
+the same HTTP lifecycle contract on Node and local Cloudflare, including operation
+without a host WebSocket and denial of host privileges to a presenter lease.
+
+The `room lifecycle:` browser scenarios inject failed/lost end responses, refresh
+with a pending close, and abort the first cache deletion before retry. They also
+advance the dashboard clock by over two hours while hidden, prove independent
+presenter renewal/bridge responsiveness, and check copied host credentials were
+removed before rendering. These are synthetic browser conditions; physical OS
+suspension is still a device test. CI runs these scenarios on Chromium/Node,
+Chromium/Cloudflare and Firefox/Node alongside existing transfer/viewer checks.

@@ -275,3 +275,54 @@ test('owner stop cancels pending bytes and remains terminal after reconnect and 
     child.kill();
   }
 });
+
+test('scoped HTTP lease and acknowledged generation-safe room end work without a host socket', { timeout: 20000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const origin = 'http://127.0.0.1:' + port;
+    const room = await (await fetch(origin + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; code: string; roomGeneration: string; hostToken: string; leaseToken: string; joinToken: string;
+    };
+    assert.match(room.roomGeneration, /^[a-f0-9-]{36}$/);
+    assert.notEqual(room.leaseToken, room.hostToken);
+    const control = (action: string, token: string, generation = room.roomGeneration, originHeader?: string) =>
+      fetch(origin + '/api/rooms/' + room.roomId + '/' + action, { method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json',
+          ...(originHeader ? { Origin: originHeader } : {}) }, body: JSON.stringify({ roomGeneration: generation }) });
+    assert.ok([401, 403].includes((await control('lease', room.joinToken)).status));
+    assert.equal((await control('end', room.leaseToken)).status, 403, 'Presenter lease cannot end a room');
+    assert.equal((await control('lease', room.leaseToken, room.roomGeneration, 'https://other.example')).status, 403);
+    const renewed = await control('lease', room.leaseToken);
+    assert.equal(renewed.status, 200);
+    assert.equal((await renewed.json() as { state: string }).state, 'active', 'Renewal needs no host WebSocket');
+    const stale = await control('end', room.hostToken, crypto.randomUUID());
+    assert.equal((await stale.json() as { state: string }).state, 'absent');
+    assert.equal((await (await control('lease', room.leaseToken)).json() as { state: string }).state, 'active',
+      'A close for another generation never terminates this classroom');
+    const forbiddenHost = await connect(port, { role: 'host', roomId: room.roomId, token: room.leaseToken });
+    peers.push(forbiddenHost);
+    await forbiddenHost.wait('error');
+    forbiddenHost.close();
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken });
+    peers.push(host);
+    const hostState = await host.wait('room.state');
+    assert.equal(hostState.roomGeneration, room.roomGeneration);
+    const student = await connect(port, { role: 'student', code: room.code, joinToken: room.joinToken, name: 'Control tester' });
+    peers.push(student);
+    const joined = await student.wait('join.accepted');
+    assert.equal(joined.leaseToken, undefined, 'Student does not receive presenter authority');
+    host.close();
+    const ended = await control('end', room.hostToken);
+    assert.equal(ended.status, 200);
+    assert.equal((await ended.json() as { state: string }).state, 'closed');
+    await student.wait('room.closed');
+    const repeated = await control('end', room.hostToken);
+    assert.equal((await repeated.json() as { state: string }).state, 'absent', 'Lost response can be retried without a socket');
+    const leaseAfterEnd = await control('lease', room.leaseToken);
+    assert.equal((await leaseAfterEnd.json() as { state: string }).state, 'absent', 'Lease cannot recreate an ended room');
+  } finally {
+    for (const peer of peers) peer.close();
+    child.kill();
+  }
+});

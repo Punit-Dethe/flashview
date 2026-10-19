@@ -9,7 +9,7 @@ This document describes **current boundaries and recovery behavior**, not a secu
 | Sender browser | Holds the original selected `File` object; sends requested byte slices and optional PDF preview |
 | Relay | Knows room membership and file metadata, validates requests and **sees file bytes in transit** |
 | Host browser | Receives and persists original bytes in local IndexedDB; can download and present received files |
-| Presentation tab | Reads through same-origin host `BroadcastChannel` and local cache; no separate host credentials or relay socket |
+| Presentation tab | Reads through same-origin host `BroadcastChannel` and local cache; copied host session removed before loading; only a restricted server lease capability, no host relay socket |
 
 - FlashView has **no accounts**, no direct peer-to-peer transfer and **no end-to-end encryption**. Do not describe it as suitable for confidential documents without a separate threat review.
 - Joining via QR/link or six-digit code is not a grant of host privileges. Host authentication requires a separate high-entropy secret; student approval can be enabled per room.
@@ -22,7 +22,7 @@ This document describes **current boundaries and recovery behavior**, not a secu
 2. **In flight:** Bytes travel as bounded WebSocket binary frames through the relay, which need not store whole files.
 3. **Receiver:** IndexedDB database `flashview-room-cache` stores 64 KiB chunks indexed by room/document, optional JPEG previews and local room-expiry data. A bounded memory LRU accelerates reads.
 4. **Metadata:** Node uses an in-memory room map. Cloudflare Durable Objects persist **room, session, file manifests and completion metadata** to survive hibernation. This is *not* persistent original-file storage.
-5. **Deletion:** Ending a room explicitly clears that room's host chunks and previews before closing the relay room. Browser expiration cleanup occurs on later visits; site-data erasure and disk-forensic erasure are **not** the same thing.
+5. **Deletion:** Ending a room records intent and confirms relay closure before deleting local chunks/previews. Credentials are retained until cleanup succeeds. Failed/uncertain closure and failed local deletion are separate retryable outcomes, restored on refresh. Browser expiration cleanup occurs on later visits; site-data erasure and disk-forensic erasure are **not** the same thing.
 
 ## Expected failure and recovery behavior
 
@@ -37,6 +37,9 @@ This document describes **current boundaries and recovery behavior**, not a secu
 | Repeated confirmed full quota | Pause only affected file; show host **Retry saving** after user frees space | Never clear active room's site data to make space; real-device quota behavior varies |
 | Large completed downloads | Build verified browser-native `Blob` parts without duplicate full-file JS buffer | Browser-native Blob may still consume memory; PPTX/PDF renderers use full buffers |
 | Background phone tab | Pause picker heartbeat; foreground `wake()` validates or reconnects socket | Cannot override mobile OS suspension or recover destroyed `File` objects |
+| Hidden dashboard while presenting | Dashboard/presenter independently send scoped HTTP lease renewals; no fixed two-hour presenter bridge cutoff | If all pages are suspended/killed, renewal cannot be guaranteed; byte transfer still belongs to the dashboard |
+| Lost end-room response | Durable browser intent; generation-scoped HTTP retry confirms closed/absent before deletion | Server absence confirms current generation absence, not historical command execution |
+| Local cleanup fails after closure | Keep confirmed closure and cache handle; explicit retry or refresh retries deletion | Clearing session storage manually discards the cleanup intent; code-based cache identity migration remains pending |
 
 **Important:** A filename appearing in the host list is **not** proof of receipt. The sender's **Done** state means the host has verified all original bytes as locally persisted. A preview image is not proof that all PDF bytes arrived.
 
@@ -47,6 +50,7 @@ This document describes **current boundaries and recovery behavior**, not a secu
 - **Client timers** may pause in background tabs; the transfer scheduler can run while a presenter tab is foreground, but not if the owning classroom tab is killed.
 - **No HTTP fallback**, no application-level E2EE and no guarantee of throughput under restrictive networks.
 - **Temporary room credentials and invitations** should be treated as sensitive; don't paste them into logs, issue reports or public documentation.
+- **Presenter lease** can renew only its own generation. It cannot authenticate as host, request original bytes, or close a room. Removing copied session credentials narrows access; same-origin storage/rendering isolation remains additional work.
 - **Public deployment** needs rate-limit and abuse/operational review appropriate to expected load; existing caps are defenses, not a proof of hardening.
 
 ## Triage when a transfer stalls

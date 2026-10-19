@@ -45,6 +45,7 @@ See [the evidence and decision](./r2-benchmark-results.md).
 | Worker-owned transfer and OPFS receipt | Demonstrated in the isolated R2 pilot; **not integrated into the relay application** |
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | Only terminal stop helpers shared so far; full extraction pending |
+| Lease/end lifecycle | Implemented on the relay-lifecycle branch: scoped renewals, generation-safe HTTP closure, retryable cleanup and removal of fixed presenter cutoff; release pending |
 | R2 | Deferred; prototype retained for reference |
 
 [PR #35](https://github.com/Punit-Dethe/flashview/pull/35) passed its full CI run
@@ -77,6 +78,14 @@ performance checks; avoid maintaining two permanent schedulers.
 subsequent changes. No R2 result is a prerequisite for continuing.
 
 ### Phase 1 — Shared room rules and lifecycle correctness
+
+**Current slice:** shared control authorization/validation and restricted lease
+renewal are implemented in both adapters. Close intent survives refresh; server
+confirmation precedes cache deletion; failed cleanup retains its handle. Presenter
+tabs no longer inherit host session storage and the fixed bridge cutoff is gone.
+Remaining Phase 1 work includes full room-engine extraction, aggregate admission
+limits and immutable local-cache identity migration. Physical background/OS
+suspension behavior is still a release verification task.
 
 **Touch:** both relay adapters, shared contracts/domain code, room lifetime,
 client command handling and the reliability tracker.

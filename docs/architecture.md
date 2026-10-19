@@ -1,6 +1,6 @@
 # System architecture
 
-**Status:** Implemented design, reviewed against `src/` at commit `d8837c0` (19 October 2026). For wire-level behavior see [Transfer protocol](./transfer-protocol.md); for current unresolved reliability work see [Audit tracker](./reliability-audit.md).
+**Status:** Current source design, including the unmerged relay-lifecycle changes (19 October 2026); production deployment is tracked separately. For wire-level behavior see [Transfer protocol](./transfer-protocol.md); for current unresolved reliability work see [Audit tracker](./reliability-audit.md).
 
 ## Overview and ownership
 
@@ -31,6 +31,7 @@ Sender browser(s)                       Relay                         Host brows
 | --- | --- | --- |
 | Room UI | [`App.tsx`](../src/client/App.tsx) | Create/join/approve/end flows, file pickers and host cards |
 | WebSocket client | [`socket.ts`](../src/client/socket.ts) | `hello` handshake, reconnect, heartbeat, binary range requests |
+| Room controls | [`client/roomControl.ts`](../src/client/roomControl.ts), [`shared/roomControl.ts`](../src/shared/roomControl.ts) | Restricted lease renewal, generation-scoped close authorization and recoverable end/cleanup |
 | Transfer/cache | [`roomCache.ts`](../src/client/pdf/roomCache.ts) | Host-only IndexedDB, prefetch scheduler, downloaded chunks, failure recovery |
 | Transfer windows | [`adaptiveWindow.ts`](../src/client/pdf/adaptiveWindow.ts), [`networkPacket.ts`](../src/client/pdf/networkPacket.ts) | Adaptive per-file concurrency, grouping missing 64 KiB blocks |
 | Tab bridge | [`presentation.ts`](../src/client/presentation.ts) | `BroadcastChannel` metadata, local range reads and cancellation |
@@ -65,13 +66,38 @@ Sender browser(s)                       Relay                         Host brows
 
 The host opens `/present#<generated-key>`, then communicates using a same-origin `BroadcastChannel`. The presenter asks the **host cache** for bytes and listens to progress and preview events. It never controls transfer priority or creates a second room socket.
 
+Presentation opens through a blank same-origin tab: copied `flashview-host`
+session credentials are removed and the opener detached before loading renderer
+code. The bridge supplies only a restricted lease identity for server liveness.
+The arbitrary two-hour bridge cutoff is removed; explicit tab/room teardown
+still cancels reads and closes channels. This does not yet implement full renderer
+storage isolation or independence from a terminated dashboard.
+
 - **PDF:** PDF.js can consume whichever cached ranges are already present; an early first-page JPEG is only a visual placeholder. Once fully cached, the viewer can load the complete local PDF buffer. A visible page may still depend on distant PDF structures even at a high transfer percentage.
 - **PPTX/PPSX:** waits until the complete file is cached, then loads the local OOXML bytes into `pptx-vanilla-viewer`. `.ppt` and other general formats are download-only.
 - A viewer tab can be closed without deleting the room cache or interrupting the background scheduler.
 
 ## Room lifetime and cleanup
 
-Room sessions have a **two-hour idle/host-activity-based lifetime**: authenticated host activity refreshes the lifetime, so an active class is not expired simply because its creation was two hours ago. Explicit **End room** clears only that room's local chunks and previews (the host does not delete senders' source files); the relay closes the session. Expired local room caches are cleaned on a subsequent visit. See [Security and reliability](./security-and-reliability.md) for cleanup limitations.
+Room sessions have a **two-hour renewable idle lifetime**. Host activity or a
+restricted HTTP lease renewal extends it. The dashboard and presenter each own
+a bounded renewal loop, including while the dashboard is hidden; sender picker
+heartbeat behavior remains unchanged. Browsers can still suspend or terminate
+all involved pages, so client timers are not an indefinite liveness guarantee.
+
+Explicit **End room** records intent in session storage, stops transfer work,
+confirms server closure, then clears only that room's local chunks and previews.
+Cloudflare deletes its state before announcing closure. HTTP retries are scoped
+to an immutable generation, so a reused short code cannot make an old end command
+close a new classroom. Unconfirmed closure retains local bytes; failed local
+deletion retains its cache handle and confirmed-closure state for retry, including
+after refresh. Cleanup operations have a bounded IndexedDB deadline. Sender source
+files are never deleted. Expired local cache cleanup still occurs on later visits.
+
+Local cache keys still use the existing room-code identity; migration to immutable
+generation keys remains part of the cache work. Server generation safety should
+not be mistaken for completion of that separate storage migration. See
+[Security and reliability](./security-and-reliability.md) for cleanup limitations.
 
 ## Node versus Cloudflare
 

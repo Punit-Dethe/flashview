@@ -4,6 +4,8 @@
 
 [Read the full technical roadmap and design decisions](./plan.md).
 
+[**Reliability audit: fixed, partial, pending, evidence, and next steps**](./docs/reliability-audit.md).
+
 ## Architecture
 
 - Cloudflare Worker + per-classroom Durable Object (Free tier) is the production relay; the small Node/`ws` server remains a local testing baseline.

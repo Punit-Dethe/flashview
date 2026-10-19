@@ -151,6 +151,33 @@ The independent lease/end-room work on #36 remains unmerged and is not part of
 this patch. Mobile OS suspension and campus-network behavior still require
 physical-device verification.
 
+## 20 October room lifecycle integration (in progress)
+
+The lease/end-room slice from #36 is reconciled onto the recovery/header line,
+preserving N7–N15. This does not complete the full shared room engine or migrate
+the local cache identity. Original audit totals remain 9 resolved / 3 partial /
+18 open or unverified until appropriately tested fixes merge.
+
+| New ID | Status | Problem / correction | Evidence |
+| --- | --- | --- | --- |
+| N16 | **In progress** | A hidden dashboard could stop renewing the classroom, while an unrelated two-hour timer silently shut down its presenter bridge. Dashboard and presenter now independently use a restricted generation-scoped HTTP lease; remove the fixed bridge cutoff. | Browser clock advance past two hours verifies both independent renewal and a fresh bridge handshake. Lease cannot authenticate as host, read original bytes or end the room. Physical OS suspension remains unverified. |
+| N17 | **In progress** | End room discarded local credentials/cache before confirming relay closure. Lost close messages could leave the server classroom alive with no retry path. | Persist intent before sending; generation-scoped idempotent HTTP closure before local deletion. Browser faults cover failed request, committed closure with lost response, refresh and stale-generation denial on Node/Cloudflare. |
+| N18 | **In progress** | Cleanup dropped its cache handle before deletion succeeded, making a later Retry falsely succeed without deleting the original cache. | Keep the handle until successful deletion, bound IndexedDB cleanup, and retain separate server-closed state. Tests cover immediate retry and refresh with network control blocked, plus old host-session upgrade without losing bytes. |
+| N19 | **In progress** | Presenter popups inherited a copy of the dashboard's host credential through session storage. | Remove the copied host session and detach the opener before loading renderer code. Only the scoped lease identity crosses the existing bridge. This narrows authority; complete same-origin renderer isolation is still future work. |
+
+Pre-integration PR #39 CI failed on the first Cloudflare browser test because the
+emulator's default inspector socket was already in use. The remaining 21 browser
+tests passed. A separate test-only follow-up on #39 assigns debugger ports through
+the OS; this integration includes that correction. It does not weaken assertions
+or change production networking.
+
+Initial checks: 68 unit/protocol tests and 9 Cloudflare relay contracts pass.
+The four lifecycle browser scenarios pass on Node, Cloudflare and Firefox;
+the expanded Firefox interrupted-transfer/integrity scenario also passes.
+Final broad suites and deployment validation are recorded with the integration PR.
+Short-code cache-key migration, aggregate admission limits, full room-rule
+extraction and worker/OPFS integration remain in the implementation plan.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

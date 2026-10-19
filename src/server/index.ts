@@ -1,10 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { roomExpiresAt } from '../shared/roomLifetime.js';
 import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle.js';
+import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl.js';
 import {
   decodeRangePacket, MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
   type PdfManifest, type StudentInfo,
@@ -15,7 +17,7 @@ type Peer = { ws: WebSocket; id: string; role: Role; room: Room; approved: boole
 type ResumeSession = { id: string; name: string; approved: boolean; token: string };
 type Outstanding = { fileId: string; senderId: string; begin: number; end: number; created: number };
 type Room = {
-  id: string; code: string; joinToken: string; hostToken: string;
+  id: string; code: string; joinToken: string; hostToken: string; roomGeneration: string; leaseToken: string;
   autoApprove: boolean;
   created: number; lastActivityAt: number; host: Peer | null; students: Map<string, Peer>;
   sessions: Map<string, ResumeSession>;
@@ -93,6 +95,12 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
   if (msg.role === 'host') {
     const room = rooms.get(String(msg.roomId ?? ''));
     if (!room || msg.token !== room.hostToken) return void sendError(ws, 'Invalid host session');
+    if (Date.now() >= roomExpiresAt(room.created, room.lastActivityAt)) {
+      closeRoom(room);
+      send(ws, { type: 'room.closed' });
+      ws.close(1000, 'Room expired');
+      return;
+    }
     // A holder of the high-entropy host secret may replace an outdated connection
     // (e.g. refresh or reconnection before the browser's close event is processed).
     if (room.host && room.host.ws.readyState === WebSocket.OPEN) {
@@ -107,6 +115,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     connections.set(ws, peer);
     send(ws, {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
+      roomGeneration: room.roomGeneration, leaseToken: room.leaseToken,
       students: students(room), files: [...room.files.values()], autoApprove: room.autoApprove,
     });
     for (const student of room.students.values()) send(student.ws, { type: 'host.online' });
@@ -117,6 +126,10 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     const code = typeof msg.code === 'string' ? msg.code : undefined;
     const room = findRoom(token, code);
     if (!room) return void sendError(ws, 'Room not found or expired');
+    if (Date.now() >= roomExpiresAt(room.created, room.lastActivityAt)) {
+      closeRoom(room);
+      return void sendError(ws, 'Room not found or expired');
+    }
     const previous = typeof msg.resumeToken === 'string'
       ? room.sessions.get(msg.resumeToken) : undefined;
     if (previous) {
@@ -188,12 +201,15 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   const peer = connections.get(ws);
   if (!peer) return void sendError(ws, 'Authentication required');
   const room = peer.room;
+  if (!rooms.has(room.id)) return;
+  if (Date.now() >= roomExpiresAt(room.created, room.lastActivityAt)) { closeRoom(room); return; }
   if (peer.role === 'host' ? room.host !== peer : room.students.get(peer.id) !== peer) return;
   if (peer.role === 'host' && room.host === peer) room.lastActivityAt = Date.now();
   if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
   if (msg.type === 'room.sync' && peer.role === 'host') {
     return void send(ws, {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
+      roomGeneration: room.roomGeneration, leaseToken: room.leaseToken,
       students: students(room), files: [...room.files.values()], autoApprove: room.autoApprove,
     });
   }
@@ -383,9 +399,47 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader('Cache-Control', 'no-store');
   createReadStream(resolved).pipe(res);
 }
+async function handleRoomControl(req: IncomingMessage, res: ServerResponse, id: string,
+  action: 'lease' | 'end'): Promise<void> {
+  const reply = (data: unknown, status = 200) => res.writeHead(status, {
+    'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+  }).end(JSON.stringify(data));
+  if (req.method !== 'POST') { reply({ error: 'POST required' }, 405); return; }
+  if (req.headers.origin && !validOrigin(req)) { reply({ error: 'Forbidden origin' }, 403); return; }
+  const token = req.headers.authorization?.replace(/^Bearer /, '');
+  if (!validControlToken(token)) { reply({ error: 'Authorization required' }, 401); return; }
+  if (req.headers['content-type'] !== 'application/json') { reply({ error: 'JSON required' }, 415); return; }
+  const reader = Readable.toWeb(req).getReader();
+  let generation: string;
+  try { generation = await readRoomControlGeneration(reader); }
+  catch (error) {
+    reply({ error: 'Invalid control command' }, error instanceof RoomControlInputError ? error.status : 400);
+    return;
+  } finally { reader.releaseLock(); }
+  const room = rooms.get(id);
+  const decision = authorizeRoomControl(room ?? null, generation, token, action, Date.now());
+  if (decision === 'denied') { reply({ error: 'Invalid capability' }, 403); return; }
+  if (decision === 'absent') { reply({ roomGeneration: generation, state: 'absent' }); return; }
+  if (decision === 'expired' || action === 'end') {
+    closeRoom(room!);
+    reply({ roomGeneration: generation, state: 'closed' });
+    return;
+  }
+  room!.lastActivityAt = Date.now();
+  reply({ roomGeneration: generation, state: 'active', expiresAt: roomExpiresAt(room!.created, room!.lastActivityAt) });
+}
+
 const http = createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }));
+    return;
+  }
+  const control = /^\/api\/rooms\/([A-Za-z0-9_-]{6,80})\/(lease|end)$/.exec(new URL(req.url ?? '/', 'http://localhost').pathname);
+  if (control) {
+    void handleRoomControl(req, res, control[1], control[2] as 'lease' | 'end').catch(() => {
+      if (!res.headersSent) res.writeHead(503, { 'Cache-Control': 'no-store' }).end();
+      else res.end();
+    });
     return;
   }
   if (req.url?.startsWith('/api/rooms') && req.method === 'POST') {
@@ -406,7 +460,7 @@ const http = createServer((req, res) => {
     do { code = String(randomInt(100_000, 1_000_000)); }
     while ([...rooms.values()].some(r => r.code === code));
     const room: Room = {
-      id: randomUUID(), code, joinToken: randomToken(20),
+      id: randomUUID(), roomGeneration: randomUUID(), leaseToken: randomToken(32), code, joinToken: randomToken(20),
       hostToken: randomToken(32), created: now, lastActivityAt: now, autoApprove,
       host: null, students: new Map(), sessions: new Map(), files: new Map(), outstanding: new Map(),
     };
@@ -414,7 +468,8 @@ const http = createServer((req, res) => {
     res.writeHead(201, {
       'Content-Type': 'application/json', 'Cache-Control': 'no-store',
       'Referrer-Policy': 'no-referrer',
-    }).end(JSON.stringify({ roomId: room.id, code, joinToken: room.joinToken, hostToken: room.hostToken, autoApprove }));
+    }).end(JSON.stringify({ roomId: room.id, code, joinToken: room.joinToken, hostToken: room.hostToken,
+      roomGeneration: room.roomGeneration, leaseToken: room.leaseToken, autoApprove }));
     return;
   }
   if (req.url?.startsWith('/api/')) { res.writeHead(404).end(); return; }
@@ -438,7 +493,8 @@ wss.on('connection', ws => {
     (ws as WebSocket & { missedPongs?: number }).missedPongs = 0;
     const peer = connections.get(ws);
     // Only the current authenticated host can renew room lifetime.
-    if (peer?.role === 'host' && peer.room.host === peer) peer.room.lastActivityAt = Date.now();
+    if (peer?.role === 'host' && peer.room.host === peer &&
+        Date.now() < roomExpiresAt(peer.room.created, peer.room.lastActivityAt)) peer.room.lastActivityAt = Date.now();
   });
   ws.on('message', (data, isBinary) => {
     if (isBinary) { handleBinary(ws, data); return; }

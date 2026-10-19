@@ -1,6 +1,6 @@
 import { ROOM_TTL_MS } from './protocol';
 
-/** A classroom expires two hours after its last authenticated host activity. */
+/** A classroom expires two hours after host activity or a scoped teacher lease. */
 export function roomExpiresAt(created: number, lastActivityAt: number = created): number {
   return Math.max(created, lastActivityAt) + ROOM_TTL_MS;
 }

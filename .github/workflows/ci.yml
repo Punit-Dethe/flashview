@@ -27,8 +27,8 @@ jobs:
       - run: npm run test:browser
       - name: Install Firefox for fullscreen compatibility checks
         run: npx playwright install --with-deps firefox
-      - name: Firefox presenter — fullscreen pixels and document controls
-        run: node --import tsx --test --test-name-pattern="real browser:" tests/browser.smoke.ts
+      - name: Firefox presenter, lifecycle and interrupted transfers
+        run: node --import tsx --test --test-name-pattern="real browser:|room lifecycle:|suspended file picker" tests/browser.smoke.ts tests/transferRecovery.browser.ts
         env:
           FLASHVIEW_BROWSER: firefox
       - name: Browser test — Cloudflare Durable Objects

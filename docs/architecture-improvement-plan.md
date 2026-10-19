@@ -53,7 +53,7 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | Worker-owned transfer and OPFS receipt | Demonstrated in the isolated R2 pilot; **not integrated into the relay application** |
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | Only terminal stop helpers shared so far; full extraction pending |
-| Lease/end lifecycle | Implemented on the relay-lifecycle branch: scoped renewals, generation-safe HTTP closure, retryable cleanup and removal of fixed presenter cutoff; release pending |
+| Lease/end lifecycle | Reconciled onto the current recovery line: scoped renewals, generation-safe HTTP closure, retryable cleanup, legacy session upgrade and removal of fixed presenter cutoff; release validation in progress |
 | R2 | Deferred; prototype retained for reference |
 
 [PR #35](https://github.com/Punit-Dethe/flashview/pull/35) passed its full CI run

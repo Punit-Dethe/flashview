@@ -14,7 +14,7 @@ async function backend() {
   const port = address.port;
   await new Promise<void>(resolve => listener.close(() => resolve()));
   const child = spawn(process.execPath, process.env.FLASHVIEW_BACKEND === 'cloudflare'
-    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--inspector-port', '0', '--port', String(port), '--ip', '127.0.0.1']
+    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--name', 'warpview-test-' + port, '--persist-to', '.wrangler/test-state/' + port, '--inspector-port', '0', '--port', String(port), '--ip', '127.0.0.1']
     : ['--import', 'tsx', 'src/server/index.ts'], {
     env: { ...process.env, PORT: String(port), NODE_ENV: 'test', BROWSER: 'none' },
   });

@@ -1781,13 +1781,17 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
       const paint=getComputedStyle(el.querySelector('.document-card-present')!);
       return {withinRow:right.top>=row.top-2&&right.bottom<=row.bottom+2,
         aligned:Math.abs((left.top+left.bottom)/2-(right.top+right.bottom)/2)<2,
-        follows:left.right+5<=right.left,background:paint.backgroundColor,
+        follows:left.right+5<=right.left,
         border:paint.borderTopWidth,icon:el.querySelector('.document-card-present svg path')?.getAttribute('d')};
     });
     assert.ok(actionStyle.withinRow&&actionStyle.aligned&&actionStyle.follows,
       'Outlined Present must be to the right of Download in the same horizontal row');
-    assert.ok(['rgb(255, 255, 255)','rgb(248, 249, 251)'].includes(actionStyle.background),
-      'Present should be white when ready or pale gray while download is incomplete');
+    // Completion can switch the button during this check. Its background has
+    // a 200 ms CSS transition, so a one-frame midpoint is not an invalid color.
+    await host.waitForFunction(() => {
+      const button = document.querySelector('[aria-label="Present lecture.pptx"]');
+      return button && ['rgb(255, 255, 255)', 'rgb(248, 249, 251)'].includes(getComputedStyle(button).backgroundColor);
+    }, null, { timeout: 3000 });
     assert.ok(actionStyle.border!=='0px'&&actionStyle.icon?.includes('17.5'),
       'Present uses a bordered projection-screen glyph');
     await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:30000});

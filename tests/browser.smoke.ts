@@ -2094,3 +2094,56 @@ test('a stalled IndexedDB index query times out and retries without losing a pho
     child.kill('SIGTERM');
   }
 });
+
+test('large binary download streams IndexedDB records without a getAll whole-file copy', {timeout: 130000}, async () => {
+  const {port,child}=await runningServer();
+  const browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({acceptDownloads:true});
+  const student=await browser.newPage();
+  const root='http://127.0.0.1:'+port;
+  // Bigger than the 48 MiB LRU's individual transfer windows, and much
+  // bigger than normal PDF range packets, without a huge CI fixture.
+  const bytes=Buffer.alloc(12*1024*1024+137);
+  for (let i=0; i<bytes.length; i++) bytes[i]=(i*31+(i>>13))&255;
+  try {
+    await host.addInitScript(() => {
+      const getAll=IDBIndex.prototype.getAll;
+      const record=window as typeof window & {__bulkCacheReads?: number};
+      record.__bulkCacheReads=0;
+      IDBIndex.prototype.getAll=function(...args) {
+        if (this.name==='document') {
+          record.__bulkCacheReads!++;
+          throw Error('Whole-file IndexedDB getAll is forbidden in large-file downloads');
+        }
+        return getAll.apply(this,args);
+      };
+    });
+    await host.goto(root);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    await student.goto(root);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-drive').waitFor();
+    await student.locator('input[type=file]').setInputFiles({
+      name:'large-payload.bin',mimeType:'application/octet-stream',buffer:bytes,
+    });
+    const card=host.locator('.document-row').filter({hasText:'large-payload.bin'});
+    await card.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:90000});
+    const [download]=await Promise.all([
+      host.waitForEvent('download',{timeout:30000}),
+      card.getByRole('button',{name:'Download large-payload.bin'}).click(),
+    ]);
+    const saved=await readFile(await download.path());
+    assert.equal(createHash('sha256').update(saved).digest('hex'),
+      createHash('sha256').update(bytes).digest('hex'),
+      'Assembling IndexedDB chunks one-by-one must preserve all original bytes');
+    assert.equal(await host.evaluate(()=>
+      (window as typeof window & {__bulkCacheReads?: number}).__bulkCacheReads ?? -1),0,
+      'A completed-file read must never bulk-clone every chunk into JS memory');
+  } finally {
+    await browser.close();
+    child.kill('SIGTERM');
+  }
+});

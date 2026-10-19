@@ -118,24 +118,50 @@ async function cachedIndices(room: string, fileId: string): Promise<Set<number>>
  * custom range transport (eliminates streamed-page scheduling races).
  */
 export async function readCompletedPdf(roomId: string, file: PdfManifest): Promise<Uint8Array | null> {
+  // Loading every IndexedDB record with getAll() retains one whole-file-sized
+  // collection of ArrayBuffers PLUS the reconstructed file. A cursor keeps
+  // just one 64 KiB record live at a time, even for a 200 MiB transfer.
   const db = await database();
-  const chunks = await new Promise<ChunkRecord[]>((resolve, reject) => {
-    const request = db.transaction('chunks', 'readonly').objectStore('chunks')
-      .index('document').getAll(IDBKeyRange.only(roomId + '/' + file.fileId));
-    request.onsuccess = () => resolve(request.result as ChunkRecord[]);
-    request.onerror = () => reject(request.error);
-  });
+  const documentId = roomId + '/' + file.fileId;
   const count = Math.ceil(file.size / CHUNK_BYTES);
-  if (chunks.length !== count) return null;
-  chunks.sort((a, b) => a.index - b.index);
-  const result = new Uint8Array(file.size);
-  for (let i = 0; i < count; i++) {
-    const chunk = chunks[i];
-    const length = Math.min(CHUNK_BYTES, file.size - i * CHUNK_BYTES);
-    if (chunk.index !== i || chunk.room !== roomId || chunk.data.byteLength !== length) return null;
-    result.set(new Uint8Array(chunk.data), i * CHUNK_BYTES);
-  }
-  return result;
+  const bytes = new Uint8Array(file.size);
+  const seen = new Uint8Array(count);
+  let received = 0;
+  const tx = db.transaction('chunks', 'readonly');
+  const pending = new Promise<boolean>((resolve, reject) => {
+    const request = tx.objectStore('chunks').index('document')
+      .openCursor(IDBKeyRange.only(documentId));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve(received === count);
+        return;
+      }
+      const record = cursor.value as ChunkRecord;
+      const index = record.index;
+      const length = Math.min(CHUNK_BYTES, file.size - index * CHUNK_BYTES);
+      // Database keys sort lexicographically (0, 1, 10, 2...), not numerically.
+      // Place each verified piece at its own offset, checking for duplicates.
+      if (!Number.isSafeInteger(index) || index < 0 || index >= count ||
+          seen[index] || record.room !== roomId || record.document !== documentId ||
+          record.key !== documentId + '/' + index ||
+          !(record.data instanceof ArrayBuffer) || record.data.byteLength !== length) {
+        resolve(false);
+        return;
+      }
+      bytes.set(new Uint8Array(record.data), index * CHUNK_BYTES);
+      seen[index] = 1;
+      received++;
+      cursor.continue();
+    };
+    request.onerror = () => reject(request.error || Error('Cannot read completed file'));
+    tx.onabort = () => reject(tx.error || Error('Completed file read aborted'));
+  });
+  // Cursor scans may legitimately read thousands of small records; allow
+  // more time than one chunk operation, but never hang the viewer forever.
+  const complete = await withStorageDeadline(pending, 'Read completed file', 45_000,
+    () => { try { tx.abort(); } catch { /* Already settled. */ } });
+  return complete ? bytes : null;
 }
 
 /** The exact same chunk assembly also reconstructs arbitrary completed files.

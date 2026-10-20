@@ -54,6 +54,7 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | File and participant admission plus terminal stop/control/cache-identity rules shared; full command/revision/persistence orchestration pending |
 | Room admission budgets | 300 retained manifests / 4 GiB originals, 120 retained session identities, 30 concurrent senders; exact retries and existing capabilities preserved |
+| Connection and request guards | Bounded pending/closing sockets and authentication deadlines; durable source creation quotas on Cloudflare, shared new-identity join quotas and retry handling; mixed-version rollout compatibility and release validation tracked in N24–N27 |
 | Lease/end lifecycle | Deployed on the recovery line; PR #40 full CI passed: scoped renewals, generation-safe HTTP closure, retryable cleanup, legacy session upgrade and removal of fixed presenter cutoff; physical-device verification pending |
 | Local cache identity | Generation-based namespaces implemented for newly negotiated rooms; legacy rooms drain in place. Regression/release evidence tracked under N20 |
 | R2 | Deferred; prototype retained for reference |
@@ -96,9 +97,11 @@ tabs no longer inherit host session storage and the fixed bridge cutoff is gone.
 Generation-based cache identities are now negotiated at creation and shared by
 the receiver, presenter, previews, export and cleanup; older rooms drain in place
 without erasing active data. File/participant admission now shares synchronous
-transitions and aggregate budgets across adapters. Remaining Phase 1 work includes
-full command/revision/persistence orchestration, unauthenticated-socket bounds and
-creation/join rate limiting. Physical background/OS suspension
+transitions and aggregate budgets across adapters. Connection budgets/deadlines
+and creation/new-identity join quotas are implemented, with private resumes kept
+outside the join quota. Remaining Phase 1 work is full command/revision/persistence
+orchestration; broader production abuse controls remain an operational follow-up.
+Physical background/OS suspension
 behavior is still a release verification task. Personal multi-gigabyte transfer
 mode is deferred at the user's request; the current 200 MiB cap stays unchanged.
 

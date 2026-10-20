@@ -7,6 +7,8 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { roomExpiresAt } from '../shared/roomLifetime.js';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity.js';
 import { admitFile, admitSender } from '../shared/roomAdmission.js';
+import { AUTH_TIMEOUT_MS, MAX_PENDING_NODE, MAX_NODE_SOCKETS, CreationBuckets, consumeWindow, JOIN_LIMIT, JOIN_WINDOW_MS,
+  JOIN_RATE_MESSAGE, retryAfterSeconds, type RateWindow } from '../shared/connectionGuards.js';
 import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle.js';
 import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl.js';
 import {
@@ -20,19 +22,30 @@ type ResumeSession = { id: string; name: string; approved: boolean; token: strin
 type Outstanding = { fileId: string; senderId: string; begin: number; end: number; created: number };
 type Room = {
   id: string; code: string; joinToken: string; hostToken: string; roomGeneration: string; leaseToken: string;
-  autoApprove: boolean; cacheVersion?: 2;
+  autoApprove: boolean; cacheVersion?: 2; joinWindow?: RateWindow;
   created: number; lastActivityAt: number; host: Peer | null; students: Map<string, Peer>;
   sessions: Map<string, ResumeSession>;
   files: Map<string, PdfManifest>; outstanding: Map<string, Outstanding>;
 };
 const rooms = new Map<string, Room>();
 const connections = new WeakMap<WebSocket, Peer>();
-const roomCreationByIp = new Map<string, { count: number; reset: number }>();
+const roomCreationByIp = new CreationBuckets();
+const pendingAuth = new Map<WebSocket, { deadline: number; timer: ReturnType<typeof setTimeout> }>();
 const MAX_ROOMS = 100;
 const PORT = Number(process.env.PORT ?? 3000);
 const publicDir = resolve(process.cwd(), 'dist');
 
 function randomToken(bytes = 24): string { return randomBytes(bytes).toString('base64url'); }
+function releasePending(ws: WebSocket): void {
+  const pending = pendingAuth.get(ws);
+  if (pending) clearTimeout(pending.timer);
+  pendingAuth.delete(ws);
+}
+function rejectAuthentication(ws: WebSocket, message: string): void {
+  releasePending(ws);
+  sendError(ws, message);
+  ws.close(1008, 'Authentication failed');
+}
 function send(ws: WebSocket | null | undefined, msg: Record<string, unknown>): void {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ v: 1, ...msg }));
 }
@@ -95,10 +108,11 @@ function closeRoom(room: Room): void {
 function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
   if (msg.role === 'host') {
     const room = rooms.get(String(msg.roomId ?? ''));
-    if (!room || msg.token !== room.hostToken) return void sendError(ws, 'Invalid host session');
+    if (!room || msg.token !== room.hostToken) return void rejectAuthentication(ws, 'Invalid host session');
     if (Date.now() >= roomExpiresAt(room.created, room.lastActivityAt)) {
       closeRoom(room);
       send(ws, { type: 'room.closed' });
+      releasePending(ws);
       ws.close(1000, 'Room expired');
       return;
     }
@@ -114,6 +128,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     room.outstanding.clear();
     room.lastActivityAt = Date.now();
     connections.set(ws, peer);
+    releasePending(ws);
     send(ws, {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
       roomGeneration: room.roomGeneration, leaseToken: room.leaseToken,
@@ -127,16 +142,17 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     const token = typeof msg.joinToken === 'string' ? msg.joinToken : undefined;
     const code = typeof msg.code === 'string' ? msg.code : undefined;
     const room = findRoom(token, code);
-    if (!room) return void sendError(ws, 'Room not found or expired');
+    if (!room) return void rejectAuthentication(ws, 'Room not found or expired');
     if (Date.now() >= roomExpiresAt(room.created, room.lastActivityAt)) {
       closeRoom(room);
-      return void sendError(ws, 'Room not found or expired');
+      return void rejectAuthentication(ws, 'Room not found or expired');
     }
     const previous = typeof msg.resumeToken === 'string'
       ? room.sessions.get(msg.resumeToken) : undefined;
     const admission = admitSender(room.students.size, room.sessions.size, Boolean(previous),
       Boolean(previous && room.students.has(previous.id)));
     if (admission.kind === 'rejected') {
+      releasePending(ws);
       send(ws, { type: admission.retryable ? 'error' : 'join.rejected', code: admission.code,
         message: admission.message, retryable: admission.retryable });
       ws.close(1008, 'Room admission limit');
@@ -154,6 +170,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       };
       room.students.set(peer.id, peer);
       connections.set(ws, peer);
+      releasePending(ws);
       const ownFiles = [...room.files.values()].filter(f => f.ownerId === peer.id);
       for (const file of ownFiles) {
         if (resumeDisconnectedFile(file, previous.approved)) {
@@ -177,8 +194,16 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       return;
     }
     if (!room.host || room.host.ws.readyState !== WebSocket.OPEN) {
-      return void sendError(ws, 'The host is offline');
+      return void rejectAuthentication(ws, 'The host is offline');
     }
+    const rate = consumeWindow(room.joinWindow, JOIN_LIMIT, JOIN_WINDOW_MS, Date.now());
+    if (!rate.allowed) {
+      releasePending(ws);
+      send(ws, { type: 'error', code: 'JOIN_RATE_LIMIT', retryable: true,
+        retryAfterMs: rate.retryAfterMs, message: JOIN_RATE_MESSAGE });
+      ws.close(1008, 'Join rate limit'); return;
+    }
+    room.joinWindow = rate.window;
     const approved = room.autoApprove;
     const peer: Peer = {
       ws, id: randomUUID(), role: 'student', room,
@@ -189,6 +214,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     room.sessions.set(resumeToken, { id: peer.id, token: resumeToken, name: peer.name, approved });
     room.students.set(peer.id, peer);
     connections.set(ws, peer);
+    releasePending(ws);
     send(ws, { type: approved ? 'join.accepted' : 'join.pending', roomCode: room.code, resumeToken });
     notifyHost(room, {
       type: approved ? 'student.updated' : 'student.pending',
@@ -196,20 +222,24 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     });
     return;
   }
-  sendError(ws, 'Invalid role');
+  rejectAuthentication(ws, 'Invalid role');
 }
 function sendError(ws: WebSocket, message: string): void {
   send(ws, { type: 'error', message });
 }
 function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   if (ws.readyState !== WebSocket.OPEN) return;
+  const pending = pendingAuth.get(ws);
+  if (pending && Date.now() >= pending.deadline) {
+    releasePending(ws); ws.terminate(); return;
+  }
   if (msg.type === 'hello') {
     if (!connections.has(ws)) handleHello(ws, msg);
     else sendError(ws, 'Already authenticated');
     return;
   }
   const peer = connections.get(ws);
-  if (!peer) return void sendError(ws, 'Authentication required');
+  if (!peer) return void rejectAuthentication(ws, 'Authentication required');
   const room = peer.room;
   if (!rooms.has(room.id)) return;
   if (Date.now() >= roomExpiresAt(room.created, room.lastActivityAt)) { closeRoom(room); return; }
@@ -443,15 +473,16 @@ const http = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname !== '/api/rooms') { res.writeHead(404).end(); return; }
     const autoApprove = url.searchParams.get('autoApprove') === '1';
+    if (req.headers.origin && !validOrigin(req)) { res.writeHead(403).end(); return; }
     const ip = (req.socket.remoteAddress ?? 'unknown');
     const now = Date.now();
-    const usage = roomCreationByIp.get(ip);
-    if (usage && usage.reset > now && usage.count >= 20) {
-      res.writeHead(429).end('Too many rooms'); return;
+    const usage = roomCreationByIp.take(ip, now);
+    if (!usage.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store',
+        'Retry-After': retryAfterSeconds(usage.retryAfterMs) })
+        .end(JSON.stringify({ error: 'Room creation is temporarily limited for this connection. Please try again later.' }));
+      return;
     }
-    roomCreationByIp.set(ip, usage?.reset && usage.reset > now
-      ? { count: usage.count + 1, reset: usage.reset }
-      : { count: 1, reset: now + 60 * 60 * 1000 });
     if (rooms.size >= MAX_ROOMS) { res.writeHead(503).end('Server at capacity'); return; }
     let code: string;
     do { code = String(randomInt(100_000, 1_000_000)); }
@@ -482,9 +513,16 @@ http.on('upgrade', (req, socket, head) => {
     socket.destroy();
     return;
   }
+  if (pendingAuth.size >= MAX_PENDING_NODE || wss.clients.size >= MAX_NODE_SOCKETS) {
+    socket.write('HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n');
+    socket.destroy(); return;
+  }
   wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
 });
 wss.on('connection', ws => {
+  const timer = setTimeout(() => { releasePending(ws); ws.terminate(); }, AUTH_TIMEOUT_MS);
+  timer.unref();
+  pendingAuth.set(ws, { deadline: Date.now() + AUTH_TIMEOUT_MS, timer });
   // Browsers (especially phones in the OS file picker) can miss an occasional
   // protocol ping. Require several missed replies before terminating a peer.
   (ws as WebSocket & { missedPongs?: number }).missedPongs = 0;
@@ -496,16 +534,23 @@ wss.on('connection', ws => {
         Date.now() < roomExpiresAt(peer.room.created, peer.room.lastActivityAt)) peer.room.lastActivityAt = Date.now();
   });
   ws.on('message', (data, isBinary) => {
-    if (isBinary) { handleBinary(ws, data); return; }
+    if (isBinary) {
+      if (pendingAuth.has(ws)) { rejectAuthentication(ws, 'Authentication required'); return; }
+      handleBinary(ws, data); return;
+    }
     try {
       const incoming = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
       if (incoming.byteLength > 8192) return void sendError(ws, 'Message too large');
       const msg: unknown = JSON.parse(incoming.toString());
       if (!msg || typeof msg !== 'object' || Array.isArray(msg)) throw new Error();
       handleControl(ws, msg as Record<string, unknown>);
-    } catch { sendError(ws, 'Invalid message'); }
+    } catch {
+      if (pendingAuth.has(ws)) rejectAuthentication(ws, 'Invalid message');
+      else sendError(ws, 'Invalid message');
+    }
   });
   ws.on('close', () => {
+    releasePending(ws);
     const peer = connections.get(ws);
     if (!peer) return;
     connections.delete(ws);
@@ -538,7 +583,7 @@ const housekeeping = setInterval(() => {
     socket.missedPongs = missed + 1;
     socket.ping();
   }
-  for (const [ip, entry] of roomCreationByIp) if (entry.reset < now) roomCreationByIp.delete(ip);
+  roomCreationByIp.prune(now);
 }, 10_000);
 housekeeping.unref();
 http.listen(PORT, '0.0.0.0', () => console.log('FlashView listening on port ' + PORT));

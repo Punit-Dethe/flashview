@@ -128,7 +128,13 @@ and never double-charge exact retries. Existing records above a new budget are
 preserved. These caps bound normal room growth, not the browser's available disk.
 The 4 GiB budget leaves room for a 30-person, 50 MiB-per-person class (about
 1.5 GiB); it is an application policy, not a browser or relay platform ceiling.
-Unauthenticated sockets, distributed creation rate limits and full shared
-room-command/revision orchestration remain separate work.
+Pending authentication now has bounded slots/deadlines, and total transport
+counts include closing sockets. Creation quotas persist per hashed source address
+in separate prefixed objects within the existing Cloudflare namespace; they do
+not store files or share room metadata. New-identity join quotas persist with
+sessions, while authenticated private resumes and host/control operations bypass
+that quota. One room alarm services both login deadlines and room expiry.
+Node guards are process-local. Full shared room-command/revision orchestration
+and broader deployment abuse controls remain separate work.
 
 No HTTP-only transport fallback or end-to-end file encryption is implemented. Sender tab suspension can halt uncached byte delivery. Large PPTX/PDF renderers still require significant host memory despite lower-copy download assembly. These are **known limitations**, not resolved by the room relay. Track verification in [the audit](./reliability-audit.md).

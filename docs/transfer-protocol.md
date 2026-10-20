@@ -175,6 +175,11 @@ Host completion notices are idempotent: if a receipt is lost, replaying a notice
 | File size | 1 byte–**200 MiB** per file |
 | Sender manifest cap | **10** files per sender in a room |
 | Room students | **30** concurrent students per room |
+| Authentication wait | **10 s**; expired/invalid unauthenticated sockets lose authority and receive closure |
+| Pending sockets | Cloudflare **64/room**; Node **256/process** |
+| Total sockets including closing | Cloudflare **128/room**; Node **4,096/process** |
+| Room creation | **120/source address/hour**; `429` with `Retry-After` |
+| New sender identities | **120/room/minute**; private sender resumes and host authentication bypass this quota |
 | Retained join sessions | **120** per room; existing private resume capabilities are not evicted |
 | Retained room manifests | **300**, including completed, stopped and offline files |
 | Aggregate original sizes | **4 GiB** per room, reserved at file admission |
@@ -214,6 +219,54 @@ attachment; late commands and original bytes are ignored. Cloudflare explicitly
 replies to received close events, including in local emulation. See Cloudflare's
 [close-handler contract](https://developers.cloudflare.com/durable-objects/api/base/#websocketclose):
 the call is safe when the runtime already completed the handshake.
+
+### Connection guards and quota state
+
+Both adapters use [shared guards](../src/shared/connectionGuards.ts). Authentication
+must finish within ten seconds; failed credentials or invalid unauthenticated
+commands release the pending slot. Authentication errors cannot renew a room.
+Existing authenticated senders/hosts are not disconnected by these quotas.
+Under connection pressure a new upgrade can receive `503`; HTTP lease/end
+commands remain available independently. Closing sockets are counted separately
+because the platform owns final TCP teardown, which can outlast application
+revocation. A malicious peer is not assumed to acknowledge Close promptly.
+
+Cloudflare serializes pending deadlines into socket attachments and schedules
+its one alarm for the earliest pending deadline or room expiry. Renewing the
+room must not postpone pending cleanup; hibernation must not reset deadlines or
+replace an already-due alarm. Late hello messages recheck their deadline even if
+an alarm is delayed. Node uses bounded pending timers and a process socket cap.
+
+New sender admission charges a fixed one-minute window only after room/capacity
+checks; host rejection does not refund that quota. Sessions and their admission
+window persist together on Cloudflare. `JOIN_RATE_LIMIT` is retryable and carries
+`retryAfterMs`. The browser retains its resume capability/selected Files, honors
+that deadline despite focus/online signals, and clears only its waiting notice
+after admission. Successful authentication restores immediate foreground recovery.
+Known private resumes/takeovers and HTTP control do not consume this window.
+
+Room creation checks a fixed one-hour window per source address, anchored at
+first use. The 120-room allowance provides headroom for shared campus/NAT
+addresses; Node's previous 20/hour allowance is raised to the same policy. Node
+uses the socket address, a bounded 4,096-bucket map, and never evicts active quota
+state to admit another source. Node quotas reset when that process restarts.
+Forwarded-for headers are not trusted. Cloudflare uses its edge-provided
+`CF-Connecting-IP`, hashes the address into a `creation:<digest>` object name in
+the existing namespace, and atomically persists a counter/reset time there.
+This is private rate metadata, not anonymous identity or original-file storage.
+No public route can address a prefixed object or its internal permit endpoint.
+The creation window survives room End and isolate/process restart; its alarm
+schedules cleanup, and expired windows reset on use even if cleanup was delayed.
+No new object class/binding or migration is required. Creation rejects a foreign
+Origin before charging a window. `Retry-After` is rounded up to seconds.
+During a mixed-version rollout/rollback, only an internal guard endpoint `404`
+uses legacy creation without this quota. Real denials/errors never take that
+path. Creation responses expose `X-WarpView-Creation-Guard: enforced|legacy` for
+release verification. Fully updated objects enforce the durable window.
+
+These are admission/resource bounds, not comprehensive DDoS protection. A full
+transport pool can delay a new handshake, including a reconnect; authenticated
+connections and scoped HTTP controls retain their independent paths.
 
 ## Changing the protocol
 

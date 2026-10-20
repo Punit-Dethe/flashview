@@ -84,6 +84,31 @@ Both deploy targets accept normal source rollback/redeployment. **Do not promise
 
 See [Development and testing](./development.md) for CI and performance regressions.
 
+Connection-guard deployment reuses the existing `ClassroomRoom` namespace and
+class. Prefixed `creation:<hashed-source>` objects hold only quota metadata, are
+not public room codes and require no new migration/binding. Keep the namespace
+stable across versions so creation quotas survive isolate replacement. Source
+quotas are 120 rooms/hour/address; new identity joins are 120/minute/room. Shared
+campus/proxy users share source quotas. Node's bounded source counters are local
+to the process and use its socket address; deployment behind a proxy needs an
+explicit trusted-address design rather than trusting arbitrary forwarded headers.
+Check normal creation, a full-class join, private reconnects, an idle unauthenticated
+socket, and HTTP End while pending slots are full. Exhaust quotas only in isolated
+tests, not on the public source address used by real users. A frontend rollback
+predating retry-deadline handling may retry throttled joins more often; the relay
+still enforces its own window.
+
+Worker and Durable Object updates can briefly run different versions. The
+creation guard treats only the previous class's unknown-endpoint `404` as legacy
+mode, allowing the established creation path during that overlap. `429`, other
+errors and exceptions never bypass the guard. Successful creation reports
+`X-WarpView-Creation-Guard: enforced|legacy`; verify `enforced` after rollout.
+This deliberately leaves source quotas unavailable while the object still runs
+pre-guard code. Retain compatibility while rollback to that code is supported.
+See Cloudflare's [code-update guidance](https://developers.cloudflare.com/durable-objects/platform/known-issues/#code-updates).
+Check the HTML entry's JavaScript asset and a real browser after deployment;
+an upload or traffic switch alone is not release verification.
+
 Generation-cache rollout adds `cache=2` negotiation to room creation. Deploy
 frontend and relay together. Existing rooms drain in place. A rollback serving
 frontend code older than cache-identity support cannot be expected to reopen new

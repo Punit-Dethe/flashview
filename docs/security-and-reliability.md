@@ -22,6 +22,11 @@ This document describes **current boundaries and recovery behavior**, not a secu
 2. **In flight:** Bytes travel as bounded WebSocket binary frames through the relay, which need not store whole files.
 3. **Receiver:** IndexedDB database `flashview-room-cache` stores 64 KiB chunks indexed by room/document, optional JPEG previews and local room-expiry data. A bounded memory LRU accelerates reads.
 4. **Metadata:** Node uses an in-memory room map. Cloudflare Durable Objects persist **room, session, file manifests and completion metadata** to survive hibernation. This is *not* persistent original-file storage.
+   Creation protection also keeps a counter/reset time under a hashed source
+   address key for its one-hour window, independently of End room. Cleanup is
+   scheduled at window expiry; an expired counter is ignored on reuse. The
+   source key is pseudonymous, not anonymized. No raw address is written into
+   application quota state; hosting-platform request processing/logging is separate.
 5. **Deletion:** Ending a room records intent and confirms relay closure before deleting local chunks/previews. Credentials are retained until cleanup succeeds. Failed/uncertain closure and failed local deletion are separate retryable outcomes, restored on refresh. Browser expiration cleanup occurs on later visits; site-data erasure and disk-forensic erasure are **not** the same thing.
 
 ## Expected failure and recovery behavior
@@ -57,9 +62,13 @@ This document describes **current boundaries and recovery behavior**, not a secu
 - **Public deployment** needs rate-limit and abuse/operational review appropriate to expected load; existing caps are defenses, not a proof of hardening.
 - **Room admission** now bounds normal growth at 300 manifests / 4 GiB and 120
   retained identities. Reconnects preserve known capabilities, with at most 30
-  simultaneous sender places. Unauthenticated sockets and distributed room
-  creation/join rate limiting remain open; do not describe these caps as complete
-  abuse protection. Already-admitted legacy data above a new cap is not evicted.
+  simultaneous sender places. Pending sockets now have ten-second authentication
+  deadlines and bounded pending/closing pools. Creation is limited to 120/source
+  address/hour (durable on Cloudflare, process-local on Node), and new sender
+  identities to 120/room/minute; known private resumes bypass the latter. These
+  remain partial abuse defenses, not comprehensive DDoS protection. An IP/source
+  bucket is shared by users behind NAT/proxies. Node does not trust arbitrary
+  forwarded-for headers. Already-admitted legacy data above a new cap is not evicted.
 
 ## Triage when a transfer stalls
 

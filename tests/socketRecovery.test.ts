@@ -93,6 +93,22 @@ test('temporary room capacity preserves the private identity and retries admissi
   assert.equal(socket.connected, true);
 });
 
+test('new-join throttling honors the server deadline despite foreground events and preserves selected identity', t => {
+  const { socket } = setup(t);
+  socket.restartStalledTransfer();
+  const limited = SuspendedSocket.instances[1]; limited.accept();
+  limited.message({ type: 'error', code: 'JOIN_RATE_LIMIT', retryable: true, retryAfterMs: 30000 });
+  limited.onclose?.();
+  for (let i = 0; i < 20; i++) { socket.pauseHeartbeat(); socket.wake('online'); socket.restartStalledTransfer(); }
+  t.mock.timers.tick(29999); assert.equal(SuspendedSocket.instances.length, 2);
+  t.mock.timers.tick(1); assert.equal(SuspendedSocket.instances.length, 3);
+  const admitted = SuspendedSocket.instances[2]; admitted.accept();
+  assert.equal(JSON.parse(admitted.sent[0]).resumeToken, 'preserved-resume-token');
+  admitted.message({ type: 'join.resumed' });
+  socket.pauseHeartbeat(); socket.wake();
+  assert.equal(SuspendedSocket.instances.length, 4, 'Successful authentication restores immediate foreground recovery');
+});
+
 test('stalled room authentication retires its socket even when close never completes', t => {
   const { socket } = setup(t);
   socket.restartStalledTransfer();

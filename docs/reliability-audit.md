@@ -246,6 +246,34 @@ timed out; its isolated and subsequent full runs passed, and timeout diagnostics
 now identify the awaited message. This does not establish a cause for every
 reported phone/network stall.
 
+## 20 October connection guards integration (in progress)
+
+PR #42's full CI passed. N24–N26 continue Phase 1 on top of the shared
+admission/recovery line; the original 9/3/18 counts remain unchanged until merge.
+
+| New ID | Status | Problem / correction | Evidence |
+| --- | --- | --- | --- |
+| N24 | **In progress** | Unauthenticated sockets could remain indefinitely and consume relay resources. Bound pending sockets (64 per Cloudflare room / 256 per Node process), total sockets including closing connections (128 / 4096), and require authentication within ten seconds. Cloudflare's single alarm services both authentication and room expiry; host renewal cannot postpone login cleanup. | Real socket tests fill the pending pool, verify 503, authenticate one to free a slot immediately, expire idle peers, admit another login and forward exact bytes over the original authenticated phone. Cloudflare owns final TCP closure: application access is retired at expiry; a hard ten-second TCP teardown is not promised. |
+| N25 | **In progress** | Cloudflare lacked a durable source creation quota; Node's source map was unbounded and allowed only 20 creations/hour, which is tight for shared campus addresses. Apply 120 creations/source/hour, a bounded Node map, and 120 new identities/room/minute. Cloudflare persists counters in source-hash-prefixed objects in the existing namespace; scheduled cleanup expires the one-hour metadata. Known private resumes and host takeovers bypass the new-identity quota. | Protocol tests exhaust each quota, preserve quota after host rejection, resume existing files at the limit, reject foreign Origin before charging, ignore spoofed forwarded-for and verify creation denial survives a Cloudflare emulator restart. Unit tests cover expiry, immutable windows and bounded maps without evicting active quotas. |
+| N26 | **In progress** | A throttled new phone could repeatedly reconnect or lose its selected File references if temporary denial was treated as leaving. Honor the server retry deadline, coalesce return events while waiting, retain the workspace and clear only its own notice after admission. Room creation displays the server's meaningful error. | Fake-clock socket test fires twenty return/retry events without bypassing the deadline; a real browser selects a file during a four-second injected admission wait, resumes the same private identity, verifies the cached original and clears the notice. Tested on Node, Cloudflare and Firefox. |
+
+These are bounded resource policies, not complete DDoS protection or proof that
+shared campus addresses can never encounter a limit. Source hashes are
+pseudonymous. Node counters remain process-local and do not trust forwarded
+addresses; a reverse-proxy deployment needs a deliberate trusted-source policy.
+Cloudflare socket/alarm scheduling still depends on its runtime. The changes add
+no quota work to individual binary packets and keep the 200 MiB per-file cap.
+Full shared command/revision/persistence orchestration, worker/OPFS integration,
+content integrity and independent completed-file viewers remain pending.
+
+Initial validation: 88 unit/protocol tests, 17 Cloudflare relay contracts, 30/30
+Node Chromium checks and 9 targeted Firefox checks passed. The first full
+Cloudflare Chromium run passed 29/30: the packet-size case timed out waiting for
+its file input, before any bytes were selected. Its isolated rerun passed; the
+cause is unconfirmed. The subsequent full Cloudflare run passed 30/30. Deployment
+evidence is recorded in the PR. TypeScript, build and Worker dry-run passed. Physical phones and campus
+networks remain unverified.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

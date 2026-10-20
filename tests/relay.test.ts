@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket } from 'ws';
 import { decodeRangePacket, encodeRangePacket, MAX_FILE_BYTES } from '../src/shared/protocol';
 import { MAX_ROOM_BYTES, MAX_ROOM_SESSIONS, MAX_ACTIVE_SENDERS } from '../src/shared/roomAdmission';
+import { AUTH_TIMEOUT_MS, MAX_PENDING_NODE, MAX_PENDING_ROOM, CREATION_LIMIT, JOIN_LIMIT } from '../src/shared/connectionGuards';
 
 type Message = { type: string; [key: string]: unknown };
 type Event = { binary: false; msg: Message } | { binary: true; data: Buffer };
@@ -71,8 +72,8 @@ async function unusedPort(): Promise<number> {
   await new Promise<void>(resolve => server.close(() => resolve()));
   return port;
 }
-async function startServer(): Promise<{ port: number; child: ChildProcessWithoutNullStreams }> {
-  const port = await unusedPort();
+async function startServer(portHint?: number): Promise<{ port: number; child: ChildProcessWithoutNullStreams }> {
+  const port = portHint ?? await unusedPort();
   const child = spawn(process.execPath, process.env.FLASHVIEW_BACKEND === 'cloudflare'
     ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--name', 'warpview-test-' + port, '--persist-to', '.wrangler/test-state/' + port, '--inspector-port', '0', '--port', String(port), '--ip', '127.0.0.1']
     : ['--import', 'tsx', 'src/server/index.ts'], {
@@ -92,6 +93,123 @@ async function startServer(): Promise<{ port: number; child: ChildProcessWithout
   child.kill();
   throw new Error('Server never started: ' + output);
 }
+
+async function rawConnect(port: number, code: string): Promise<TestPeer> {
+  const ws = new WebSocket('ws://127.0.0.1:' + port + '/ws?room=' + code, { origin: 'http://127.0.0.1:' + port });
+  const peer = new TestPeer(ws);
+  await new Promise<void>((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+  return peer;
+}
+
+test('connection guard bounds idle sockets, expires them, and keeps authenticated file transfer and HTTP lease alive', { timeout: 30000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const origin = 'http://127.0.0.1:' + port;
+    const room = await (await fetch(origin + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      code: string; roomId: string; roomGeneration: string; hostToken: string; leaseToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken }); peers.push(host); await host.wait('room.state');
+    const count = process.env.FLASHVIEW_BACKEND === 'cloudflare' ? MAX_PENDING_ROOM : MAX_PENDING_NODE;
+    const idle = await Promise.all(Array.from({ length: count }, () => rawConnect(port, room.code)));
+    peers.push(...idle);
+    const status = await new Promise<number>((resolve, reject) => {
+      const ws = new WebSocket(origin.replace('http:', 'ws:') + '/ws?room=' + room.code, { origin });
+      ws.on('error', () => {});
+      ws.once('unexpected-response', (request, response) => {
+        response.on('error', () => {}); response.resume();
+        const status = response.statusCode!; request.destroy(); resolve(status);
+      });
+      ws.once('open', () => { ws.terminate(); reject(Error('Idle capacity was exceeded')); });
+    });
+    assert.equal(status, 503);
+    // One admitted hello releases its pending slot immediately, not after 10 s.
+    const phone = idle[0]; phone.send({ type: 'hello', role: 'student', code: room.code }); await phone.wait('join.accepted');
+    const replacementIdle = await rawConnect(port, room.code); peers.push(replacementIdle);
+    const lease = await fetch(origin + '/api/rooms/' + room.roomId + '/lease', { method: 'POST',
+      headers: { Authorization: 'Bearer ' + room.leaseToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomGeneration: room.roomGeneration }) });
+    assert.equal(lease.status, 200, 'Connection pressure cannot block scoped HTTP control');
+    const began = Date.now();
+    const pending = [...idle.slice(1), replacementIdle];
+    // Cloudflare owns the final TCP close; a received Close frame can leave the
+    // native client CLOSING temporarily. It must already be unusable for data,
+    // and a fresh authenticated hello must be admitted without that TCP wait.
+    while (pending.some(peer => peer.ws.readyState === WebSocket.OPEN) && Date.now() - began < AUTH_TIMEOUT_MS + 5000) await delay(25);
+    assert.ok(pending.every(peer => peer.ws.readyState !== WebSocket.OPEN),
+      'All idle handshakes expire without more requests: ' + JSON.stringify({
+        remaining: pending.filter(p => p.ws.readyState !== WebSocket.CLOSED).length,
+        timeoutNotices: pending.filter(p => p.events.some(e => !e.binary && e.msg.message === 'Authentication timed out')).length,
+        states: [...new Set(pending.map(p => p.ws.readyState))],
+        closeFrames: pending.filter(p => (p.ws as WebSocket & { _closeFrameReceived?: boolean })._closeFrameReceived).length,
+      }));
+    const fresh = await rawConnect(port, room.code); peers.push(fresh);
+    fresh.send({ type: 'hello', role: 'student', code: room.code }); await fresh.wait('join.accepted');
+    assert.equal(phone.ws.readyState, WebSocket.OPEN);
+    phone.send({ type: 'file.offer', fileId: 'after-idle-expiry', name: 'original.bin', size: 4 }); await phone.wait('file.state');
+    host.send({ type: 'range.request', requestId: 'after-idle-range', fileId: 'after-idle-expiry', begin: 0, end: 4 }); await phone.wait('range.request');
+    phone.ws.send(encodeRangePacket({ type: 'range.data', requestId: 'after-idle-range', fileId: 'after-idle-expiry', begin: 0 }, Uint8Array.of(3, 1, 4, 1)));
+    const packet = await host.waitBinary();
+    assert.deepEqual([...decodeRangePacket(packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer).bytes], [3, 1, 4, 1]);
+  } finally { for (const peer of peers) peer.ws.terminate(); child.kill(); }
+});
+
+test('new-join rate survives host rejections while private sender and host reconnects bypass it', { timeout: 30000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const auth = { role: 'host', roomId: room.roomId, token: room.hostToken };
+    const host = await connect(port, auth); peers.push(host); await host.wait('room.state');
+    const original = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(original);
+    const joined = await original.wait('join.accepted'); await host.wait('student.updated');
+    original.send({ type: 'file.offer', fileId: 'rate-retained-file', name: 'original.bin', size: 4 }); await original.wait('file.state');
+    original.close(); await host.wait('student.left');
+    for (let i = 1; i < JOIN_LIMIT; i++) {
+      const p = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(p); await p.wait('join.accepted');
+      const student = (await host.wait('student.updated')).student as { id: string };
+      host.send({ type: 'student.reject', studentId: student.id }); await p.wait('join.rejected'); await host.wait('student.left');
+    }
+    const fresh = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(fresh);
+    const denied = await fresh.wait('error');
+    assert.equal(denied.code, 'JOIN_RATE_LIMIT'); assert.equal(denied.retryable, true);
+    assert.ok(Number(denied.retryAfterMs) > 0 && Number(denied.retryAfterMs) <= 60000);
+    const resumed = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: joined.resumeToken }); peers.push(resumed);
+    assert.equal(((await resumed.wait('join.resumed')).files as Array<{ fileId: string }>)[0].fileId, 'rate-retained-file');
+    const nextHost = await connect(port, auth); peers.push(nextHost);
+    assert.equal(((await nextHost.wait('room.state')).files as unknown[]).length, 1);
+  } finally { for (const peer of peers) peer.ws.terminate(); child.kill(); }
+});
+
+test('room creation is source-limited with Retry-After and Cloudflare quota survives process restart', { timeout: 45000 }, async () => {
+  let { port, child } = await startServer();
+  const origin = 'http://127.0.0.1:' + port;
+  try {
+    assert.equal((await fetch(origin + '/api/rooms', { method: 'POST', headers: { Origin: 'https://unrelated.example' } })).status, 403);
+    for (let i = 0; i < CREATION_LIMIT; i++) {
+      const created = await fetch(origin + '/api/rooms', { method: 'POST' }); assert.equal(created.status, 201);
+      const room = await created.json() as { roomId: string; roomGeneration: string; hostToken: string };
+      assert.equal((await fetch(origin + '/api/rooms/' + room.roomId + '/end', { method: 'POST',
+        headers: { Authorization: 'Bearer ' + room.hostToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomGeneration: room.roomGeneration }) })).status, 200);
+    }
+    const denied = await fetch(origin + '/api/rooms', { method: 'POST', headers: { 'X-Forwarded-For': '198.51.100.123' } });
+    assert.equal(denied.status, 429); assert.ok(Number(denied.headers.get('Retry-After')) > 0);
+    if (process.env.FLASHVIEW_BACKEND === 'cloudflare') {
+      const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+      // This child is the emulator created above; terminate its own subprocesses
+      // as well on Windows so a stale workerd cannot keep the selected port.
+      if (process.platform === 'win32') spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+      else child.kill();
+      await exited;
+      ({ child } = await startServer(port));
+      const restored = await fetch(origin + '/api/rooms', { method: 'POST' });
+      assert.equal(restored.status, 429, 'A new isolate/process cannot reset the durable source bucket');
+    }
+  } finally { child.kill(); }
+});
 
 test('shared file admission bounds retained bytes, rejects conflicts and preserves full-room retries and healthy ranges', { timeout: 35000 }, async () => {
   const { port, child } = await startServer();

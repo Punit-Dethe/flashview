@@ -2155,6 +2155,68 @@ test('host handover never sends a stale offline event; new host still receives t
   }
 });
 
+test('connection guard: admission retry delay retains selected bytes and clears its notice after recovery', { timeout: 45000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true });
+  const phone = await browser.newPage();
+  const identities: string[] = [];
+  phone.on('websocket', ws => ws.on('framesent', ({ payload }) => {
+    if (typeof payload === 'string') { const m = JSON.parse(payload); if (m.type === 'hello') identities.push(m.resumeToken); }
+  }));
+  try {
+    const root = 'http://127.0.0.1:' + port;
+    await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const token = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken as string);
+    // Inject one server-requested wait without spending a real minute or
+    // weakening server quotas. The real relay still authenticates the retry.
+    await phone.addInitScript(`{
+      const Native = window.WebSocket;
+      window.__guardSockets = [];
+      window.WebSocket = class extends Native {
+        constructor(...args) {
+          super(...args); window.__guardSockets.push(this);
+          this.addEventListener('message', event => {
+            if (typeof event.data !== 'string') return;
+            const m = JSON.parse(event.data);
+            if (m.type === 'join.accepted' && !window.__guardDelayed) {
+              window.__guardDelayed = true; window.__guardDeadline = Date.now() + 4000;
+              event.stopImmediatePropagation();
+              this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({
+                type: 'error', code: 'JOIN_RATE_LIMIT', retryable: true, retryAfterMs: 4000,
+                message: 'This room is temporarily busy accepting new connections. Your files are kept; retrying shortly.'
+              }) }));
+              this.close();
+            }
+          });
+        }
+      };
+    }`);
+    await phone.goto(root + '/?join=' + encodeURIComponent(token));
+    await phone.getByRole('alert').getByText(/Your files are kept/).waitFor();
+    const original = Buffer.alloc(768 * 1024 + 7, 61);
+    await phone.locator('input[type=file]').setInputFiles({ name: 'retained-during-wait.bin', mimeType: 'application/octet-stream', buffer: original });
+    const before = await phone.evaluate(() => {
+      for (let i = 0; i < 20; i++) { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online')); }
+      const w = window as typeof window & { __guardSockets: WebSocket[]; __guardDeadline: number };
+      return { sockets: w.__guardSockets.length, remaining: w.__guardDeadline - Date.now() };
+    });
+    assert.equal(before.sockets, 1); assert.ok(before.remaining > 0);
+    await phone.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 20000 });
+    assert.equal(await phone.getByRole('alert').count(), 0, 'Successful admission clears only its own waiting notice');
+    assert.equal(await host.locator('.participant-row').count(), 1);
+    assert.equal(identities.length, 2); assert.equal(identities[0], identities[1]);
+    const event = host.waitForEvent('download');
+    await host.getByRole('button', { name: 'Download retained-during-wait.bin' }).click();
+    assert.deepEqual(await readFile((await (await event).path())!), original);
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await host.locator('.welcome').waitFor();
+  } finally { await browser.close(); child.kill(); }
+});
+
 test('room admission: capacity denial stops replay, releases local slots and preserves cached originals', { timeout: 70000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });

@@ -23,6 +23,7 @@ export class RoomSocket {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimeout: ReturnType<typeof setTimeout> | null = null;
   private retryCount = 0;
+  private admissionNotBefore = 0;
   private stopped = false;
   private pingSentAt: number | null = null;
   private authenticated = false;
@@ -51,6 +52,7 @@ export class RoomSocket {
         byte => byte.toString(16).padStart(2, '0')).join('');
     }
     this.retryCount = 0;
+    this.admissionNotBefore = 0;
     this.heartbeatPaused = false;
     this.reconnectOnWake = false;
     this.foregroundAttempt = null;
@@ -106,6 +108,7 @@ export class RoomSocket {
     const suspended = this.reconnectOnWake;
     this.reconnectOnWake = false;
     this.heartbeatPaused = false;
+    if (Date.now() < this.admissionNotBefore) { this.scheduleReconnect(); return; }
     if (this.immediateResume && (suspended || reason === 'online')) {
       // One new attempt for the return, without a serial old-socket probe.
       // Coalesce online/focus/pageshow/change events against that attempt.
@@ -161,6 +164,7 @@ export class RoomSocket {
    */
   restartStalledTransfer(): void {
     if (this.stopped || !this.identity) return;
+    if (Date.now() < this.admissionNotBefore) { this.scheduleReconnect(); return; }
     this.stopConnection();
     this.retryCount = 0;
     this.open();
@@ -168,6 +172,7 @@ export class RoomSocket {
 
   private open(): void {
     if (this.stopped || !this.identity || this.ws) return;
+    if (Date.now() < this.admissionNotBefore) { this.scheduleReconnect(); return; }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const roomCode = typeof this.identity.code === 'string' ? this.identity.code
       : typeof this.identity.joinToken === 'string' ? this.identity.joinToken.split('.')[0]
@@ -204,6 +209,10 @@ export class RoomSocket {
       if (typeof event.data === 'string') {
         try {
           const message: ServerMessage = JSON.parse(event.data);
+          if (!this.authenticated && message.type === 'error' && message.code === 'JOIN_RATE_LIMIT' &&
+              message.retryable === true && typeof message.retryAfterMs === 'number' &&
+              Number.isFinite(message.retryAfterMs) && message.retryAfterMs > 0)
+            this.admissionNotBefore = Date.now() + Math.min(message.retryAfterMs, 60_000);
           if (message.type === 'heartbeat.pong') {
             if (this.pingSentAt !== null) perf.record('heartbeat_rtt_ms', performance.now() - this.pingSentAt);
             this.pingSentAt = null;
@@ -226,6 +235,7 @@ export class RoomSocket {
             const wasAuthenticated = this.authenticated;
             this.retryCount = 0;
             this.authenticated = true;
+            this.admissionNotBefore = 0;
             if (this.wakeTimeout !== null) clearTimeout(this.wakeTimeout);
             this.wakeTimeout = null;
             if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
@@ -281,7 +291,8 @@ export class RoomSocket {
   private scheduleReconnect(): void {
     if (this.stopped || !this.identity || this.reconnectTimer !== null) return;
     // Exponential backoff prevents a network outage from hammering free-tier quotas.
-    const delayMs = Math.min(750 * 2 ** Math.min(this.retryCount++, 5), 15_000)
+    const remaining = this.admissionNotBefore - Date.now();
+    const delayMs = remaining > 0 ? remaining : Math.min(750 * 2 ** Math.min(this.retryCount++, 5), 15_000)
       + Math.floor(Math.random() * 300);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -424,6 +435,7 @@ export class RoomSocket {
 
   close(): void {
     this.stopped = true;
+    this.admissionNotBefore = 0;
     this.identity = null;
     this.stopConnection();
     this.onStatus('disconnected');

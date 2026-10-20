@@ -79,6 +79,7 @@ export function App() {
   const [hostSession, setHostSession] = useState<HostSession | null>(initialSession);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('disconnected');
   const [error, setError] = useState('');
+  const admissionError = useRef('');
   const [blockedStorageFiles, setBlockedStorageFiles] = useState<string[]>([]);
   const [retryingBlockedStorage, setRetryingBlockedStorage] = useState(false);
   const [joinCode, setJoinCode] = useState(initialJoin);
@@ -550,10 +551,16 @@ export function App() {
         if (modeRef.current === 'student') socket.send({ type: 'file.sync' });
       }
       if (type === 'join.pending') {
+        const previousNotice = admissionError.current;
+        if (previousNotice) setError(current => current === previousNotice ? '' : current);
+        admissionError.current = '';
         if (typeof message.roomCode === 'string') setCurrentRoomCode(message.roomCode);
         setJoinState('pending');
       }
       if (type === 'join.accepted' || type === 'join.resumed') {
+        const previousNotice = admissionError.current;
+        if (previousNotice) setError(current => current === previousNotice ? '' : current);
+        admissionError.current = '';
         if (typeof message.roomCode === 'string') setCurrentRoomCode(message.roomCode);
         setJoinState('accepted');
         setHostAvailable(true);
@@ -660,6 +667,9 @@ export function App() {
       }
       if (type === 'error') {
         const text = normalizedMessage(message);
+        if (message.code === 'JOIN_RATE_LIMIT' && message.retryable === true) {
+          admissionError.current = text; setError(text); return;
+        }
         if (modeRef.current === 'student' &&
             /room not found|room expired|room is full|host is offline|invalid join/i.test(text)) {
           returnHome();
@@ -732,7 +742,10 @@ export function App() {
     setRetryingBlockedStorage(false);
     try {
       const response = await fetch('/api/rooms?cache=2&autoApprove=' + (autoApprove ? '1' : '0'), { method: 'POST' });
-      if (!response.ok) throw new Error('Unable to create room (' + response.status + ')');
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(typeof body?.error === 'string' ? body.error : 'Unable to create room (' + response.status + ')');
+      }
       const newSession = await response.json() as HostSession;
       rememberHostSession(newSession);
       closeRequestedRef.current = false;
@@ -943,6 +956,7 @@ export function App() {
   function returnHome(): void {
     // Prevent stale socket notifications or QR invitations surviving an exit.
     modeRef.current = 'welcome';
+    admissionError.current = '';
     hostLease.stop();
     hostSessionRef.current = null;
     closeRequestedRef.current = false;

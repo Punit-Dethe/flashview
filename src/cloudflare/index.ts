@@ -1,6 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity';
 import { admitFile, admitSender } from '../shared/roomAdmission';
+import { AUTH_TIMEOUT_MS, MAX_PENDING_ROOM, MAX_ROOM_SOCKETS, CREATION_LIMIT, CREATION_WINDOW_MS, JOIN_LIMIT, JOIN_WINDOW_MS,
+  consumeWindow, nextRoomAlarm, retryAfterSeconds, JOIN_RATE_MESSAGE, type RateWindow } from '../shared/connectionGuards';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
@@ -16,7 +18,7 @@ interface Env {
   ASSETS: Fetcher;
 }
 type Role = 'host' | 'student' | null;
-interface Peer { id: string; role: Role; name: string; approved: boolean }
+interface Peer { id: string; role: Role; name: string; approved: boolean; authDeadline?: number }
 interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; lastActivityAt?: number; autoApprove?: boolean;
   roomGeneration?: string; leaseToken?: string; cacheVersion?: 2 }
 interface ResumeSession { id: string; name: string; approved: boolean; token: string }
@@ -51,14 +53,24 @@ export class ClassroomRoom extends DurableObject<Env> {
   private config: RoomConfig | null = null;
   private files = new Map<string, PdfManifest>();
   private sessions = new Map<string, ResumeSession>();
+  private joinWindow: RateWindow | null = null;
+  private creationWindow: RateWindow | null = null;
   // Deliberately volatile: a hibernation race is retried by the client's range timeout.
   private ranges = new Map<string, RangeRequest>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    let upgradedPending = false;
     for (const ws of ctx.getWebSockets()) {
       const peer = ws.deserializeAttachment() as Peer | null;
-      if (peer?.id) this.peers.set(ws, peer);
+      if (peer?.id) {
+        if (peer.role === null && peer.authDeadline === undefined) {
+          upgradedPending = true;
+          peer.authDeadline = Date.now() + AUTH_TIMEOUT_MS;
+          ws.serializeAttachment(peer);
+        }
+        this.peers.set(ws, peer);
+      }
     }
     ctx.blockConcurrencyWhile(async () => {
       this.config = await ctx.storage.get<RoomConfig>('config') ?? null;
@@ -66,6 +78,14 @@ export class ClassroomRoom extends DurableObject<Env> {
       this.files = new Map(stored.map(file => [file.fileId, file]));
       const sessions = await ctx.storage.get<ResumeSession[]>('sessions') ?? [];
       this.sessions = new Map(sessions.map(session => [session.token, session]));
+      this.joinWindow = await ctx.storage.get<RateWindow>('joinWindow') ?? null;
+      this.creationWindow = await ctx.storage.get<RateWindow>('creationWindow') ?? null;
+      // Never postpone an already-due alarm when recovering from hibernation.
+      if (this.config && upgradedPending) {
+        const current = await ctx.storage.getAlarm();
+        const next = this.nextAlarm();
+        if (current === null || next < current) await ctx.storage.setAlarm(next);
+      }
     });
   }
 
@@ -95,7 +115,29 @@ export class ClassroomRoom extends DurableObject<Env> {
     await this.ctx.storage.put('files', [...this.files.values()]);
   }
   private async persistSessions(): Promise<void> {
-    await this.ctx.storage.put('sessions', [...this.sessions.values()]);
+    await this.ctx.storage.put({ sessions: [...this.sessions.values()], joinWindow: this.joinWindow });
+  }
+  private nextAlarm(): number {
+    const expires = this.config ? roomExpiresAt(this.config.created, this.config.lastActivityAt) : Date.now();
+    return nextRoomAlarm(expires, [...this.peers.values()]
+      .filter(peer => peer.role === null).map(peer => peer.authDeadline ?? Date.now()));
+  }
+  private async scheduleRoomAlarm(onlyEarlier = false): Promise<void> {
+    if (!this.config) return;
+    const current = await this.ctx.storage.getAlarm();
+    const next = this.nextAlarm();
+    if (current === next || (onlyEarlier && current !== null && current < next)) return;
+    await this.ctx.storage.setAlarm(next);
+  }
+  private rejectAuthentication(ws: WebSocket, message: string): void {
+    this.peers.delete(ws); ws.serializeAttachment(null);
+    try { send(ws, { type: 'error', message }); } catch { /* Already closing. */ }
+    try { ws.close(1008, 'Authentication failed'); } catch { /* Already closed. */ }
+  }
+  private expirePending(now: number): void {
+    for (const [ws, peer] of this.peers)
+      if (peer.role === null && now >= (peer.authDeadline ?? 0))
+        this.rejectAuthentication(ws, 'Authentication timed out');
   }
   private async terminate(): Promise<void> {
     // Commit termination before announcing it. A lost response can be retried
@@ -106,6 +148,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     this.peers.clear();
     this.files.clear();
     this.sessions.clear();
+    this.joinWindow = null;
     this.ranges.clear();
     for (const ws of sockets) {
       ws.serializeAttachment(null);
@@ -128,11 +171,27 @@ export class ClassroomRoom extends DurableObject<Env> {
     cfg.lastActivityAt = now;
     // Persist before rescheduling: an old alarm can still recover the new deadline.
     await this.ctx.storage.put('config', cfg);
-    await this.ctx.storage.setAlarm(roomExpiresAt(cfg.created, cfg.lastActivityAt));
+    await this.scheduleRoomAlarm();
   }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // Only the outer Worker addresses these prefixed, non-room objects. No
+    // public route forwards this endpoint or permits a non-numeric room name.
+    if (url.pathname === '/creation-permit' && request.method === 'POST') {
+      return this.ctx.blockConcurrencyWhile(async () => {
+        if (this.config) return new Response('Invalid guard object', { status: 409 });
+        const result = consumeWindow(this.creationWindow, CREATION_LIMIT, CREATION_WINDOW_MS, Date.now());
+        if (!result.allowed) return new Response(JSON.stringify({
+          error: 'Room creation is temporarily limited for this connection. Please try again later.',
+        }), { status: 429, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store',
+          'Retry-After': retryAfterSeconds(result.retryAfterMs) } });
+        this.creationWindow = result.window;
+        await this.ctx.storage.put('creationWindow', this.creationWindow);
+        await this.ctx.storage.setAlarm(this.creationWindow.reset);
+        return json({ allowed: true });
+      });
+    }
     if (url.pathname === '/init' && request.method === 'POST') {
       const incoming = await request.json() as Partial<RoomConfig>;
       if (!/^\d{6}$/.test(incoming.code ?? '') ||
@@ -144,6 +203,7 @@ export class ClassroomRoom extends DurableObject<Env> {
         if (!this.expired()) return new Response('Room code in use', { status: 409 });
         if (this.config) await this.terminate();
         const created = Date.now();
+        this.joinWindow = null;
         this.config = {
           code: incoming.code!, hostToken: incoming.hostToken!, joinToken: incoming.joinToken!, created,
           lastActivityAt: created, autoApprove: incoming.autoApprove === true,
@@ -187,19 +247,25 @@ export class ClassroomRoom extends DurableObject<Env> {
       return new Response('WebSocket upgrade required', { status: 426 });
     }
     if (this.expired()) return new Response('Room expired', { status: 404 });
+    this.expirePending(Date.now());
+    if ([...this.peers.values()].filter(peer => peer.role === null).length >= MAX_PENDING_ROOM ||
+        this.ctx.getWebSockets().length >= MAX_ROOM_SOCKETS)
+      return new Response('Room connection queue is busy', { status: 503, headers: { 'Retry-After': '1' } });
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
     this.ctx.acceptWebSocket(server);
-    this.putPeer(server, { id: crypto.randomUUID(), role: null, name: '', approved: false });
+    this.putPeer(server, { id: crypto.randomUUID(), role: null, name: '', approved: false,
+      authDeadline: Date.now() + AUTH_TIMEOUT_MS });
+    await this.scheduleRoomAlarm(true);
     return new Response(null, { status: 101, webSocket: client } as ResponseInit);
   }
 
   private async authenticate(ws: WebSocket, peer: Peer, msg: Record<string, unknown>): Promise<void> {
     const cfg = this.config;
-    if (!cfg || this.expired()) return void send(ws, { type: 'error', message: 'Room expired' });
+    if (!cfg || this.expired()) return void this.rejectAuthentication(ws, 'Room expired');
     if (msg.role === 'host') {
       if (msg.roomId !== cfg.code || msg.token !== cfg.hostToken) {
-        return void send(ws, { type: 'error', message: 'Invalid host credentials' });
+        return void this.rejectAuthentication(ws, 'Invalid host credentials');
       }
       for (const [other, active] of this.peers) {
         if (other !== ws && active.role === 'host') {
@@ -233,7 +299,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
     if (msg.role === 'student') {
       if (msg.code !== cfg.code && msg.joinToken !== cfg.joinToken) {
-        return void send(ws, { type: 'error', message: 'Room not found' });
+        return void this.rejectAuthentication(ws, 'Room not found');
       }
       const previous = typeof msg.resumeToken === 'string' ? this.sessions.get(msg.resumeToken) : undefined;
       const admission = admitSender(this.students().length, this.sessions.size, Boolean(previous),
@@ -285,7 +351,15 @@ export class ClassroomRoom extends DurableObject<Env> {
         });
         return;
       }
-      if (!this.host) return void send(ws, { type: 'error', message: 'The host is offline' });
+      if (!this.host) return void this.rejectAuthentication(ws, 'The host is offline');
+      const rate = consumeWindow(this.joinWindow, JOIN_LIMIT, JOIN_WINDOW_MS, Date.now());
+      if (!rate.allowed) {
+        this.peers.delete(ws); ws.serializeAttachment(null);
+        send(ws, { type: 'error', code: 'JOIN_RATE_LIMIT', retryable: true,
+          retryAfterMs: rate.retryAfterMs, message: JOIN_RATE_MESSAGE });
+        ws.close(1008, 'Join rate limit'); return;
+      }
+      this.joinWindow = rate.window;
       const approved = cfg.autoApprove === true;
       const newSession: ResumeSession = {
         id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved,
@@ -307,14 +381,18 @@ export class ClassroomRoom extends DurableObject<Env> {
       });
       return;
     }
-    send(ws, { type: 'error', message: 'Invalid role' });
+    this.rejectAuthentication(ws, 'Invalid role');
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const peer = this.peers.get(ws);
     if (!peer || this.expired()) return;
+    if (peer.role === null && Date.now() >= (peer.authDeadline ?? 0)) {
+      this.rejectAuthentication(ws, 'Authentication timed out'); return;
+    }
     if (peer.role === 'host' && this.host !== ws) return;
     if (typeof message !== 'string') {
+      if (peer.role === null) { this.rejectAuthentication(ws, 'Authentication required'); return; }
       if (peer.role !== 'student' || !peer.approved ||
           message.byteLength > MAX_RANGE_BYTES + 2048) return;
       try {
@@ -341,19 +419,27 @@ export class ClassroomRoom extends DurableObject<Env> {
       } catch { /* Ignore invalid binary frames and do not log user data. */ }
       return;
     }
-    if (message.length > 8192) return void send(ws, { type: 'error', message: 'Message too large' });
+    if (message.length > 8192) {
+      if (peer.role === null) this.rejectAuthentication(ws, 'Message too large');
+      else send(ws, { type: 'error', message: 'Message too large' });
+      return;
+    }
     let msg: Record<string, unknown>;
     try {
       const value: unknown = JSON.parse(message);
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Invalid message');
       msg = value as Record<string, unknown>;
-    } catch { return void send(ws, { type: 'error', message: 'Invalid message' }); }
+    } catch {
+      if (peer.role === null) this.rejectAuthentication(ws, 'Invalid message');
+      else send(ws, { type: 'error', message: 'Invalid message' });
+      return;
+    }
     if (msg.type === 'hello') {
       if (peer.role !== null) return void send(ws, { type: 'error', message: 'Already authenticated' });
       await this.authenticate(ws, peer, msg);
       return;
     }
-    if (!peer.role) return void send(ws, { type: 'error', message: 'Authentication required' });
+    if (!peer.role) return void this.rejectAuthentication(ws, 'Authentication required');
     if (peer.role === 'host') {
       await this.touchHostActivity();
       if (this.peers.get(ws) !== peer) return;
@@ -562,12 +648,19 @@ export class ClassroomRoom extends DurableObject<Env> {
   }
   async webSocketError(ws: WebSocket): Promise<void> { await this.webSocketClose(ws); }
   async alarm(): Promise<void> {
+    if (this.creationWindow && !this.config) {
+      if (Date.now() >= this.creationWindow.reset) {
+        await this.ctx.storage.deleteAll(); this.creationWindow = null;
+      } else await this.ctx.storage.setAlarm(this.creationWindow.reset);
+      return;
+    }
     if (!this.config) return;
+    this.expirePending(Date.now());
     const deadline = roomExpiresAt(this.config.created, this.config.lastActivityAt);
     // An alarm scheduled before the latest authenticated host activity must
     // never destroy an otherwise live classroom after Durable Object hibernation.
     if (Date.now() < deadline) {
-      await this.ctx.storage.setAlarm(deadline);
+      await this.scheduleRoomAlarm();
       return;
     }
     await this.terminate();
@@ -579,6 +672,16 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/health') return json({ ok: true, platform: 'cloudflare-free' });
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
+      if (request.headers.has('Origin') && request.headers.get('Origin') !== url.origin)
+        return json({ error: 'Forbidden origin' }, 403);
+      // Cloudflare supplies this address at the edge; never accept a client
+      // forwarded-for header. Hashing avoids storing the raw address in a name.
+      const source = request.headers.get('CF-Connecting-IP') ?? 'unknown';
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
+      const key = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      const permit = await env.ROOMS.getByName('creation:' + key)
+        .fetch(new Request('https://internal/creation-permit', { method: 'POST' }));
+      if (!permit.ok) return permit;
       for (let attempt = 0; attempt < 12; attempt++) {
         const code = String(100_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000));
         const config: RoomConfig = {

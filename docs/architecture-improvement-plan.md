@@ -51,7 +51,7 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | All-file benchmark and bounded original-byte readback | Implemented on #35; not ported to this branch |
 | Lockfile and reproducible installs | Implemented on #35; not ported to this branch |
 | Worker-owned relay transfer | Implemented/tested and deployed for user-authorized live reproduction: one socket, source reads, automatic receipt/cache and completion receipts, bounded bridge, cancellation and crash recovery. N38's speed outlier remains unexplained; N37/N39 and phone preview removal remain |
-| OPFS receipt and content verification | Demonstrated in the isolated R2 pilot; not integrated into the relay application |
+| OPFS receipt and content verification | New relay integration is gated behind explicit `?storage=opfs` creation: immutable source digest, range checks, flushed OPFS checkpoints, verified completion/resume and reader leases. Normal rooms remain IndexedDB; performance/device/fallback gates remain. See [validation](./opfs-cache-validation.md) |
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | Shared metadata engine owns file transitions, participant admission/approval/rejection, private takeover and host presence; serialized atomic checkpoints, room revisions and client stale-snapshot handling implemented. Integration/release evidence tracked in N31–N33 |
 | Room admission budgets | 300 retained manifests / 4 GiB originals, 120 retained session identities, 30 concurrent senders; exact retries and existing capabilities preserved |
@@ -179,6 +179,14 @@ bytes survive interruption/cancellation tests, and no material speed regression
 appears against the relay baseline. Worker lifetime remains tied to its page.
 
 ### Phase 3 — Production OPFS cache and content integrity
+
+**Current slice (21 October):** version 3 OPFS rooms, worker-side bounded hashing,
+ordered flush/checkpoints, restored-block validation, sealed original readback,
+reader leases and cleanup fencing are implemented on the integration branch.
+Version 2/legacy rooms drain unchanged. This is explicitly selected during room
+creation, not the normal default: the first ordinary local comparison is slower
+with the added integrity contract, so public/device performance and fallback
+gates remain. See [the contract, evidence and open work](./opfs-cache-validation.md).
 
 **Touch:** transfer worker persistence, cache metadata, original-file manifests
 and completed-file storage. This work is independent of remote object storage.

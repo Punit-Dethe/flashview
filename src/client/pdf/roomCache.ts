@@ -8,6 +8,9 @@ import { storageRetryDelay } from './storageRecovery';
 import { isQuotaError, quotaExhausted } from './quotaRecovery';
 import { CachedChunkIndex } from './chunkProgress';
 import { withStorageDeadline } from './storageWatchdog';
+import { isOpfsRoom, prepareOriginal, saveOriginalBlock, readOriginalBlock, originalIndices,
+  sealOriginal, deleteOriginalRoom, CompletedFileStore } from '../storage/opfsStore';
+import { digestBytes, validSha256 } from '../storage/integrity';
 
 export const CHUNK_BYTES = 65_536;
 // Keep a bounded background pipeline regardless of whether a viewer is open.
@@ -65,6 +68,8 @@ function database(): Promise<IDBDatabase> {
 }
 
 async function readChunk(key: string): Promise<ArrayBuffer | null> {
+  const [room, fileId, index] = key.split('/');
+  if (isOpfsRoom(room)) return readOriginalBlock(room, fileId, Number(index));
   const db = await database();
   const tx = db.transaction('chunks', 'readonly');
   const pending = new Promise<ArrayBuffer | null>((resolve, reject) => {
@@ -77,6 +82,8 @@ async function readChunk(key: string): Promise<ArrayBuffer | null> {
     () => { try { tx.abort(); } catch { /* Already settled. */ } });
 }
 async function saveChunk(record: ChunkRecord, signal?: AbortSignal): Promise<void> {
+  if (isOpfsRoom(record.room)) return saveOriginalBlock(record.room, record.document.slice(record.room.length + 1), record.index,
+    new Uint8Array(record.data), signal);
   const db = await database();
   if (signal?.aborted) throw Error('File transfer cancelled');
   const tx = db.transaction('chunks', 'readwrite');
@@ -92,6 +99,7 @@ async function saveChunk(record: ChunkRecord, signal?: AbortSignal): Promise<voi
   finally { signal?.removeEventListener('abort', abort); }
 }
 async function cachedIndices(room: string, fileId: string): Promise<Set<number>> {
+  if (isOpfsRoom(room)) return originalIndices(room, fileId);
   const db = await database();
   const tx = db.transaction('chunks', 'readonly');
   const pending = new Promise<Set<number>>((resolve, reject) => {
@@ -115,6 +123,10 @@ async function cachedIndices(room: string, fileId: string): Promise<Set<number>>
  * custom range transport (eliminates streamed-page scheduling races).
  */
 export async function readCompletedPdf(roomId: string, file: PdfManifest): Promise<Uint8Array | null> {
+  if (isOpfsRoom(roomId)) {
+    const blob = await new CompletedFileStore().snapshot(roomId, file);
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+  }
   // Loading every IndexedDB record with getAll() retains one whole-file-sized
   // collection of ArrayBuffers PLUS the reconstructed file. A cursor keeps
   // just one 64 KiB record live at a time, even for a 200 MiB transfer.
@@ -167,6 +179,7 @@ export async function readCompletedPdf(roomId: string, file: PdfManifest): Promi
  * uses its own complete Uint8Array, as required by the rendering libraries.
  */
 export async function readCompletedBlob(roomId: string, file: PdfManifest): Promise<Blob | null> {
+  if (isOpfsRoom(roomId)) return new CompletedFileStore().snapshot(roomId, file);
   const db = await database();
   const documentId = roomId + '/' + file.fileId;
   const count = Math.ceil(file.size / CHUNK_BYTES);
@@ -225,6 +238,7 @@ async function writeRoom(room: string): Promise<void> {
 }
 /** Delete ONLY the chosen room's original PDF chunks, not files in other rooms. */
 export async function deleteRoomCache(room: string): Promise<void> {
+  if (isOpfsRoom(room)) await deleteOriginalRoom(room);
   const db = await database();
   const tx = db.transaction(['chunks', 'rooms', 'previews'], 'readwrite');
   const pending = new Promise<void>((resolve, reject) => {
@@ -287,6 +301,7 @@ export class RoomPdfCache {
   private memoryBytes = 0;
   private indices = new Map<string, Promise<CachedChunkIndex>>();
   private verifyingCompleted = new Map<string, Promise<CacheProgress>>();
+  private integrityFailures = new Map<string, number>();
   private jobs = new Map<string, PdfManifest>();
   private working = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -327,7 +342,7 @@ export class RoomPdfCache {
   private warning(): void {
     if (this.warned) return;
     this.warned = true;
-    this.onStorageWarning('Browser storage is unavailable or full. Cached PDFs may not survive a refresh.');
+    this.onStorageWarning('Browser storage is unavailable or full. Files are not confirmed cached until saving succeeds.');
   }
   /** Pause only the affected file after a failed IndexedDB write, not its peers.
    * Retry the exact original bytes with bounded backoff; never re-request
@@ -427,12 +442,16 @@ export class RoomPdfCache {
       const cleanup = () => signal.removeEventListener('abort', abort);
       const abort = () => { cancelNetwork(); cleanup(); reject(Error('File transfer cancelled')); };
       signal.addEventListener('abort', abort, { once: true });
-      cancelNetwork = this.socket.requestRange(file.fileId, begin, end, (start, bytes) => {
-        cleanup();
-        if (signal.aborted) return reject(Error('File transfer cancelled'));
-        if (start !== begin || bytes.byteLength !== end - begin) return reject(Error('Incomplete PDF byte range'));
-        if (!this.fixedTransfer && !this.stopped) this.tuner(file.fileId).success(performance.now() - started);
-        resolve(bytes);
+      cancelNetwork = this.socket.requestRange(file.fileId, begin, end, async (start, bytes, sha256) => {
+        try {
+          if (signal.aborted) throw Error('File transfer cancelled');
+          if (start !== begin || bytes.byteLength !== end - begin) throw Error('Incomplete PDF byte range');
+          if (isOpfsRoom(this.roomId) && (!validSha256(sha256) || await digestBytes(bytes) !== sha256))
+            throw Error('Original byte verification failed; retrying this range');
+          if (signal.aborted || this.stopped) throw Error('File transfer cancelled');
+          if (!this.fixedTransfer) this.tuner(file.fileId).success(performance.now() - started);
+          resolve(bytes);
+        } catch (error) { reject(error); } finally { cleanup(); }
       }, reason => {
         cleanup();
         if (!this.fixedTransfer && !this.stopped && !signal.aborted) this.tuner(file.fileId).failure();
@@ -446,7 +465,8 @@ export class RoomPdfCache {
     if (!pending) {
       // Reconstruct persisted bytes once per room cache hydration. Subsequent
       // committed writes update both the index and byte total in constant time.
-      pending = cachedIndices(this.roomId, fileId)
+      pending = (isOpfsRoom(this.roomId) ? prepareOriginal(this.roomId, file) : Promise.resolve())
+        .then(() => cachedIndices(this.roomId, fileId))
         .then(keys => new CachedChunkIndex(file.size, keys))
         .catch(error => {
           this.warning();
@@ -470,7 +490,7 @@ export class RoomPdfCache {
     if (!initial.complete) return Promise.resolve(initial);
     const existing = this.verifyingCompleted.get(file.fileId);
     if (existing) return existing;
-    const verification = cachedIndices(this.roomId, file.fileId).then(persisted => {
+    const verification = cachedIndices(this.roomId, file.fileId).then(async persisted => {
       if (this.stopped) return { ...initial, complete: false };
       const stale = persisted.size !== indexed.size ||
         [...persisted].some(index => !indexed.has(index));
@@ -491,6 +511,24 @@ export class RoomPdfCache {
         for (const index of persisted) indexed.add(index);
       }
       const fresh = indexed.progress(file.fileId);
+      if (fresh.complete && isOpfsRoom(this.roomId)) {
+        // No source/network authority is needed once all original bytes exist.
+        // Disconnect/Stop cancels receipt but must not cancel local verification.
+        const sealed = await sealOriginal(this.roomId, file, () => !this.stopped);
+        if (!sealed) {
+          indexed.clear();
+          for (const key of [...this.memory.keys()]) if (key.startsWith(this.roomId + '/' + file.fileId + '/')) this.discardMemory(key, file.fileId);
+          const failures = (this.integrityFailures.get(file.fileId) ?? 0) + 1;
+          this.integrityFailures.set(file.fileId, failures);
+          if (failures >= 2) {
+            this.jobs.delete(file.fileId); this.storageFailedFiles.add(file.fileId);
+            this.onStorageWarning('Could not verify ' + file.name + '. Stop sharing it and select the original again.');
+          }
+          const corrected = { fileId: file.fileId, bytes: 0, size: file.size, complete: false, corrected: true };
+          this.onProgress(corrected); return corrected;
+        }
+        if (!this.stopped) this.onProgress(fresh);
+      }
       if (stale && !fresh.complete) {
         const repaired = { ...fresh, corrected: true };
         // Correction is authoritative. A previously reported 100% can be
@@ -571,7 +609,6 @@ export class RoomPdfCache {
     const signal = this.attempt(file.fileId).signal;
     const key = this.key(file.fileId, index);
     const cached = this.memory.get(key);
-    if (cached) return cached;
     // Attach to an already-requested chunk before querying IndexedDB.
     const running = this.inFlight.get(key);
     if (running) return running;
@@ -579,6 +616,7 @@ export class RoomPdfCache {
     // after every successful write. Avoid a database transaction for every
     // chunk already known to be missing.
     const indexed = await this.indexSet(file);
+    if (cached && indexed.has(index)) return cached;
     if (indexed.has(index)) {
       try {
         const stored = await readChunk(key);
@@ -597,7 +635,7 @@ export class RoomPdfCache {
     if (afterRead) return afterRead;
     const begin = index * CHUNK_BYTES;
     const end = Math.min(file.size, begin + CHUNK_BYTES);
-    const promise = this.receive(file, begin, end, signal).then(async data => {
+    const promise = (cached ? Promise.resolve(cached) : this.receive(file, begin, end, signal)).then(async data => {
       if (this.stopped || signal.aborted) throw Error('File transfer cancelled');
       this.putMemory(key, data);
       const writingSince = perf.enabled ? performance.now() : 0;
@@ -912,8 +950,8 @@ export class RoomPdfCache {
             // the affected student/file; successful peers continue.
             let task: Promise<void>;
             const attempt = this.attempt(fileId);
-            const transfer = indices.length === 1
-              ? this.chunk(file, indices[0]).then(() => {})
+            const transfer = indices.length === 1 || indices.every(index => this.memory.has(this.key(fileId, index)))
+              ? Promise.all(indices.map(index => this.chunk(file, index))).then(() => {})
               : this.chunkGroup(file, indices);
             task = transfer.then(() => {
               if (!attempt.signal.aborted) this.cooldown.delete(fileId);

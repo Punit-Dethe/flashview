@@ -105,6 +105,18 @@ capabilities or original bytes. Selection latency is also reported in ordinary
 runs. Diagnostic overhead differs from ordinary timing; preserve both batches
 and never substitute fast traced runs for an unexplained slow ordinary sample.
 
+`BENCH_STORAGE=opfs` creates explicitly selected version 3 rooms and verifies the
+sealed OPFS original; `idb` is the unchanged default. Both include selection and
+cache completion, but only the OPFS contract includes production source/range/
+persisted-content hashes. This is not a storage-only performance comparison.
+`BENCH_ORIGIN=https://<isolated-worker>.workers.dev` selects an isolated public
+deployment when `BENCH_TARGET=public`; it must be a plain HTTPS origin.
+`node --import tsx --test tests/opfs.browser.ts` exercises real storage, bad
+packets, quota/cancellation, worker restart and read-lease cleanup. It supports
+the existing `FLASHVIEW_BACKEND=cloudflare` and `FLASHVIEW_BROWSER=firefox` flags.
+`OPFS_TEST_MIB=200` generates a path-based synthetic fixture just below the cap,
+uses bounded source reads and hashes its explicit test export as a stream.
+
 ## Documentation and review expectations
 
 `transfer worker:` browser cases block both UI threads while independently

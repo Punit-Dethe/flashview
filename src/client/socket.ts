@@ -7,7 +7,7 @@ type RangeCallbacks = {
   fileId: string;
   begin: number;
   timer: ReturnType<typeof setTimeout>;
-  resolve: (begin: number, bytes: Uint8Array) => void;
+  resolve: (begin: number, bytes: Uint8Array, sha256?: string) => void;
   reject: (reason: string) => void;
 };
 
@@ -280,7 +280,7 @@ export class RoomSocket {
           if (pending && pending.fileId === header.fileId && pending.begin === header.begin) {
             clearTimeout(pending.timer);
             this.pending.delete(header.requestId);
-            pending.resolve(header.begin, bytes.slice());
+            pending.resolve(header.begin, bytes.slice(), header.sha256);
           }
         } catch { /* Drop malformed binary frames. */ }
       }
@@ -338,14 +338,14 @@ export class RoomSocket {
 
   /** A response belongs to the connection that requested it, including async reads. */
   rangeResponse(requestId: string, fileId: string, begin: number, available: () => boolean = () => true): {
-    send: (bytes: ArrayBuffer) => Promise<boolean>;
+    send: (bytes: ArrayBuffer, sha256?: string) => Promise<boolean>;
     fail: (message: string) => void;
   } {
     const ws = this.ws;
     const current = () => ws !== null && this.ws === ws && this.connected;
     return {
-      send: bytes => current() && available()
-        ? this.sendBytesWhenReady(requestId, fileId, begin, bytes, available)
+      send: (bytes, sha256) => current() && available()
+        ? this.sendBytesWhenReady(requestId, fileId, begin, bytes, available, sha256)
         : Promise.resolve(false),
       fail: message => {
         if (current()) this.send({ type: 'range.error', requestId, message });
@@ -360,11 +360,11 @@ export class RoomSocket {
    * an unbounded userspace send queue or sending after a reconnect.
    */
   async sendBytesWhenReady(
-    requestId: string, fileId: string, begin: number, bytes: ArrayBuffer, available: () => boolean = () => true,
+    requestId: string, fileId: string, begin: number, bytes: ArrayBuffer, available: () => boolean = () => true, sha256?: string,
   ): Promise<boolean> {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    const packet = encodeRangePacket({ type: 'range.data', requestId, fileId, begin }, bytes);
+    const packet = encodeRangePacket({ type: 'range.data', requestId, fileId, begin, ...(sha256 ? { sha256 } : {}) }, bytes);
     const maxBuffered = 4 * 1024 * 1024;
     const started = performance.now();
     while (this.ws === ws && ws.readyState === WebSocket.OPEN && available()) {
@@ -389,13 +389,13 @@ export class RoomSocket {
 
   requestRange(
     fileId: string, begin: number, end: number,
-    resolve: (start: number, data: Uint8Array) => void, reject: (message: string) => void,
+    resolve: (start: number, data: Uint8Array, sha256?: string) => void, reject: (message: string) => void,
   ): () => void {
     const requestId = crypto.randomUUID().replaceAll('-', '');
     const started = perf.enabled ? performance.now() : 0;
-    const successful = (start: number, data: Uint8Array) => {
+    const successful = (start: number, data: Uint8Array, sha256?: string) => {
       if (perf.enabled) perf.record('range_roundtrip_ms', performance.now() - started, { bytes: data.byteLength });
-      resolve(start, data);
+      resolve(start, data, sha256);
     };
     const unsuccessful = (message: string) => {
       if (perf.enabled) perf.record('range_roundtrip_ms', performance.now() - started, { outcome: 'error' });

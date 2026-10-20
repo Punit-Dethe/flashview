@@ -16,6 +16,11 @@ This document describes **current boundaries and recovery behavior**, not a secu
 
 ## Trust boundaries
 
+The gated OPFS integration adds integrity checks and a sealed-file reader/cleanup
+boundary without introducing cloud object storage. It is not the normal default
+and does not encrypt bytes or authenticate content against a malicious relay.
+See [the exact guarantees and limits](./opfs-cache-validation.md).
+
 | Component | Access and obligations |
 | --- | --- |
 | Sender browser | Holds the original selected `File` object; sends requested byte slices and optional PDF preview |

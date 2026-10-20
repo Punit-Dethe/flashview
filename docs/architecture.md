@@ -1,6 +1,6 @@
 # System architecture
 
-**Status:** Current source design on the unmerged integration line (20 October 2026); production deployment is tracked separately. For wire-level behavior see [Transfer protocol](./transfer-protocol.md); for current unresolved reliability work see [Audit tracker](./reliability-audit.md).
+**Status:** Worker ownership and the contributor sidebar are merged/live through PR #47. This branch adds opt-in OPFS rooms; normal rooms remain IndexedDB. See [OPFS validation](./opfs-cache-validation.md), [Transfer protocol](./transfer-protocol.md) and [Audit tracker](./reliability-audit.md) for release status and remaining work.
 
 ## Overview and ownership
 
@@ -65,6 +65,11 @@ The host's connection indicator still reports its own relay status.
 5. Each verified range is split into the canonical **65,536-byte IndexedDB chunks**. The host updates the saved-byte count only after persistence succeeds. Completion is checked against stored keys before declaring **100%**.
 6. On full completion, the host sends a completion notice to the relay; the relay informs that file's sender and receipts the host's notice. Intermediate byte progress stays local to the host.
 7. A download builds validated browser-native `Blob` parts from stored chunks. The file is not reconstructed by the relay.
+
+Version 3 rooms explicitly created with `?storage=opfs` instead use flushed OPFS
+originals and a compact metadata/checkpoint database. Source/range digests and
+persisted-content verification precede completion. Existing rooms retain their
+original cache backend. See [the OPFS contract](./opfs-cache-validation.md).
 
 ### Host cache and scheduling
 

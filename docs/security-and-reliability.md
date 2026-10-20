@@ -1,5 +1,9 @@
 # Security, storage and reliability
 
+The worker description below is the integration branch design. Its public
+promotion is held by the N38 speed outlier; the previous room-engine release is
+live. See [worker validation](./relay-worker-validation.md) for exact versions.
+
 Relay transfer now runs in one dedicated worker per sender/host page. Workers
 own socket authentication, File reads, scheduling and cache writes; original
 transfer buffers do not pass through React. This is scheduling isolation, not

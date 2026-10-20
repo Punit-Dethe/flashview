@@ -98,6 +98,13 @@ separately. Keep before/after raw samples and source/version information.
 The 45 MiB fixture ceiling avoids the automation API's large in-memory upload
 restriction; the application's 200 MiB allowance is unchanged.
 
+`BENCH_DIAGNOSTICS=1` additionally enables local perf counters and records
+selection latency, anonymous control-event types, outstanding range counts and
+the three slowest range stages. It never records auth payloads, filenames,
+capabilities or original bytes. Selection latency is also reported in ordinary
+runs. Diagnostic overhead differs from ordinary timing; preserve both batches
+and never substitute fast traced runs for an unexplained slow ordinary sample.
+
 ## Documentation and review expectations
 
 `transfer worker:` browser cases block both UI threads while independently

@@ -1,5 +1,11 @@
 # Relay transfer worker validation — 20 October 2026
 
+**Promotion held.** The tested worker source is `4a1c306`, uploaded as Worker
+`e3939396-6867-43ee-899a-86765f28eb53`. After public trials, production was restored
+to the previous room-engine Worker `2635dc65-1792-48b0-8f04-fed6bc4782f7`
+(source `6a04b58`). One unexplained 15.4-second transfer sample prevents claiming
+predictable speed or completing this phase's release gate. See N38 below.
+
 One worker owns each page's socket, source File reads, metadata-driven receipt
 queue, IndexedDB writes, progress correction and completion receipts. React gets
 coalesced status batches; original transfer packets never cross that boundary.
@@ -108,6 +114,40 @@ was unchanged and the new host had exactly one transfer worker. The old phone
 bundle and selected File handles remained open and sent another original into
 the new receiver; independent hashes matched both originals. No room/cache
 migration or fresh selection of the first original was needed.
+
+The final corrected worker also passed that legacy-browser/cache/old-phone
+check after a five-second post-deployment settling interval. One earlier
+immediate post-deploy host reload timed out waiting for connection; its cause is
+unconfirmed. Two ordinary reloads on the final version passed. The successful
+repeat does not establish that every near-deployment reload is safe (N39).
+The public offline-Stop case passed, including terminal relay state, no stopped
+binary responses and exact subsequent export. A separate public 20 MiB run
+passed lost-first-acknowledgement and repeated-interruption/obsolete-read tests;
+return to persisted progress was 1220/684 ms, with final SHA-256 matched.
+
+## Final public measurements and open release gate (N38)
+
+| Batch | Cache samples (ms) | Median |
+| --- | --- | --- |
+| Previous room-engine baseline | 4786 / 3795 / 4311 | 4311 ms |
+| First worker trial | 4237 / 4413 / 4775 | 4413 ms |
+| Worker warm-up trial | 4204 / 4296 / 4882 | 4296 ms |
+| Corrected offline-Stop worker, ordinary measurement | 4443 / **15409** / 4807 | 4807 ms |
+| Corrected worker with optional diagnostics enabled | 4142 / 4654 / 4138 | 4142 ms |
+
+Every copy matched SHA-256. Do not discard the slow ordinary sample or replace
+it with the diagnostic median. The diagnostic rerun changes observation overhead
+and enables optional performance counters; it did not reproduce or explain the
+15.4-second event. Each traced transfer completed 80 ranges, with no unfinished
+range/error. Source read maxima were 5.1 ms; host write maxima 4.8–6.4 ms; slowest
+range round trips 674–707 ms. These locate the healthy path, not the prior stall.
+
+Ordinary final room-ready samples were 1415/1940/2421 ms versus baseline
+1452/1430/1889 ms. Warm-up removes a serial fetch opportunity, but these small
+public samples do not prove setup latency is unchanged. Isolate selection,
+network, retry and cache stages in another slow occurrence, compare against the
+previous owner under matched conditions, and then repeat release validation.
+OPFS migration should not conceal or silently reclassify this unresolved gate.
 
 These small desktop/network samples are regression checks, not campus/phone
 proof, 200 MiB behavior or multiple-sender fairness. Optional worker performance

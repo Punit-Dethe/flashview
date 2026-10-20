@@ -123,7 +123,6 @@ export function App() {
   const [queueView, setQueueView] = useState<'grid' | 'list'>('grid');
   const [mobileHostConfigOpen, setMobileHostConfigOpen] = useState(false);
   const [endConfirm, setEndConfirm] = useState(false);
-  const [endAcknowledged, setEndAcknowledged] = useState(false);
   const [ending, setEnding] = useState(false);
   const [copied, setCopied] = useState(false);
   const transferSummary = summarizeTransfers(sentFiles, studentCacheProgress);
@@ -639,7 +638,7 @@ export function App() {
     if (initialSession) {
       presentation.setRoom(hostCacheIdentity(initialSession));
       if (initialSession.closeRequested) {
-        setEndConfirm(true); setEndAcknowledged(true);
+        setEndConfirm(true);
         void completeEnd(initialSession);
       } else {
         configureHostLease(initialSession);
@@ -875,12 +874,12 @@ export function App() {
       }, () => presentation.clearRoom());
       returnHome();
     } catch (error) {
-      setEndConfirm(true); setEndAcknowledged(true);
+      setEndConfirm(true);
       setError(error instanceof Error ? error.message : 'Could not finish ending this room. Retry.');
     } finally { endingRef.current = false; setEnding(false); }
   }
   async function endRoom(): Promise<void> {
-    if (!hostSessionRef.current || !endAcknowledged || endingRef.current) return;
+    if (!hostSessionRef.current || endingRef.current) return;
     await completeEnd(hostSessionRef.current);
   }
 
@@ -926,7 +925,6 @@ export function App() {
     setQueueView('grid');
     setMobileHostConfigOpen(false);
     setEndConfirm(false);
-    setEndAcknowledged(false);
     setCopied(false);
     setShowDonePill(false);
     hostFilesRef.current = [];
@@ -953,14 +951,15 @@ export function App() {
   return (
     <div className={'app premium-app' + (showInviteEntry ? ' is-invite-entry' : '') + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
       (mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending') ? ' is-student-room' : '')}>
-      {mode !== 'host' && !(mode === 'student' && joinState !== 'idle' && joinState !== 'rejected') && (
-        <SiteHeader landing={mode === 'welcome' || showInviteEntry} entry={showInviteEntry} onHome={startFresh}/>
+      {mode === 'student' && (joinState === 'idle' || joinState === 'rejected') && (
+        <SiteHeader landing={showInviteEntry} onHome={startFresh}/>
       )}
       <main className="app-content">
         {mode === 'welcome' && (
           <div className="welcome reference-welcome">
             <section className="reference-sky">
               <div className="reference-hero">
+                <p className="home-wordmark" aria-label="WarpView"><span>warp</span><span>view</span></p>
                 <h1 className="reference-serif">From your phone, onto the big screen.</h1>
                 <div className="reference-actions" id="start-room">
                   <div className="reference-pane host-card">
@@ -1262,23 +1261,16 @@ export function App() {
         )}
         {endConfirm && mode === 'host' && hostSession && (
           <div className="dialog-backdrop">
-            <section className="end-dialog" role="dialog" aria-modal="true" aria-labelledby="end-title">
-              <div className="eyebrow">END ROOM / {hostSession.code}</div>
-              <h2 id="end-title">End this room?</h2>
-              <p>This will close all presentation tabs, disconnect students, and delete the files
-                and previews WarpView has cached on <strong>this computer</strong> for this room.</p>
-              <p>Original files on students' devices won't be touched. This action cannot be undone.</p>
+            <section className="end-dialog" role="dialog" aria-modal="true" aria-labelledby="end-title" aria-describedby="end-description">
+              <h2 id="end-title" className="reference-serif">Cached room files will be deleted.</h2>
+              <p id="end-description">Ending room <strong>{hostSession.code}</strong> clears its files and previews
+                from <strong>this computer</strong>, closes presentation tabs, and disconnects everyone.</p>
+              <p>Original files on people's devices stay untouched. Clearing this room's cache cannot be undone.</p>
               {hostSession.closeRequested && <p>A close request has been recorded. Retry to confirm closure and finish clearing this device.</p>}
-              <label className="end-check">
-                <input type="checkbox" checked={endAcknowledged} disabled={ending || hostSession.closeRequested}
-                  onChange={event => setEndAcknowledged(event.target.checked)}/>
-                I understand that cached room files will be deleted.
-              </label>
               <div className="end-dialog-actions">
-                <button className="outline-button" disabled={ending || hostSession.closeRequested} onClick={() => {
-                  setEndConfirm(false); setEndAcknowledged(false);
-                }}>Keep room open</button>
-                <button className="end-danger" disabled={!endAcknowledged || ending}
+                <button className="outline-button reference-pill" autoFocus disabled={ending || hostSession.closeRequested}
+                  onClick={() => setEndConfirm(false)}>Keep room open</button>
+                <button className="end-danger" disabled={ending}
                   onClick={() => void endRoom()}>{ending ? 'Ending…' : hostSession.closeRequested ? 'Retry end & cleanup' : 'End & clear cache'}</button>
               </div>
             </section>

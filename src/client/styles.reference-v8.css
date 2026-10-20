@@ -14,15 +14,14 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app:has(.reference-welcome) .site-footer { display:none; }
 .premium-app .reference-serif { font-family:"Instrument Serif",Georgia,serif; font-weight:400; }
 
-/* Open page chrome; only the navigation links share a white pill. */
+/* A home affordance for invitation entry; the homepage has no header. */
 .premium-app .site-header.reference-nav {
   position:relative; z-index:11; width:100%; max-width:none; min-width:0;
   height:auto; min-height:92px; margin:0; padding:20px clamp(24px,4vw,64px);
-  display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  display:grid; grid-template-columns:1fr;
   align-items:center; gap:24px; border:0; border-radius:0;
   background:transparent; box-shadow:none;
   backdrop-filter:none; -webkit-backdrop-filter:none;
-  transition:background-color .2s ease,box-shadow .2s ease;
 }
 .premium-app .site-header.reference-nav.is-landing { position:fixed; inset:0 0 auto; }
 .premium-app .site-header.reference-nav.is-scrolled { background:#fff;
@@ -32,13 +31,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   font-size:22px; font-weight:700; letter-spacing:-.03em; white-space:nowrap; }
 .premium-app .reference-nav.is-landing:not(.is-scrolled) .brand { color:#fff; }
 .premium-app .reference-logo-mark,.premium-app .reference-logo-mark svg { display:block; width:26px; height:26px; }
-.premium-app .reference-nav nav { display:flex; justify-content:center; align-items:center;
-  gap:4px; padding:4px 8px; border-radius:99px; background:#fff; color:#404b69; font-size:15px; }
-.premium-app .reference-nav nav a { display:flex; align-items:center; min-height:44px;
-  padding:0 14px; border-radius:99px; color:inherit; text-decoration:none; white-space:nowrap; }
-.premium-app .reference-nav nav a:hover { color:#0b1230; background:#f0f3f9; }
-.premium-app .reference-nav .nav-start { justify-self:end; margin:0; min-width:0; min-height:44px; }
-.premium-app .reference-section[id],.premium-app #start-room { scroll-margin-top:112px; }
+.premium-app .reference-section[id],.premium-app #start-room { scroll-margin-top:24px; }
 .premium-app .primary-button.reference-pill,.premium-app .outline-button.reference-pill {
   min-height:0; padding:15px 24px; width:auto;
   border-radius:99px; font-size:16px; font-weight:600; letter-spacing:0;
@@ -48,10 +41,36 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .primary-button.reference-pill:hover:not(:disabled) { background:#262830; border-color:#262830; transform:none; }
 .premium-app .outline-button.reference-pill { border:1.5px solid #0b1230; color:#0b1230; background:#fff; }
 .premium-app .outline-button.reference-pill:hover:not(:disabled) { border-color:#0b1230; background:#f6f7fa; transform:none; }
-.premium-app .reference-nav .nav-start { padding:10px 18px; font-size:15px; white-space:nowrap; }
+
+/* Destructive confirmation uses the same white card and serif as entry. */
+.premium-app .dialog-backdrop { padding:24px; background:rgba(11,18,48,.5); overflow-y:auto; }
+.premium-app .end-dialog {
+  width:min(540px,100%); max-height:calc(100dvh - 48px); overflow-y:auto;
+  padding:40px; border:0; border-radius:16px; background:#fff; color:var(--reference-ink);
+  box-shadow:0 28px 70px -24px rgba(14,20,40,.4);
+}
+.premium-app .end-dialog h2.reference-serif {
+  margin:0 0 22px; color:var(--reference-ink); font-size:46px;
+  line-height:1.04; font-weight:400; letter-spacing:-.025em;
+}
+.premium-app .end-dialog p { margin:0 0 16px; color:var(--reference-mute); font-size:15px; line-height:1.6; }
+.premium-app .end-dialog strong { color:var(--reference-ink); font-weight:600; }
+.premium-app .end-dialog-actions { margin-top:30px; gap:10px; }
+.premium-app .end-dialog-actions button { min-height:48px; font-size:14px; }
+.premium-app .end-danger {
+  padding:14px 22px; border:1.5px solid #0e0f14; border-radius:99px;
+  background:#0e0f14; color:#fff; font-weight:600;
+}
+.premium-app .end-danger:hover:not(:disabled) { background:#262830; border-color:#262830; }
+@media (max-width:600px) {
+  .premium-app .dialog-backdrop { padding:16px; }
+  .premium-app .end-dialog { max-height:calc(100dvh - 32px); padding:30px 24px; }
+  .premium-app .end-dialog h2.reference-serif { font-size:40px; }
+  .premium-app .end-dialog-actions { flex-direction:column; }
+  .premium-app .end-dialog-actions button { width:100%; }
+}
 
 /* QR invitation: the same sky, with one focused optional-name card. */
-.premium-app .site-header.reference-nav.is-entry { grid-template-columns:1fr; }
 .premium-app.is-invite-entry .site-footer { display:none; }
 .premium-app .invite-entry.reference-sky {
   min-height:calc(100svh - 28px); display:grid; place-items:center;
@@ -111,8 +130,24 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
     radial-gradient(30% 80% at 40% 108%,#fff 45%,transparent 72%),
     radial-gradient(26% 70% at 68% 105%,#fff 40%,transparent 72%),
     radial-gradient(30% 75% at 95% 100%,#fff 40%,transparent 72%); }
-/* Reserve space beneath the fixed header without moving the hero composition. */
-.premium-app .reference-hero { position:relative; z-index:2; text-align:center; padding-top:136px; }
+.premium-app .reference-hero { position:relative; z-index:2; text-align:center; padding-top:24px; }
+.premium-app .home-wordmark {
+  margin:0 auto 64px; color:#fff; font-size:36px; font-weight:700;
+  line-height:1.2; letter-spacing:-.03em;
+}
+.premium-app .home-wordmark span { display:inline-block; }
+@media (prefers-reduced-motion:no-preference) {
+  .premium-app .home-wordmark span { animation:wordmark-arrive .85s cubic-bezier(.16,1,.3,1) both; }
+  .premium-app .home-wordmark span+span { animation-name:wordmark-settle; }
+}
+@keyframes wordmark-arrive {
+  from { transform:translateX(-12px) rotate(-3deg); }
+  to { transform:translateX(0) rotate(0); }
+}
+@keyframes wordmark-settle {
+  from { transform:translateX(12px) rotate(3deg); }
+  to { transform:translateX(0) rotate(0); }
+}
 .premium-app .reference-hero h1.reference-serif {
   color:#fff; font-size:clamp(52px,7.6vw,112px); line-height:.94;
   letter-spacing:-.025em; font-weight:400; max-width:11.5em;
@@ -492,21 +527,14 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
  .premium-app .reference-room .workspace-right { overflow:visible; }
 }
 @media(max-width:760px) {
- .premium-app .site-header.reference-nav { grid-template-columns:minmax(0,1fr) auto;
-   padding:16px 24px 12px; gap:8px 16px; }
- .premium-app .reference-nav nav { grid-row:2; grid-column:1/-1; justify-self:center;
-   padding:0 8px; font-size:13px; }
- .premium-app .reference-nav nav a { padding:0 12px; }
- .premium-app .reference-nav .nav-start { grid-column:2; grid-row:1; }
- .premium-app .reference-section[id],.premium-app #start-room { scroll-margin-top:144px; }
+ .premium-app .site-header.reference-nav { padding:16px 24px 12px; }
 }
 @media(max-width:600px) {
  .premium-app .reference-nav .brand { font-size:17px; }
  .premium-app .reference-nav .reference-logo-mark,.premium-app .reference-nav .reference-logo-mark svg { width:22px; height:22px; }
- .premium-app .reference-nav .nav-start { padding:9px 12px; font-size:13px; }
  .premium-app .reference-sky { margin:8px; border-radius:25px; padding:16px 11px 120px; min-height:calc(100vh - 16px); }
- /* Retain breathing room beneath the two-row phone header. */
- .premium-app .reference-hero { padding-top:168px; }
+ .premium-app .reference-hero { padding-top:18px; }
+ .premium-app .home-wordmark { font-size:32px; margin-bottom:52px; }
  .premium-app .reference-hero h1.reference-serif { font-size:clamp(49px,13.4vw,72px); }
  .premium-app .reference-actions { margin:32px auto 0; border-radius:23px; gap:5px; padding:7px; }
  .premium-app .reference-pane { padding:22px 19px; border-radius:18px; }

@@ -174,7 +174,7 @@ test('QR welcome: optional name, explicit skip, clean URLs and private refresh r
     await legacy.locator('.invite-card').waitFor(); await legacy.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await legacy.locator('.student-add-fab:not([disabled])').waitFor();
     await legacy.waitForURL(value => value.pathname === '/join/' + session.code && !value.search && !value.hash);
-    await host.getByRole('button', { name: 'End room', exact: true }).click(); await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click(); await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }
 });
@@ -260,7 +260,6 @@ test('room cache identity: reused code cannot inherit bytes or previews and clea
       createHash('sha256').update(original).digest('hex'));
     assert.equal(await host.locator('.document-thumb-image[src="old-room-preview"]').count(), 0);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
     assert.equal(await lifecycleCacheCount(host, session.cacheId), 0);
@@ -323,7 +322,6 @@ test('room cache identity: legacy rooms keep original bytes when lease metadata 
     assert.deepEqual(await readFile((await download.path())!), original);
     assert.equal(await lifecycleCacheCount(host, saved.code), 1);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
     assert.equal(await lifecycleCacheCount(host, saved.code), 0);
@@ -347,7 +345,6 @@ test('room lifecycle: failed/lost end responses preserve cache and resume intent
     stage = 'failed initial close';
     await host.route('**/api/rooms/**/end', route => route.abort());
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).waitFor();
     await host.getByText(/Could not confirm classroom closure/).waitFor();
@@ -414,7 +411,6 @@ test('room lifecycle: failed cache deletion retains its handle and confirmed clo
       };
     });
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.getByText(/classroom is closed.*cache could not be cleared/).waitFor();
     assert.equal(await lifecycleCacheCount(host, cacheId), 1);
@@ -456,7 +452,6 @@ test('room lifecycle: legacy host sessions upgrade in place and confirmed cleanu
       };
     });
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.getByText(/classroom is closed.*cache could not be cleared/).waitFor();
     assert.equal(await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).serverClosed), true);
@@ -527,6 +522,55 @@ test('room lifecycle: hidden host and visible presenter renew separately; bridge
   } finally { await browser.close(); child.kill(); }
 });
 
+test('home branding and end-room dialog: no header, responsive warning and direct cache cleanup', { timeout: 30000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, reducedMotion: 'reduce' });
+  try {
+    await page.goto('http://127.0.0.1:' + port);
+    await page.locator('.home-wordmark').waitFor();
+    assert.equal(await page.locator('.site-header, nav, .nav-start').count(), 0);
+    assert.equal(await page.locator('.home-wordmark').innerText(), 'warpview');
+    assert.equal(await page.locator('.home-wordmark span').first().evaluate(el => getComputedStyle(el).animationName), 'none');
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      const geometry = await page.evaluate(() => {
+        const brand = document.querySelector('.home-wordmark')!.getBoundingClientRect();
+        const title = document.querySelector('.reference-hero h1')!.getBoundingClientRect();
+        return { center: brand.x + brand.width / 2, gap: title.top - brand.bottom,
+          font: parseFloat(getComputedStyle(document.querySelector('.home-wordmark')!).fontSize),
+          overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      assert.ok(Math.abs(geometry.center - width / 2) < 2, 'Brand stays centered');
+      assert.ok(geometry.gap >= 48 && geometry.font >= 32, 'Brand is larger with breathing room above the title');
+      assert.equal(geometry.overflow, false);
+    }
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await page.getByRole('button', { name: /Create a room/ }).click();
+    await page.locator('.connection.connected').waitFor();
+    await seedLifecycleCache(page);
+    const room = await page.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).cacheId as string);
+    await page.getByRole('button', { name: 'End room', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Cached room files will be deleted.' });
+    await dialog.waitFor();
+    assert.equal(await dialog.getByRole('checkbox').count(), 0);
+    assert.equal(await dialog.getByRole('button', { name: 'End & clear cache', exact: true }).isEnabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Keep room open', exact: true }).evaluate(el => el === document.activeElement), true);
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      const box = await dialog.boundingBox();
+      assert.ok(box && box.x >= 16 && box.x + box.width <= width - 16 && box.y >= 16 && box.y + box.height <= 828);
+    }
+    await dialog.getByRole('button', { name: 'Keep room open', exact: true }).click();
+    assert.equal(await dialog.count(), 0);
+    assert.equal(await lifecycleCacheCount(page, room), 1, 'Cancel keeps cached files');
+    await page.getByRole('button', { name: 'End room', exact: true }).click();
+    await dialog.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await page.locator('.welcome').waitFor();
+    assert.equal(await lifecycleCacheCount(page, room), 0, 'Direct confirmation clears cached files');
+  } finally { await browser.close(); child.kill(); }
+});
+
 test('real browser: explicit room start, pinned invite, scrolling documents and room switch', { timeout: 70000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
@@ -542,32 +586,10 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.equal(await first.locator('.room-code').count(), 0,
       'Reloading the welcome page must not create a classroom either');
 
-    // The supplied v8 HTML places its 60px nav in normal flow before 76px
-    // headline padding. The React nav floats, so its headline must compensate.
-    const heroGeometry = await first.evaluate(() => {
-      const nav = document.querySelector('.reference-nav')!.getBoundingClientRect();
-      const title = document.querySelector('.reference-hero h1')!.getBoundingClientRect();
-      const sky = document.querySelector('.reference-sky')!;
-      return {
-        gap: title.top - nav.bottom,
-        background: getComputedStyle(sky).backgroundImage,
-      };
-    });
-    assert.ok(heroGeometry.gap >= 65 && heroGeometry.gap <= 95,
-      'Landing title should retain the original generous 76px gap below nav');
-    assert.match(heroGeometry.background, /linear-gradient/);
-    assert.match(heroGeometry.background, /31, 79, 232|#1f4fe8/i,
+    assert.equal(await first.locator('.site-header').count(), 0, 'Homepage has no header');
+    const background = await first.locator('.reference-sky').evaluate(el => getComputedStyle(el).backgroundImage);
+    assert.match(background, /31, 79, 232|#1f4fe8/i,
       'The supplied cobalt-to-pastel sky gradient should remain intact');
-
-    await first.setViewportSize({ width: 390, height: 844 });
-    const mobileHeroGap = await first.evaluate(() => {
-      const nav = document.querySelector('.reference-nav')!.getBoundingClientRect();
-      const title = document.querySelector('.reference-hero h1')!.getBoundingClientRect();
-      return title.top - nav.bottom;
-    });
-    assert.ok(mobileHeroGap >= 68,
-      'On phones the hero title should not crowd the floating nav');
-    await first.setViewportSize({ width: 1280, height: 760 });
 
     await first.getByRole('button', { name: /Create a room/ }).click();
     await first.locator('.connection.connected').waitFor();
@@ -1102,8 +1124,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     }), cachedRoom);
     assert.ok(await countRoomChunks() >= 3, 'Expected cached PDF chunks');
     await host.getByRole('button', { name: /End room/ }).click();
-    await host.getByRole('button', { name: /End & clear cache/ }).isDisabled().then(x => assert.equal(x, true));
-    await host.getByRole('checkbox', { name: /I understand/ }).check();
+    await host.getByRole('button', { name: /End & clear cache/ }).isEnabled().then(x => assert.equal(x, true));
     await host.getByRole('button', { name: /End & clear cache/ }).click();
     await host.getByRole('button', { name: /Create a room/ }).waitFor();
     assert.equal(await countRoomChunks(), 0, 'Ending the room must purge its IndexedDB bytes');
@@ -1643,7 +1664,6 @@ test('room engine: stale snapshots, pending approvals and foreign closure cannot
     const exported = await exporting;
     assert.deepEqual(await readFile((await exported.path())!), original);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }
@@ -1896,7 +1916,6 @@ test('transfer worker: offline Stop retires source bytes and is replayed after p
     try {
       if (remote && await host.getByRole('button', { name: 'End room', exact: true }).isVisible().catch(() => false)) {
         await host.getByRole('button', { name: 'End room', exact: true }).click();
-        await host.locator('.end-check input').check();
         await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
         await host.locator('.welcome').waitFor();
       }
@@ -2010,7 +2029,6 @@ test('QR joins open the upload workspace after the name choice; leaving or endin
     // A room ended by the teacher should instantly leave the student's
     // workspace, clear its QR URL and restore an EMPTY join-code input.
     await host.getByRole('button',{name:/End room/}).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
     await student.locator('.welcome').waitFor({timeout:20000});
     assert.equal(new URL(student.url()).search,'','Expired invite must be removed from URL');
@@ -2095,7 +2113,6 @@ test('universal binary transfer preserves APK, EXE, PPTX, XLSX, GIF, ZIP, DEB, S
     // A room still has the original 256 KiB packet default.
     assert.equal(await host.evaluate(()=>new URLSearchParams(location.search).get('packet')),null);
     await host.getByRole('button',{name:/End room/}).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
     await student.locator('.welcome').waitFor({timeout:20000});
   } finally {
@@ -2195,7 +2212,6 @@ test('reference UI assigns one color per real participant, including two student
     await mkdir('test-artifacts/ui', { recursive: true });
     await host.screenshot({ path: 'test-artifacts/ui/shared-by-desktop.png', fullPage: true });
     await host.getByRole('button',{name:/End room/}).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   } finally {
     await host.close();await first.close();await second.close();await browser.close();
@@ -2287,7 +2303,6 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     assert.ok(dot&&name&&Math.abs((dot.y+dot.height/2)-(name.y+name.height/2))<4,
       'List mode keeps the owner dot beside the name too');
     await host.getByRole('button',{name:'End room'}).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   }finally{
     await host.close();await student.close();await browser.close();child.kill('SIGTERM');
@@ -2625,7 +2640,6 @@ test('connection guard: admission retry delay retains selected bytes and clears 
     await host.getByRole('button', { name: 'Download retained-during-wait.bin' }).click();
     assert.deepEqual(await readFile((await (await event).path())!), original);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }
@@ -2720,7 +2734,6 @@ test('room admission: capacity denial stops replay, releases local slots and pre
     await ready.getByRole('button', { name: 'Download already-received.bin' }).click();
     assert.deepEqual(await readFile((await (await downloading).path())!), original);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }

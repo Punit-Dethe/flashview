@@ -1,15 +1,15 @@
 /**
  * A participant owns a color for the lifetime of a classroom, not for each file.
- * The first five hues exactly match the reference HTML's sample people.
+ * Preserve distinct file/avatar matching without pink swatches.
  * There are 30 distinct swatches: one for each allowed student per room.
  */
 export const PARTICIPANT_SWATCHES = [
-  '#ec4e8a', '#2f7de1', '#e5741a', '#8a5cf0', '#17956a',
-  '#bf5151', '#178994', '#c14f9d', '#839330', '#417abb',
-  '#a76b35', '#e26079', '#298c72', '#7564d2', '#c38a34',
-  '#467fb2', '#ac477c', '#478d5a', '#9461b2', '#b26651',
-  '#718c31', '#346ca9', '#c35aab', '#9f723a', '#368e9a',
-  '#d15162', '#6076cf', '#548e43', '#a25ecb', '#34948a',
+  '#b45309', '#2f7de1', '#e5741a', '#8a5cf0', '#17956a',
+  '#bf5151', '#178994', '#a13326', '#839330', '#417abb',
+  '#a76b35', '#526d32', '#298c72', '#7564d2', '#c38a34',
+  '#467fb2', '#4b538f', '#478d5a', '#9461b2', '#b26651',
+  '#718c31', '#346ca9', '#006b5f', '#9f723a', '#368e9a',
+  '#6b5d24', '#6076cf', '#548e43', '#a25ecb', '#34948a',
 ] as const;
 
 export function assignParticipantColors(

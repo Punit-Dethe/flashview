@@ -49,6 +49,15 @@ Sender browser(s)                       Relay                         Host brows
 
 ## A file's journey
 
+The host chooses automatic admission or approval only before creating a room.
+Inside the room, pending requests retain Allow/Decline actions, but the admission
+setting is not repeated. The "Shared by" list derives from retained file owners,
+not live sockets: joining alone adds no row, and disconnecting or stopping a
+shared original does not remove its owner. Pending/rejected offers alone do not
+add contributors. Names remain distinct by owner ID even when display names
+match; avatar/file colours share the same assignment, without pink swatches.
+The host's connection indicator still reports its own relay status.
+
 1. `POST /api/rooms` creates a room, code and secret tokens. Host connects over WebSocket, authenticates as `host`, and displays the QR/join link.
 2. Sender authenticates using a six-digit code or opaque join token. If `autoApprove` is disabled, the host must admit the sender. Joining another room does not make a sender a host.
 3. Sender validates selected file size (and PDF signature for `.pdf`), creates a file ID, then announces metadata with `file.offer`. The host can display it before any full-file transfer.

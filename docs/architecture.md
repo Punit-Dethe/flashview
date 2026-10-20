@@ -1,6 +1,6 @@
 # System architecture
 
-**Status:** Current source design, including the unmerged relay-lifecycle changes (19 October 2026); production deployment is tracked separately. For wire-level behavior see [Transfer protocol](./transfer-protocol.md); for current unresolved reliability work see [Audit tracker](./reliability-audit.md).
+**Status:** Current source design on the unmerged integration line (20 October 2026); production deployment is tracked separately. For wire-level behavior see [Transfer protocol](./transfer-protocol.md); for current unresolved reliability work see [Audit tracker](./reliability-audit.md).
 
 ## Overview and ownership
 
@@ -8,8 +8,8 @@
 Sender browser(s)                       Relay                         Host browser
 ┌────────────────────────┐      ┌─────────────────────────┐      ┌───────────────────────────┐
 │ React sender UI        │ WSS  │ Node / ws OR Cloudflare │ WSS  │ React classroom dashboard │
-│ Original File objects  │◀────▶│ Workers + Durable Object│◀────▶│ RoomPdfCache (scheduler)  │
-│ File.slice(range)      │      │ Auth + metadata +       │      │ IndexedDB 64 KiB chunks   │
+│ Transfer worker + File │◀────▶│ Workers + Durable Object│◀────▶│ Transfer worker + socket  │
+│ Worker File.slice      │      │ Auth + metadata +       │      │ Scheduler + IndexedDB     │
 │ Best-effort PDF JPEG   │      │ bounded range forwarding│      │ Local file download       │
 └────────────────────────┘      └─────────────────────────┘      └────────────┬──────────────┘
                                                                             │ BroadcastChannel
@@ -31,6 +31,8 @@ Sender browser(s)                       Relay                         Host brows
 | --- | --- | --- |
 | Room UI | [`App.tsx`](../src/client/App.tsx) | Create/join/approve/end flows, file pickers and host cards |
 | WebSocket client | [`socket.ts`](../src/client/socket.ts) | `hello` handshake, reconnect, heartbeat, binary range requests |
+| Worker transfer owner | [`relayWorker.ts`](../src/client/relayWorker.ts) | One socket, source reads, metadata-driven scheduling, cache writes and confirmed completion; independent of UI message consumption |
+| Page/worker bridge | [`transferClient.ts`](../src/client/transferClient.ts), [`transferProtocol.ts`](../src/client/transferProtocol.ts) | Small commands/status, source File handles, bounded passive cache reads, session guards and bounded worker replacement |
 | Room controls | [`client/roomControl.ts`](../src/client/roomControl.ts), [`shared/roomControl.ts`](../src/shared/roomControl.ts) | Restricted lease renewal, generation-scoped close authorization and recoverable end/cleanup |
 | Transfer/cache | [`roomCache.ts`](../src/client/pdf/roomCache.ts) | Host-only IndexedDB, prefetch scheduler, downloaded chunks, failure recovery |
 | Transfer windows | [`adaptiveWindow.ts`](../src/client/pdf/adaptiveWindow.ts), [`networkPacket.ts`](../src/client/pdf/networkPacket.ts) | Adaptive per-file concurrency, grouping missing 64 KiB blocks |
@@ -57,7 +59,39 @@ Sender browser(s)                       Relay                         Host brows
 
 ### Host cache and scheduling
 
-[`RoomPdfCache`](../src/client/pdf/roomCache.ts) is instantiated in the classroom dashboard and outlives presenter tabs. Its IndexedDB database (`flashview-room-cache`) contains `chunks`, `rooms` and `previews` stores. Chunk keys include room, file ID and numeric index, allowing room-scoped deletion. Existing cached chunks are skipped when a transfer resumes.
+[`RoomPdfCache`](../src/client/pdf/roomCache.ts) is instantiated in the dashboard's dedicated transfer worker and outlives presenter tabs. Its IndexedDB database (`flashview-room-cache`) contains `chunks`, `rooms` and `previews` stores. Chunk keys include room, file ID and numeric index, allowing room-scoped deletion. Existing cached chunks are skipped when a transfer resumes.
+
+The same worker entry runs in sender mode: it owns the socket, cloned browser
+File handles and bounded asynchronous original reads. Original transfer packets
+never cross the page/worker boundary. The page forwards focus/visibility/freeze
+signals, commands and file selection; the worker independently handles
+authentication, manifest repair, receipt scheduling and completion receipts.
+One unacknowledged UI batch and at most 1024 coalesced pending events bound the
+status mailbox; each file's progress is sampled at 350 ms with immediate
+completion/correction. Optional performance records are sampled by metric in
+this mailbox, so diagnostic sample counts are not wire-packet counts.
+
+Passive cache operations have at most 128 pending RPCs and bounded deadlines.
+Read buffers transfer ownership back to the page; they are separate from
+original-byte scheduling. This is a transitional bridge for the existing
+progressive PDF viewer; completed-only viewers and OPFS/integrity remain later
+work. A worker cannot outlive a terminated parent page or guarantee that an OS
+will keep it running in the background. See [MDN's worker lifecycle and API
+description](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers).
+
+Worker errors terminate the obsolete owner before replacement. Two automatic
+restarts retain the private initial resume token, learned room generation and
+browser File handles; new receiver workers rebuild committed IndexedDB indices.
+Exhaustion/startup failure reports an explicit error, with no second UI transfer
+implementation. End-room cleanup can delete cache directly only after a failed
+worker has been terminated. Closing/reloading a sender page still loses its
+selected File handles.
+
+Audit N37 records a measured Firefox limitation: under a ten-second parent-page
+busy loop, worker timers ran but native File/WebSocket delivery still waited.
+Chromium's independent receipt stress case and Firefox's bounded exact recovery
+are separate criteria. Worker ownership removes application dependencies; it
+does not guarantee every browser native subsystem is independent of page work.
 
 - **64 KiB** is the persistent chunk unit; network packets group **up to 256 KiB** by default (128 KiB and 64 KiB available for A/B comparison). Packet size does not alter the persistent schema.
 - The scheduler rotates across queued files, with up to **16 global in-flight range requests**. Each file starts with a window of **6** and adapts between **2–10**. Temporary failure backs off the affected file, not the whole room.

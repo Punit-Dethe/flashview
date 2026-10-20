@@ -353,6 +353,27 @@ isolation, content hashes, completed-file readers/viewers, campus/device proof
 and broader operational abuse controls remain later work. R2 and personal
 multi-gigabyte mode remain deferred; the 200 MiB cap is unchanged.
 
+## 20 October relay transfer worker integration (in progress)
+
+Parent PR #45 passed full CI. This slice retains relay transport, packet sizes,
+IndexedDB schema and the 200 MiB cap; it changes browser ownership. Counts for
+the original 30 findings remain unchanged until merge.
+
+| New ID | Status | Problem / correction | Evidence |
+| --- | --- | --- | --- |
+| N34 | **In progress** | File reads, socket handling, scheduling, cache writes and completion notices depended on the UI event loop. A dedicated worker now owns these on each page; authoritative metadata drives receipt before React sees it. A bounded/coalesced mailbox carries status and bounded passive cache RPCs. | A browser case blocks both UI threads for ten seconds, independently observes complete persisted bytes and relayed completion before either returns, then exports the exact original. See worker validation for complete suites and public speed comparison. |
+| N35 | **In progress** | Pause removed queued jobs without cancelling their pending range/write attempts. A source revoked during send-buffer backpressure could also finish its old send. | Per-file abort controllers cancel ranges/storage attempts, invalidate uncommitted memory and prevent obsolete results from changing a new attempt's backoff. Sends recheck authority during backpressure. A browser holds source reads, completes a healthy file, drops range-error notices, stops the held file, verifies cancellation and releases old reads without late binary responses. A unit case revokes during send backpressure. |
+| N36 | **In progress** | A new worker failure boundary must not silently lose private identity/File handles, leave RPCs pending or create a parallel UI scheduler. | Worker replacement terminates the old owner, rejects pending reads and retains initial private capability, learned generation and source handles. Two automatic attempts are bounded. Browser tests crash sender/receiver mid-file and verify one participant/file plus exact export. Bridge cases cover settlement, cancelled reads, stale-session replies, startup failure and exhaustion. Page cleanup can delete only after a failed worker is terminated. |
+| N37 | **Open** | Complete UI independence is not established in the tested Firefox build: worker timers ran during a ten-second parent-page busy loop, but native Blob reads and incoming WebSocket delivery waited for the page to yield. | In the gated native-read stress test, first source read/send and receiver delivery occurred at/after the block ended. A test-only FileReaderSync probe moved source reading/sending inside the block, but receiver delivery still waited; that probe is not production code. Chromium must finish persistence/relayed completion inside both blocks. Firefox is explicitly tested for bounded, exact recovery after the block, not silently counted as passing the stricter criterion. Mitigation continues through bounded renderer work/process separation and real-browser/device validation. |
+
+Initial checks caught React callback replacement delaying displayed completion;
+the listener is now bound from the stable presentation instance. Page-only fault
+hooks also had to move into the actual worker. Failed attempts are not counted
+as passes. See [worker validation](./relay-worker-validation.md) for final
+suite/release/performance results. OPFS, production content hashes, phone PDF
+preview removal, completed-only viewers and physical-device/campus proof remain
+pending. This slice does not complete the entire roadmap.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

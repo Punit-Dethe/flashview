@@ -79,6 +79,19 @@ test('foreground probes preserve healthy sockets and do not postpone a missing p
   assert.equal(socket.connected, true);
 });
 
+test('revoking a source during send backpressure prevents its queued original bytes from being sent', async t => {
+  const { socket, first } = setup(t);
+  first.bufferedAmount = 5 * 1024 * 1024;
+  let available = true;
+  const response = socket.rangeResponse('request123', 'original123', 0, () => available);
+  const sending = response.send(new ArrayBuffer(4));
+  const before = first.sent.length;
+  available = false;
+  t.mock.timers.tick(50);
+  assert.equal(await sending, false);
+  assert.equal(first.sent.length, before, 'Draining a send buffer cannot revive a stopped source');
+});
+
 test('temporary room capacity preserves the private identity and retries admission automatically', t => {
   const { socket, first } = setup(t);
   first.message({ type: 'error', code: 'ROOM_ACTIVE_LIMIT', retryable: true,

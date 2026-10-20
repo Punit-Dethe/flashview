@@ -1,3 +1,4 @@
+import { transferInit, transferEval, transferWait, transferWorker } from './transferHarness';
 /**
  * FlashView Performance 2.0 / Stage 0: repeatable browser baseline.
  * No production settings are changed.
@@ -117,7 +118,7 @@ try {
         const student = await ctx.newPage();
         senders.push(student);
         if (slowReadMs) {
-          await student.addInitScript((wait: number) => {
+          await transferInit(student, (wait: number) => {
             const original = Blob.prototype.arrayBuffer;
             Blob.prototype.arrayBuffer = async function(...args) {
               await new Promise(resolve => setTimeout(resolve, wait));

@@ -16,6 +16,7 @@ type RangeCallbacks = {
  * reconnect authenticates with the existing student resume token.
  */
 export class RoomSocket {
+  constructor(private readonly address: Pick<Location, 'protocol' | 'host' | 'search'> = window.location) {}
   private ws: WebSocket | null = null;
   private identity: Record<string, unknown> | null = null;
   private roomGeneration: string | null = null;
@@ -48,7 +49,7 @@ export class RoomSocket {
     this.identity = { ...identity };
     this.roomGeneration = typeof identity.roomGeneration === 'string' ? identity.roomGeneration : null;
     this.latestRoomRevision = -1;
-    this.immediateResume = new URLSearchParams(window.location.search).get('resumePolicy') !== 'probe';
+    this.immediateResume = new URLSearchParams(this.address.search).get('resumePolicy') !== 'probe';
     if (identity.role === 'student' && typeof identity.resumeToken !== 'string') {
       // Know the resume capability before sending hello, so losing the FIRST
       // acknowledgement cannot turn an immediate retry into a second student.
@@ -177,7 +178,7 @@ export class RoomSocket {
   private open(): void {
     if (this.stopped || !this.identity || this.ws) return;
     if (Date.now() < this.admissionNotBefore) { this.scheduleReconnect(); return; }
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const protocol = this.address.protocol === 'https:' ? 'wss:' : 'ws:';
     const roomCode = typeof this.identity.code === 'string' ? this.identity.code
       : typeof this.identity.joinToken === 'string' ? this.identity.joinToken.split('.')[0]
       : typeof this.identity.roomId === 'string' ? this.identity.roomId : '';
@@ -185,7 +186,7 @@ export class RoomSocket {
     const connectStarted = perf.enabled ? performance.now() : 0;
     this.authenticated = false;
     let authenticated = false;
-    const ws = new WebSocket(protocol + '//' + window.location.host + '/ws' + suffix);
+    const ws = new WebSocket(protocol + '//' + this.address.host + '/ws' + suffix);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
     this.openingSince = Date.now();
@@ -336,15 +337,15 @@ export class RoomSocket {
   }
 
   /** A response belongs to the connection that requested it, including async reads. */
-  rangeResponse(requestId: string, fileId: string, begin: number): {
+  rangeResponse(requestId: string, fileId: string, begin: number, available: () => boolean = () => true): {
     send: (bytes: ArrayBuffer) => Promise<boolean>;
     fail: (message: string) => void;
   } {
     const ws = this.ws;
     const current = () => ws !== null && this.ws === ws && this.connected;
     return {
-      send: bytes => current()
-        ? this.sendBytesWhenReady(requestId, fileId, begin, bytes)
+      send: bytes => current() && available()
+        ? this.sendBytesWhenReady(requestId, fileId, begin, bytes, available)
         : Promise.resolve(false),
       fail: message => {
         if (current()) this.send({ type: 'range.error', requestId, message });
@@ -359,14 +360,14 @@ export class RoomSocket {
    * an unbounded userspace send queue or sending after a reconnect.
    */
   async sendBytesWhenReady(
-    requestId: string, fileId: string, begin: number, bytes: ArrayBuffer,
+    requestId: string, fileId: string, begin: number, bytes: ArrayBuffer, available: () => boolean = () => true,
   ): Promise<boolean> {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     const packet = encodeRangePacket({ type: 'range.data', requestId, fileId, begin }, bytes);
     const maxBuffered = 4 * 1024 * 1024;
     const started = performance.now();
-    while (this.ws === ws && ws.readyState === WebSocket.OPEN) {
+    while (this.ws === ws && ws.readyState === WebSocket.OPEN && available()) {
       if (ws.bufferedAmount + packet.byteLength <= maxBuffered) {
         try {
           ws.send(packet);

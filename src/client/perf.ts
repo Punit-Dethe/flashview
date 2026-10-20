@@ -40,7 +40,7 @@ export type PerfSnapshot = {
   samples: PerfRecord[];
 };
 
-const ENABLED = (() => {
+let ENABLED = (() => {
   try { return new URLSearchParams(location.search).get('perf') === '1'; }
   catch { return false; }
 })();
@@ -48,6 +48,10 @@ export const perfEnabled = ENABLED;
 const MAX_SAMPLES = 1600;
 const records: PerfRecord[] = [];
 const anchors = new Map<string, number>();
+let publishRecord: ((record: PerfRecord) => void) | undefined;
+export function configureWorkerPerf(enabled: boolean, publish: (record: PerfRecord) => void): void {
+  ENABLED = enabled; perf.enabled = enabled; publishRecord = publish;
+}
 
 function rounded(n: number): number { return Math.round(n * 100) / 100; }
 function percentile(values: number[], fraction: number): number {
@@ -78,6 +82,7 @@ export const perf = {
     else safe.outcome = 'ok';
     records.push(safe);
     if (records.length > MAX_SAMPLES) records.shift();
+    publishRecord?.(safe);
   },
   clear(): void {
     records.length = 0;
@@ -115,7 +120,7 @@ export const perf = {
     };
   },
 };
-if (ENABLED) {
+if (ENABLED && typeof window !== 'undefined') {
   // Dev/Playwright hook. There are no writes or uploads; diagnostics stay local.
   (window as typeof window & { __flashviewPerf?: typeof perf }).__flashviewPerf = perf;
 }

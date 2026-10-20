@@ -1,3 +1,4 @@
+import { transferInit, transferEval, transferWait, transferWorker } from './transferHarness';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -83,10 +84,16 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
     });
   }
   try {
+    await transferInit(host, `{
+      const Native = WebSocket;
+      globalThis.__hostConnections = 0;
+      globalThis.WebSocket = class extends Native { constructor(...args) { super(...args); globalThis.__hostConnections++; } };
+    }`);
     // Blackhole both directions while the browser still reports OPEN. The
     // relay retains the old socket until the replacement authenticates.
-    await student.addInitScript(`{
+    await transferInit(student, `{
       const Native = window.WebSocket;
+      window.__rangeFailures = [];
       window.__sockets = [];
       window.WebSocket = class extends Native {
         constructor(...args) {
@@ -104,7 +111,10 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
             if (this.__dead) event.stopImmediatePropagation();
           });
         }
-        send(data) { if (!this.__dead) return super.send(data); }
+        send(data) {
+          if (typeof data === 'string' && JSON.parse(data).type === 'range.error') window.__rangeFailures.push(JSON.parse(data).message);
+          if (!this.__dead) return super.send(data);
+        }
         close(...args) { if (!this.__dead) return super.close(...args); }
       };
       const slice = File.prototype.slice;
@@ -130,7 +140,7 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
     await student.locator('#code').fill(code);
     await student.getByRole('button', { name: /Join room/ }).click();
     await student.locator('.student-drive').waitFor();
-    await student.waitForFunction('window.__lostJoinAck === true');
+    await transferWait(student, 'window.__lostJoinAck === true');
     // The picker is disabled until admission. First recover a backgrounded
     // initial join whose acknowledgement was lost, retaining its identity.
     await student.evaluate(`{
@@ -141,7 +151,7 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
     const chooserReady = student.waitForEvent('filechooser');
     await student.locator('.student-add-fab').click();
     const chooser = await chooserReady;
-    await student.evaluate(`window.__sockets.at(-1).__dead = true`);
+    await transferEval(student, `window.__sockets.at(-1).__dead = true`);
     await chooser.setFiles({
       name: 'picker.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(768 * 1024, 73),
     });
@@ -173,22 +183,21 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
       const before = Number(await row.locator('.cache-ring').getAttribute('aria-valuenow'));
       assert.ok(before < 100, 'Interrupt an active transfer');
       const started = Date.now();
-      await student.evaluate(`{
-        window.__sockets.at(-1).__dead = true;
-        document.dispatchEvent(new Event('freeze'));
-      }`);
+      await transferEval(student, `window.__sockets.at(-1).__dead = true`);
+      await student.evaluate(`document.dispatchEvent(new Event('freeze'))`);
       // Let all phone reads finish against the dead socket. The receiver's
       // next window of requests is now stranded at the relay, not in JS reads.
       await delay(600);
       const returned = Date.now();
+      const connectionsBefore = Number(await transferEval(student, 'window.__sockets.length'));
       const resume = await student.evaluate(`(() => {
-        const before = window.__sockets.length;
         const began = performance.now();
         document.dispatchEvent(new Event('resume'));
         window.dispatchEvent(new Event('focus'));
         window.dispatchEvent(new Event('pageshow'));
-        return { newConnections: window.__sockets.length - before, handlerMs: performance.now() - began };
+        return { handlerMs: performance.now() - began };
       })()`);
+      await transferWait(student, n => (window as typeof window & { __sockets: WebSocket[] }).__sockets.length > n, connectionsBefore);
       await host.waitForFunction(previous => Number(document.querySelector('.cache-ring')?.getAttribute('aria-valuenow')) > previous,
         before, { timeout: 6500 });
       t.diagnostic('Mid-file recovery ' + (round + 1) + ': ' + (Date.now() - started) + ' ms');
@@ -198,22 +207,24 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
     // A read begun on the old socket may reject after a replacement has
     // authenticated and replayed the same request. Its stale failure must not
     // cancel the replacement's response or start a file retry cooldown.
-    await student.evaluate('window.__holdReads = true');
-    await student.waitForFunction('window.__heldReads?.length > 0');
-    const resumedBefore = Number(await student.evaluate('window.__resumeCount || 0'));
-    await student.evaluate(`{
+    await transferEval(student, 'window.__holdReads = true');
+    await transferWait(student, 'window.__heldReads?.length > 0');
+    const resumedBefore = Number(await transferEval(student, 'window.__resumeCount || 0'));
+    await transferEval(student, `{
       window.__sockets.at(-1).__dead = true;
       window.__holdReads = false;
+    }`);
+    await student.evaluate(`{
       document.dispatchEvent(new Event('freeze'));
       document.dispatchEvent(new Event('resume'));
     }`);
-    await student.waitForFunction(previous =>
+    await transferWait(student, previous =>
       Number((window as typeof window & { __resumeCount?: number }).__resumeCount) > previous, resumedBefore);
-    await student.evaluate(`{
+    await transferEval(student, `{
       for (const reject of window.__heldReads.splice(0)) reject(new Error('Old connection read failed'));
     }`);
     await delay(200);
-    assert.equal(trace.some(event => event.includes('range.error Cannot read file from sender device')), false,
+    assert.equal(await transferEval(student, "window.__rangeFailures.includes('Cannot read file from sender device')"), false,
       'Old asynchronous reads must not fail replayed requests on the replacement connection');
     // Also return from a healthy picker without adding another file. Recovery
     // must preserve the active transfer and not create a duplicate file card.
@@ -221,14 +232,16 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
     await student.locator('.student-add-fab').click();
     await (await healthyChooserReady).setFiles([]);
     if (process.env.RECOVERY_POLICY !== 'probe') {
-      const hostReconnect = host.waitForEvent('websocket');
+      const hostOwner = await transferWorker(host);
+      // Inspect the worker-owned host socket via a test-only native wrapper.
+      const before = await hostOwner.evaluate('globalThis.__hostConnections || 0');
       await host.evaluate(() => {
         Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
         window.dispatchEvent(new Event('online'));
         Reflect.deleteProperty(document, 'visibilityState');
         window.dispatchEvent(new Event('focus'));
       });
-      await hostReconnect;
+      await transferWait(host, n => Number((globalThis as typeof globalThis & { __hostConnections?: number }).__hostConnections) > Number(n), before);
     }
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 30000 });
     assert.equal(await digest(host, nextCode, 'large.bin'), createHash('sha256').update(bytes).digest('hex'));

@@ -1,5 +1,5 @@
 import { TransferRing } from './TransferRing';
-import { formatBytes } from './pdf/Viewer';
+import { formatBytes } from './formatBytes';
 import { fileAccentStyle } from './fileAccent';
 import { isPdfName, fileTypeLabel } from '../shared/fileTypes';
 import type { TransferFile } from './transferProgress';

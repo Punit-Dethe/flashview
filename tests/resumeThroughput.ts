@@ -1,3 +1,4 @@
+import { transferInit, transferEval, transferWait, transferWorker } from './transferHarness';
 import { chromium } from 'playwright';
 import { randomBytes, createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -18,7 +19,7 @@ try {
       const host = await context.newPage();
       const phone = await context.newPage();
       try {
-        await phone.addInitScript(`{
+        await transferInit(phone, `{
           const Native = window.WebSocket;
           window.WebSocket = class extends Native {
             constructor(...args) {
@@ -44,6 +45,7 @@ try {
         await chooser.setFiles({ name: 'speed.bin', mimeType: 'application/octet-stream', buffer: bytes });
         await host.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 45000 });
         const cachedMs = Date.now() - start;
+        const cacheId = await host.evaluate(() => { const session = JSON.parse(sessionStorage.getItem('flashview-host')!); return session.cacheId ?? session.code; });
         const actual = await host.evaluate(async room => {
           const db = await new Promise<IDBDatabase>((resolve, reject) => {
             const req = indexedDB.open('flashview-room-cache'); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
@@ -57,7 +59,7 @@ try {
           let at = 0; for (const row of rows) { output.set(new Uint8Array(row.data), at); at += row.data.byteLength; }
           const hash = await crypto.subtle.digest('SHA-256', output);
           return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2,'0')).join('');
-        }, code);
+        }, cacheId);
         if (actual !== expected) throw Error('Cache hash mismatch');
         const result = { name, iteration, bytes: bytes.length, cachedMs, verifiedMs: Date.now() - start };
         results.push(result); console.log(JSON.stringify(result));

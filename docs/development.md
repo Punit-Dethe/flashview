@@ -100,6 +100,14 @@ restriction; the application's 200 MiB allowance is unchanged.
 
 ## Documentation and review expectations
 
+`transfer worker:` browser cases block both UI threads while independently
+checking committed cache and the relay's completion message, crash sender and
+receiver workers, and stop held requests before releasing obsolete source reads.
+`tests/transferHarness.ts` holds initial worker commands until test-only faults
+are installed via Playwright, rather than adding production debug APIs. Faults
+that affect WebSockets, File reads or transfer-cache writes must run in the
+worker; page DOM and completed export checks still run in the page.
+
 - A transfer or storage code change updates [Architecture](./architecture.md), [Protocol](./transfer-protocol.md) or [Security and reliability](./security-and-reliability.md) if behavior changes.
 - Every reliability-audit PR updates the matching entry in [the tracker](./reliability-audit.md), including limitations and a specific test or CI result.
 - Historical designs in [the archived plan](./archive/initial-engineering-plan.md) are not implementation authority; avoid copying outdated PDF-only claims into current docs.

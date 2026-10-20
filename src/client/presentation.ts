@@ -3,6 +3,8 @@ import { MAX_RANGE_BYTES } from '../shared/protocol';
 import { RoomPdfCache, type CacheProgress, cleanExpiredRoomCaches } from './pdf/roomCache';
 import type { RoomSocket } from './socket';
 import { perf, perfEnabled, type PerfName } from './perf';
+import { RoomLease } from './roomControl';
+import { isRoomLeaseIdentity, type RoomLeaseIdentity } from '../shared/roomControl';
 
 const PREFIX = 'flashview-present-';
 type Pending = { cancel: () => void };
@@ -12,7 +14,8 @@ export type PdfRangeSource = Pick<RoomSocket, 'requestRange'>;
 
 /** The original room tab owns the only host WebSocket. */
 export class PresentationHost {
-  private tabs = new Map<string, { file: PdfManifest; channel: BroadcastChannel; requests: Map<string, Pending>; timer: ReturnType<typeof setTimeout> }>();
+  private tabs = new Map<string, { file: PdfManifest; channel: BroadcastChannel; requests: Map<string, Pending> }>();
+  private lease: RoomLeaseIdentity | null = null;
   private cache: RoomPdfCache | null = null;
   private lastProgressPaint = new Map<string, number>();
   onProgress: (status: CacheProgress) => void = () => {};
@@ -25,6 +28,7 @@ export class PresentationHost {
   setRoom(roomId: string): void {
     if (this.cache?.roomId === roomId) return;
     this.closeAll();
+    this.lease = null;
     this.cache?.dispose();
     this.lastProgressPaint.clear();
     const cache = new RoomPdfCache(roomId, this.socket);
@@ -59,8 +63,14 @@ export class PresentationHost {
   async clearRoom(): Promise<void> {
     this.closeAll();
     const cache = this.cache;
-    this.cache = null;
     if (cache) await cache.clear();
+    // Retain a failed cleanup handle so Retry really retries the same room.
+    if (this.cache === cache) this.cache = null;
+  }
+  stopTransfers(): void { this.cache?.dispose(); }
+  setLease(identity: RoomLeaseIdentity): void {
+    this.lease = { ...identity };
+    for (const tab of this.tabs.values()) tab.channel.postMessage({ type: 'lease', lease: this.lease });
   }
   resume(): void { this.cache?.connectionRestored(); }
   retryBlockedStorage(): void { this.cache?.retryBlockedStorage(); }
@@ -102,17 +112,15 @@ export class PresentationHost {
       if (!tab) return;
       for (const entry of requests.values()) entry.cancel();
       requests.clear();
-      clearTimeout(tab.timer);
       channel.close();
       this.tabs.delete(key);
     };
-    const timer = setTimeout(close, 2 * 60 * 60 * 1000);
-    this.tabs.set(key, { file, channel, requests, timer });
+    this.tabs.set(key, { file, channel, requests });
     channel.onmessage = (event: MessageEvent) => {
       const m = event.data;
       if (!m || typeof m !== 'object') return;
       if (m.type === 'ready') {
-        channel.postMessage({ type: 'metadata', file, roomId: this.cache?.roomId });
+        channel.postMessage({ type: 'metadata', file, roomId: this.cache?.roomId, lease: this.lease });
         void this.cache?.progress(file).then(progress =>
           channel.postMessage({ type: 'progress', progress })).catch(() => {});
         void this.cache?.getPreview(file.fileId).then(dataUrl => {
@@ -156,24 +164,33 @@ export class PresentationHost {
         }).finally(() => requests.delete(m.id));
       }
     };
-    const tab = window.open('/present' + (perfEnabled ? '?perf=1' : '') + '#' + key, '_blank');
+    // A new tab otherwise receives a copy of the dashboard's sessionStorage,
+    // including its host token. Remove it before loading the presenter.
+    const tab = window.open('about:blank', '_blank');
     if (!tab) { close(); throw Error('Allow popups to open the presentation in a new tab.'); }
-    try { tab.opener = null; } catch { /* Browser manages opener restrictions. */ }
+    try {
+      tab.sessionStorage.removeItem('flashview-host');
+      tab.opener = null;
+      tab.location.replace('/present' + (perfEnabled ? '?perf=1' : '') + '#' + key);
+    } catch {
+      tab.close(); close();
+      throw Error('Cannot open an isolated presentation tab in this browser.');
+    }
   }
 
   closeAll(): void {
     for (const entry of this.tabs.values()) {
       entry.channel.postMessage({ type: 'closed' });
       for (const request of entry.requests.values()) request.cancel();
-      clearTimeout(entry.timer);
       entry.channel.close();
     }
     this.tabs.clear();
   }
 }
 
-/** A presenter only talks to its same-origin room tab; never authenticates as host. */
+/** Local byte bridge plus a restricted liveness lease; never authenticates as host. */
 export class PresentationGuest implements PdfRangeSource {
+  private lease = new RoomLease();
   private channel: BroadcastChannel;
   private pending = new Map<string, { resolve: Reply; reject: Failure; timer: ReturnType<typeof setTimeout> }>();
   private activeRanges = new Set<(reason?: string) => void>();
@@ -187,8 +204,9 @@ export class PresentationGuest implements PdfRangeSource {
     this.channel.onmessage = (event: MessageEvent) => {
       const m = event.data;
       if (!m || typeof m !== 'object') return;
+      if ((m.type === 'metadata' || m.type === 'lease') && isRoomLeaseIdentity(m.lease)) this.lease.start(m.lease);
       if (m.type === 'metadata' && typeof m.roomId === 'string') this.onFile(m.file as PdfManifest, m.roomId);
-      if (m.type === 'closed') this.onClosed();
+      if (m.type === 'closed') { this.lease.stop(); this.onClosed(); }
       if (m.type === 'progress' && m.progress) this.onProgress(m.progress as CacheProgress);
       if (m.type === 'preview' && typeof m.dataUrl === 'string')
         this.onPreview(m.dataUrl);
@@ -275,6 +293,7 @@ export class PresentationGuest implements PdfRangeSource {
     return () => stop();
   }
   close(): void {
+    this.lease.stop();
     for (const stop of [...this.activeRanges]) stop('Presentation closed');
     this.pending.clear();
     this.channel.postMessage({ type: 'close' });

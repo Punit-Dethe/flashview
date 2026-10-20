@@ -89,3 +89,26 @@ Do not infer a faster real-world connection from one localhost throughput sample
 - Every reliability-audit PR updates the matching entry in [the tracker](./reliability-audit.md), including limitations and a specific test or CI result.
 - Historical designs in [the archived plan](./archive/initial-engineering-plan.md) are not implementation authority; avoid copying outdated PDF-only claims into current docs.
 - Never commit tokens, room links, actual user files or confidential logs.
+
+## Relay lifecycle regression checks
+
+`tests/roomControl.test.ts` checks scoped authorization, stale/expired generations,
+bounded metadata, serialized lease renewal and end/cleanup ordering under lost
+responses, deadlines and persistence failures. `tests/relay.test.ts` exercises
+the same HTTP lifecycle contract on Node and local Cloudflare, including operation
+without a host WebSocket and denial of host privileges to a presenter lease.
+
+The `room lifecycle:` browser scenarios inject failed/lost end responses, refresh
+with a pending close, and abort the first cache deletion before retry. They also
+advance the dashboard clock by over two hours while hidden, prove independent
+presenter renewal/bridge responsiveness, and check copied host credentials were
+removed before rendering. These are synthetic browser conditions; physical OS
+suspension is still a device test. CI runs these scenarios on Chromium/Node,
+Chromium/Cloudflare and Firefox/Node alongside existing transfer/viewer checks.
+
+Emulator test launchers use `--inspector-port 0` so the OS assigns the debugger
+port. This avoids the default inspector listener colliding with a previous
+Wrangler process that is still shutting down; application HTTP ports are already
+allocated independently. Each emulator also uses a distinct worker name and
+ignored state directory under `.wrangler/test-state/`, preventing parallel test
+files from sharing the same development identity and persistent room state.

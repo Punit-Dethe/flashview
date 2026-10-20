@@ -223,8 +223,8 @@ async function writeRoom(room: string): Promise<void> {
 /** Delete ONLY the chosen room's original PDF chunks, not files in other rooms. */
 export async function deleteRoomCache(room: string): Promise<void> {
   const db = await database();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(['chunks', 'rooms', 'previews'], 'readwrite');
+  const tx = db.transaction(['chunks', 'rooms', 'previews'], 'readwrite');
+  const pending = new Promise<void>((resolve, reject) => {
     const index = tx.objectStore('chunks').index('room');
     const request = index.openKeyCursor(IDBKeyRange.only(room));
     request.onsuccess = () => {
@@ -246,6 +246,8 @@ export async function deleteRoomCache(room: string): Promise<void> {
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
+  await withStorageDeadline(pending, 'Clear room cache', 45_000,
+    () => { try { tx.abort(); } catch { /* Already settled. */ } });
 }
 export async function cleanExpiredRoomCaches(activeRoom?: string): Promise<void> {
   let rooms: RoomRecord[];

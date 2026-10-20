@@ -50,7 +50,7 @@ For a local Cloudflare-style environment:
 npm run dev:cloudflare
 ```
 
-The Worker routes `POST /api/rooms`, `/ws?room=<code>` and static assets. Room/session/file **metadata** is stored in the Durable Object to survive hibernation; the **original file bytes are not saved** to Durable Object storage. The receiving computer's IndexedDB is the file cache.
+The Worker routes `POST /api/rooms`, `/api/rooms/<id>/lease`, `/api/rooms/<id>/end`, `/ws?room=<code>` and static assets. Room/session/file **metadata** is stored in the Durable Object to survive hibernation; the **original file bytes are not saved** to Durable Object storage. The receiving computer's IndexedDB is the file cache. Lifecycle HTTP endpoints are control messages, not a fallback for transferring file bytes.
 
 No particular free-tier request allowance or hosting cost is guaranteed by this repository. Check [Cloudflare's current Workers](https://developers.cloudflare.com/workers/platform/pricing/) and [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) before deployment, especially for sustained multi-user transfers.
 
@@ -62,7 +62,7 @@ No particular free-tier request allowance or hosting cost is guaranteed by this 
 4. Transfer a general file and a PDF; verify the host receives the full file and can download it correctly.
 5. Open a PDF while it is partially cached, then check PPTX/PPSX only after completion.
 6. Drop/reconnect the sender network; ensure previously committed bytes are reused.
-7. Test End room and local cache cleanup.
+7. Test End room, a lost close response, refresh with pending intent and retry after failed local cache cleanup. Cache deletion must follow confirmed closure.
 8. Observe room expiration and memory use with expected session load; CI does not replace production monitoring.
 
 ## Network and security considerations

@@ -17,6 +17,7 @@ import { cleanExpiredRoomCaches, readCompletedBlob, readCompletedFile, type Cach
 import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
+import { RoomLease, endRoomAndClear } from './roomControl';
 /** A late initial IndexedDB snapshot must never rewind live saved-byte progress. */
 function retainNewestProgress(previous: CacheProgress | undefined, incoming: CacheProgress): CacheProgress {
   // An independent IndexedDB verification can retract a stale 100% cache.
@@ -26,7 +27,8 @@ function retainNewestProgress(previous: CacheProgress | undefined, incoming: Cac
 }
 
 type Mode = 'welcome' | 'host' | 'student';
-type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string; autoApprove?: boolean };
+type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string; autoApprove?: boolean;
+  roomGeneration?: string; leaseToken?: string; closeRequested?: boolean; serverClosed?: boolean };
 type ShareStatus = 'announcing' | 'pending' | 'approved' | 'rejected' | 'offline';
 type SharedFile = { file: File; status: ShareStatus };
 
@@ -56,6 +58,10 @@ function normalizedMessage(message: ServerMessage): string {
 export function App() {
   const socket = useRef(new RoomSocket()).current;
   const presentation = useRef(new PresentationHost(socket)).current;
+  const hostLease = useRef(new RoomLease()).current;
+  const hostSessionRef = useRef<HostSession | null>(initialSession);
+  const closeRequestedRef = useRef(initialSession?.closeRequested === true);
+  const endingRef = useRef(false);
   const filesOnPhone = useRef(new Map<string, SharedFile>());
   const firstPageImages = useRef(new Map<string, string>());
   const previewRendering = useRef(new Set<string>());
@@ -414,6 +420,8 @@ export function App() {
     // Returning to the tab checks the socket and resumes it if necessary.
     const wake = () => {
       if (document.visibilityState !== 'visible') return;
+      if (closeRequestedRef.current) return;
+      void hostLease.renew();
       socket.wake();
       // A socket can look OPEN while an earlier broadcast was missed.
       if (socket.connected) socket.send({ type: modeRef.current === 'host' ? 'room.sync' : 'file.sync' });
@@ -474,6 +482,15 @@ export function App() {
         }
       }
       if (type === 'room.state') {
+        const session = hostSessionRef.current;
+        if (session && typeof message.roomGeneration === 'string' && typeof message.leaseToken === 'string' &&
+            !closeRequestedRef.current) {
+          const updated = { ...session, roomGeneration: message.roomGeneration, leaseToken: message.leaseToken,
+            ...(typeof message.autoApprove === 'boolean' ? { autoApprove: message.autoApprove } : {}) };
+          if (updated.roomGeneration !== session.roomGeneration || updated.leaseToken !== session.leaseToken ||
+              updated.autoApprove !== session.autoApprove) rememberHostSession(updated);
+          configureHostLease(updated);
+        }
         setStudents(Array.isArray(message.students) ? message.students as StudentInfo[] : []);
         const files = Array.isArray(message.files) ? message.files as PdfManifest[] : [];
         setDocuments(files);
@@ -611,8 +628,9 @@ export function App() {
         void respondToRange(message);
       }
       if (type === 'room.closed') {
-        if (modeRef.current === 'host') void presentation.clearRoom().catch(() => {});
-        returnHome();
+        if (modeRef.current === 'host' && hostSessionRef.current) {
+          if (!closeRequestedRef.current) void completeEnd({ ...hostSessionRef.current, serverClosed: true });
+        } else returnHome();
       }
       if (type === 'error') {
         const text = normalizedMessage(message);
@@ -631,7 +649,13 @@ export function App() {
 
     if (initialSession) {
       presentation.setRoom(initialSession.code);
-      socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
+      if (initialSession.closeRequested) {
+        setEndConfirm(true); setEndAcknowledged(true);
+        void completeEnd(initialSession);
+      } else {
+        configureHostLease(initialSession);
+        socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
+      }
     }
     else if (initialJoin) socket.connect({ role: 'student', name: 'Student',
       ...(/^\d{6}$/.test(initialJoin) ? { code: initialJoin } : { joinToken: initialJoin }),
@@ -645,6 +669,7 @@ export function App() {
       window.removeEventListener('pagehide', pagehide);
       window.removeEventListener('online', online);
       clearInterval(syncTimer);
+      hostLease.stop();
       presentation.dispose();
       socket.close();
     };
@@ -683,8 +708,8 @@ export function App() {
       const response = await fetch('/api/rooms?autoApprove=' + (autoApprove ? '1' : '0'), { method: 'POST' });
       if (!response.ok) throw new Error('Unable to create room (' + response.status + ')');
       const newSession = await response.json() as HostSession;
-      sessionStorage.setItem('flashview-host', JSON.stringify(newSession));
-      setHostSession(newSession);
+      rememberHostSession(newSession);
+      closeRequestedRef.current = false;
       modeRef.current = 'host';
       setMode('host');
       setStudents([]);
@@ -696,6 +721,7 @@ export function App() {
       completionLastSent.current.clear();
       transferSamples.current.clear();
       presentation.setRoom(newSession.code);
+      configureHostLease(newSession);
       socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Cannot reach server');
@@ -840,23 +866,44 @@ export function App() {
     setSentFiles(current => current.map(f => f.fileId === fileId ? { ...f, status: 'offline' } : f));
   }
 
-  async function endRoom(): Promise<void> {
-    if (!hostSession || !endAcknowledged || ending) return;
+  function rememberHostSession(session: HostSession): void {
+    sessionStorage.setItem('flashview-host', JSON.stringify(session));
+    hostSessionRef.current = session;
+    setHostSession(session);
+  }
+  function configureHostLease(session: HostSession): void {
+    if (session.closeRequested || !session.roomGeneration || !session.leaseToken) return;
+    const identity = { roomId: session.roomId, roomGeneration: session.roomGeneration, leaseToken: session.leaseToken };
+    hostLease.start(identity);
+    presentation.setLease(identity);
+  }
+  async function completeEnd(session: HostSession): Promise<void> {
+    if (endingRef.current) return;
+    if (!session.serverClosed && !session.roomGeneration) {
+      setError('Reconnect to the classroom before ending it.');
+      socket.wake();
+      return;
+    }
+    endingRef.current = true;
     setEnding(true);
+    setError('');
     try {
-      // Do not delete students' original files or browser data belonging to other rooms.
-      // If deletion fails, keep the room open instead of falsely claiming it was erased.
-      await presentation.clearRoom();
-      socket.send({ type: 'room.end' });
-      sessionStorage.removeItem('flashview-host');
-      setHostSession(null);
-      setCacheProgress({});
-      setDownloadSpeed({});
-      transferSamples.current.clear();
+      await endRoomAndClear(session, pending => {
+        rememberHostSession(pending);
+        closeRequestedRef.current = true;
+        hostLease.stop();
+        socket.close();
+        presentation.stopTransfers();
+      }, () => presentation.clearRoom());
       returnHome();
-    } catch {
-      setError('Could not clear this room’s local PDF cache. Please retry before ending the room.');
-    } finally { setEnding(false); }
+    } catch (error) {
+      setEndConfirm(true); setEndAcknowledged(true);
+      setError(error instanceof Error ? error.message : 'Could not finish ending this room. Retry.');
+    } finally { endingRef.current = false; setEnding(false); }
+  }
+  async function endRoom(): Promise<void> {
+    if (!hostSessionRef.current || !endAcknowledged || endingRef.current) return;
+    await completeEnd(hostSessionRef.current);
   }
 
   async function copyInvite(): Promise<void> {
@@ -870,6 +917,9 @@ export function App() {
   function returnHome(): void {
     // Prevent stale socket notifications or QR invitations surviving an exit.
     modeRef.current = 'welcome';
+    hostLease.stop();
+    hostSessionRef.current = null;
+    closeRequestedRef.current = false;
     socket.close();
     presentation.closeAll();
     sessionStorage.removeItem('flashview-host');
@@ -1242,17 +1292,18 @@ export function App() {
               <p>This will close all presentation tabs, disconnect students, and delete the files
                 and previews WarpView has cached on <strong>this computer</strong> for this room.</p>
               <p>Original files on students' devices won't be touched. This action cannot be undone.</p>
+              {hostSession.closeRequested && <p>A close request has been recorded. Retry to confirm closure and finish clearing this device.</p>}
               <label className="end-check">
-                <input type="checkbox" checked={endAcknowledged}
+                <input type="checkbox" checked={endAcknowledged} disabled={ending || hostSession.closeRequested}
                   onChange={event => setEndAcknowledged(event.target.checked)}/>
                 I understand that cached room files will be deleted.
               </label>
               <div className="end-dialog-actions">
-                <button className="outline-button" disabled={ending} onClick={() => {
+                <button className="outline-button" disabled={ending || hostSession.closeRequested} onClick={() => {
                   setEndConfirm(false); setEndAcknowledged(false);
                 }}>Keep room open</button>
                 <button className="end-danger" disabled={!endAcknowledged || ending}
-                  onClick={() => void endRoom()}>{ending ? 'Clearing…' : 'End & clear cache'}</button>
+                  onClick={() => void endRoom()}>{ending ? 'Ending…' : hostSession.closeRequested ? 'Retry end & cleanup' : 'End & clear cache'}</button>
               </div>
             </section>
           </div>

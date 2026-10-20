@@ -4,11 +4,40 @@
 
 ## Transports and authentication
 
-- `POST /api/rooms?autoApprove=1|0` creates a room and returns a room identifier, six-digit code, join token and a **separate host secret**.
+- `POST /api/rooms?autoApprove=1|0` creates a room and returns a room identifier, six-digit code, join token, **separate host secret**, immutable `roomGeneration` and restricted `leaseToken`.
 - The browser connects to `/ws` (Cloudflare's routing adds `?room=<six-digit-code>`) and sends a JSON `hello` with `v: 1`, a role and the required room credentials.
 - The socket is **connected** in the app only after the server acknowledges the room or student session, not merely after the TCP/WebSocket handshake.
 - A host authenticates with `roomId` and `hostToken`; a sender joins with `code` or `joinToken` and can later resume with a `resumeToken`. A room code is not equivalent to the host secret.
 - Relay enforces role, sender ownership, approval and range bounds. A sender can only serve its own files; other students do not receive the host's file list.
+
+### HTTP lifecycle controls
+
+Both adapters implement `POST /api/rooms/<roomId>/lease` and `/end` with
+`Content-Type: application/json`, body `{ "roomGeneration": "<uuid>" }`, and a
+Bearer capability. Actual body length is limited to 256 bytes. Present Origin
+headers must match the configured/same origin; no cross-origin CORS grant is added.
+
+- `/lease` accepts only the room's lease token and returns generation, `active`
+  and server expiry. It cannot join as host, read original bytes, approve senders,
+  or end a room. The dashboard and presenter each renew about once a minute;
+  Cloudflare still throttles durable activity writes to five-minute intervals.
+- `/end` requires the host token for the current generation. It removes room
+  state before confirming `closed`. A repeated request for a generation that is
+  no longer present returns `absent`, including if a short code now belongs to
+  another generation. This reports absence, not historical command execution;
+  it never authorizes mutation of that other room. Expired rooms cannot be revived.
+- Missing/invalid capabilities are rejected. A valid-shaped capability with a
+  nonmatching generation can receive absence confirmation, but no room access.
+- The host persists close intent before sending, confirms remote closure, then
+  clears local cache. Lost responses retain intent/credentials/bytes for retry;
+  confirmed closure with failed local cleanup retains a separate cleanup task.
+  Refresh resumes the recorded task. Legacy WebSocket `room.end` remains supported.
+
+Host `room.state` includes generation and lease token so existing Cloudflare
+sessions can obtain their new control fields after host authentication. Student
+admission responses do not contain those fields. Presenter metadata carries only
+the restricted lease identity, never the host/join credentials. No new original
+file bytes travel over HTTP; this is not an HTTPS file-transfer fallback.
 
 ## Control messages
 
@@ -130,8 +159,8 @@ Host completion notices are idempotent: if a receipt is lost, replaying a notice
 | Individual range | At most **256 KiB** |
 | Outstanding relay ranges | At most **48** per room |
 | Range timeout | **20 s** on relay; client request timeout also bounded |
-| Room lifetime | **2 hours** after most recent authenticated host activity |
-| WebSocket access | HTTPS/WSS for public usage; no HTTP-only fallback |
+| Room lifetime | **2 hours** after host activity or a valid scoped lease renewal |
+| WebSocket access | File bytes require WSS; HTTP lease/end controls do not provide a file-transfer fallback |
 
 IDs, file lengths and sender identity must be checked on **both relay implementations**. The sender never chooses a different file owner just by writing a `fileId`. The relay does not execute uploaded bytes or reveal one student's file list to another.
 

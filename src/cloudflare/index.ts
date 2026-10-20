@@ -1,12 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity';
+import { admitFile, admitSender } from '../shared/roomAdmission';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
 import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle';
 import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl';
 import {
-  MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
+  MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
 } from '../shared/protocol';
 
@@ -20,7 +21,6 @@ interface RoomConfig { code: string; hostToken: string; joinToken: string; creat
   roomGeneration?: string; leaseToken?: string; cacheVersion?: 2 }
 interface ResumeSession { id: string; name: string; approved: boolean; token: string }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
-const MAX_STUDENTS = 30;
 const OPEN = 1;
 function token(size = 24): string {
   const bytes = crypto.getRandomValues(new Uint8Array(size));
@@ -236,6 +236,16 @@ export class ClassroomRoom extends DurableObject<Env> {
         return void send(ws, { type: 'error', message: 'Room not found' });
       }
       const previous = typeof msg.resumeToken === 'string' ? this.sessions.get(msg.resumeToken) : undefined;
+      const admission = admitSender(this.students().length, this.sessions.size, Boolean(previous),
+        Boolean(previous && [...this.peers.values()].some(p => p.role === 'student' && p.id === previous.id)));
+      if (admission.kind === 'rejected') {
+        this.peers.delete(ws);
+        ws.serializeAttachment(null);
+        send(ws, { type: admission.retryable ? 'error' : 'join.rejected', code: admission.code,
+          message: admission.message, retryable: admission.retryable });
+        ws.close(1008, 'Room admission limit');
+        return;
+      }
       if (previous) {
         // The resume token only exists in this page's memory. Never send it to the teacher.
         for (const [other, active] of this.peers) {
@@ -256,6 +266,7 @@ export class ClassroomRoom extends DurableObject<Env> {
           }
         }
         if (changed) await this.persist();
+        if (this.peers.get(ws)?.id !== previous.id) return;
         const ownFiles = [...this.files.values()].filter(file => file.ownerId === previous.id);
         send(ws, {
           type: previous.approved ? 'join.resumed' : 'join.pending',
@@ -275,7 +286,6 @@ export class ClassroomRoom extends DurableObject<Env> {
         return;
       }
       if (!this.host) return void send(ws, { type: 'error', message: 'The host is offline' });
-      if (this.students().length >= MAX_STUDENTS) return void send(ws, { type: 'error', message: 'Room is full' });
       const approved = cfg.autoApprove === true;
       const newSession: ResumeSession = {
         id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved,
@@ -283,8 +293,12 @@ export class ClassroomRoom extends DurableObject<Env> {
           ? msg.resumeToken : token(32),
       };
       this.sessions.set(newSession.token, newSession);
+      // Reserve the active place before persistence yields; a simultaneous
+      // hello must count it, and a takeover must be able to retire this socket.
+      const admittedPeer = { ...peer, role: 'student' as const, name: newSession.name, approved };
+      this.putPeer(ws, admittedPeer);
       await this.persistSessions();
-      this.putPeer(ws, { ...peer, role: 'student', name: newSession.name, approved });
+      if (this.peers.get(ws) !== admittedPeer) return;
       send(ws, { type: approved ? 'join.accepted' : 'join.pending',
         roomCode: cfg.code, resumeToken: newSession.token });
       this.sendHost({
@@ -416,10 +430,12 @@ export class ClassroomRoom extends DurableObject<Env> {
             this.sendHost({ type: 'student.updated', student: { id: student.peer.id, name: student.peer.name, approved: true } });
           } else {
             const session = [...this.sessions.values()].find(record => record.id === student.peer.id);
-            if (session) {
-              this.sessions.delete(session.token);
-              await this.persistSessions();
-            }
+            if (session) this.sessions.delete(session.token);
+            // removePeer retires the peer synchronously before its first
+            // storage await. Clear hibernation authority at the same boundary.
+            const disconnected = this.removePeer(student.ws);
+            student.ws.serializeAttachment(null);
+            await Promise.all([disconnected, this.persistSessions()]);
             send(student.ws, { type: 'join.rejected' });
             student.ws.close(1008, 'Rejected');
           }
@@ -474,36 +490,16 @@ export class ClassroomRoom extends DurableObject<Env> {
       return;
     }
     if (msg.type === 'file.offer') {
-      if (!validId(msg.fileId) || !Number.isSafeInteger(msg.size) ||
-          Number(msg.size) < 1 || Number(msg.size) > MAX_FILE_BYTES ||
-          [...this.files.values()].filter(f => f.ownerId === peer.id).length >= MAX_STUDENT_FILES &&
-            !this.files.has(msg.fileId)) {
-        return void send(ws, { type: 'error', message: 'Invalid file size or room file limit reached' });
-      }
-      const name = cleanText(msg.name, 130);
-      if (!name || name === '.' || name === '..') return void send(ws, { type: 'error', message: 'File name required' });
-      const existing = this.files.get(msg.fileId);
-      if (existing) {
-        if (existing.status === 'pending' && peer.approved) {
-          existing.status = 'approved';
-          await this.persist();
-          this.sendHost({ type: 'file.updated', file: existing });
-        }
-        // Replaying an offer is safe: never downgrade teacher approval.
-        if (existing.ownerId !== peer.id || existing.size !== Number(msg.size) || existing.name !== name) {
-          return void send(ws, { type: 'error', message: 'Conflicting document ID' });
-        }
-        return void send(ws, { type: 'file.state', file: existing });
-      }
-      const file: PdfManifest = {
-        fileId: msg.fileId, name, size: Number(msg.size), status: 'approved',
-        ownerId: peer.id, ownerName: peer.name,
-      };
-      this.files.set(file.fileId, file);
-      await this.persist();
-      this.sendHost({ type: 'file.announced', file });
-      send(ws, { type: 'file.approved', fileId: file.fileId });
-      send(ws, { type: 'file.state', file });
+      const result = admitFile(this.files, peer, msg);
+      if (result.kind === 'rejected') return void send(ws, {
+        type: 'file.rejected', fileId: msg.fileId, code: result.code, message: result.message,
+      });
+      if (result.kind !== 'replayed') await this.persist();
+      if (result.kind === 'created') {
+        this.sendHost({ type: 'file.announced', file: result.file });
+        send(ws, { type: 'file.approved', fileId: result.file.fileId });
+      } else if (result.kind === 'updated') this.sendHost({ type: 'file.updated', file: result.file });
+      send(ws, { type: 'file.state', file: result.file });
     } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
       const file = this.files.get(msg.fileId);
       if (file?.ownerId === peer.id) {
@@ -525,10 +521,11 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
   }
 
-  async webSocketClose(ws: WebSocket): Promise<void> {
+  private async removePeer(ws: WebSocket): Promise<void> {
     const peer = this.peers.get(ws);
     if (!peer) return;
     this.peers.delete(ws);
+    ws.serializeAttachment(null);
     if (peer.role === 'student' && this.student(peer.id)) {
       // Old socket's close event arrived after a successful session resume.
       return;
@@ -556,6 +553,12 @@ export class ClassroomRoom extends DurableObject<Env> {
       }
       this.sendHost({ type: 'student.left', id: peer.id });
     }
+  }
+  async webSocketClose(ws: WebSocket): Promise<void> {
+    // Modern runtimes reciprocate automatically; this is a harmless no-op on
+    // CLOSED sockets and also finishes closure on runtimes without that behavior.
+    try { ws.close(1000, 'Connection closed'); } catch { /* Already disconnected. */ }
+    await this.removePeer(ws);
   }
   async webSocketError(ws: WebSocket): Promise<void> { await this.webSocketClose(ws); }
   async alarm(): Promise<void> {

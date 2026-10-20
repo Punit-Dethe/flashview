@@ -623,12 +623,24 @@ export function App() {
       }
       if (type === 'join.rejected') {
         returnHome();
-        setError('The teacher declined this connection.');
+        setError(typeof message.message === 'string' ? message.message : 'The teacher declined this connection.');
       }
       if (type === 'file.pending' || type === 'file.approved' || type === 'file.rejected') {
         const status = type === 'file.pending' ? 'pending' : type === 'file.approved' ? 'approved' : 'rejected';
         const id = String(message.fileId);
         const current = filesOnPhone.current.get(id);
+        if (status === 'rejected' && typeof message.code === 'string') {
+          // Admission failed before a manifest was created. Stop replaying the
+          // offer and release its local slot; other transfers keep running.
+          filesOnPhone.current.delete(id);
+          firstPageImages.current.delete(id);
+          previewDelivered.current.delete(id);
+          previewFailed.current.delete(id);
+          setPhonePreviews(previous => {
+            const next = { ...previous }; delete next[id]; return next;
+          });
+          setError((current ? current.file.name + ': ' : '') + normalizedMessage(message));
+        }
         if (current) {
           current.status = status;
           if (status === 'approved') {

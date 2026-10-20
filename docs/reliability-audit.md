@@ -210,6 +210,42 @@ restoration case also removes saved namespace metadata before refresh and checks
 that preview reads use only the authenticated namespace. Build, TypeScript and
 Worker dry-run passed. Physical devices/campus networks remain unverified.
 
+## 20 October shared admission integration (in progress)
+
+PR #41's complete CI passed. The following slice advances Phase 1 without
+changing the relay packet size, transfer queue or 200 MiB per-file cap. It does
+not complete shared room-command/revision orchestration or abuse protection.
+
+| New ID | Status | Problem / correction | Evidence |
+| --- | --- | --- | --- |
+| N21 | **In progress** | Per-sender limits allowed room-wide file bytes and historical join identities to grow far beyond one receiver's intended working set. Shared synchronous admission now reserves at most 300 retained manifests / 4 GiB, bounds retained identities at 120 and enforces the existing 30 simultaneous sender places on disconnected resumes as well as new joins. Exact retries/takeovers keep their place and known capabilities are never evicted. | Protocol cases fill the byte budget, race its last 100 bytes, test stop/replay, verify healthy byte forwarding, fill active places and all 120 identities. Known temporary capacity failures keep private resume identity and retry. |
+| N22 | **In progress** | An admission failure could leave a phone retrying an unaccepted candidate indefinitely. Existing duplicated offer code could also promote a legacy pending manifest before checking its owner/immutable metadata. | Shared validation precedes mutation; structured rejection stops replay and releases only the candidate's local slot. Unit cases retain pending state under conflicts; browser case fills metadata budget without transferring gigabytes, repeatedly reconciles, selects nine further candidates, and verifies the original cached download. |
+| N23 | **In progress** | Host rejection waited for socket closure before releasing sender authority/place/ranges. A suspended sender could delay cleanup. A raw browser close also stalled in Cloudflare emulation. | Retire authority and serialized attachment before persistence/close, cancel ranges, retain cached originals offline. Paused-close protocol test attempts late bytes/revoke/new offer and checks no mutation. Cloudflare's event handler explicitly completes closure; targeted browser fixture verifies the close event. |
+
+4 GiB is a room-wide reservation policy, not a higher per-file allowance or a
+promise of browser storage availability. Completed, offline and stopped files
+stay charged until the room ends because cached bytes may remain. Existing
+over-budget legacy rooms retain their originals/replays; new admissions fail
+without deletion. A fresh identity can still join an open-admission room after
+host rejection but cannot inherit another identity's files.
+
+Remaining Phase 1 work includes unauthenticated sockets and distributed
+creation/join rate limits. Full room-engine revisions/persistence and subsequent
+worker/OPFS/integrity/viewer phases remain pending. Original 9/3/18 counts are
+unchanged until appropriately verified fixes merge. Release evidence is recorded
+with the integration PR; physical-phone/campus proof remains pending.
+
+Local checks: 81 unit/protocol tests, 14 Cloudflare relay contracts, full Chromium
+browser suites 29/29 on Node and 29/29 on Cloudflare, and 8/8 targeted Firefox
+cases passed. Build/TypeScript/Worker dry-run passed. The initial new Cloudflare
+browser case exposed the raw-close stall; it passes after the explicit close
+reply. A separate browser check against pre-release public version `95da8029`
+also did not receive a raw sender close event within five seconds. Post-release
+public validation is recorded in the PR. One early existing relay-contract wait
+timed out; its isolated and subsequent full runs passed, and timeout diagnostics
+now identify the awaited message. This does not establish a cause for every
+reported phone/network stall.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

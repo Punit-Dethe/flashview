@@ -4,7 +4,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket } from 'ws';
-import { decodeRangePacket, encodeRangePacket } from '../src/shared/protocol';
+import { decodeRangePacket, encodeRangePacket, MAX_FILE_BYTES } from '../src/shared/protocol';
+import { MAX_ROOM_BYTES, MAX_ROOM_SESSIONS, MAX_ACTIVE_SENDERS } from '../src/shared/roomAdmission';
 
 type Message = { type: string; [key: string]: unknown };
 type Event = { binary: false; msg: Message } | { binary: true; data: Buffer };
@@ -24,16 +25,16 @@ class TestPeer {
   }
   send(msg: Record<string, unknown>): void { this.ws.send(JSON.stringify({ v: 1, ...msg })); }
   async wait(type: string): Promise<Message> {
-    const event = await this.waitFor(e => !e.binary && e.msg.type === type);
+    const event = await this.waitFor(e => !e.binary && e.msg.type === type, type);
     assert.equal(event.binary, false);
     return event.msg;
   }
   async waitBinary(): Promise<Buffer> {
-    const event = await this.waitFor(e => e.binary);
+    const event = await this.waitFor(e => e.binary, 'binary');
     assert.equal(event.binary, true);
     return event.data;
   }
-  waitFor(predicate: (event: Event) => boolean): Promise<Event> {
+  waitFor(predicate: (event: Event) => boolean, label = 'event'): Promise<Event> {
     const existing = this.events.findIndex(predicate);
     if (existing !== -1) return Promise.resolve(this.events.splice(existing, 1)[0]);
     return new Promise<Event>((resolve, reject) => {
@@ -41,7 +42,7 @@ class TestPeer {
       this.waiters.push(waiter);
       const timer = setTimeout(() => {
         this.waiters = this.waiters.filter(item => item !== waiter);
-        reject(new Error('Timeout waiting for server message'));
+        reject(new Error('Timeout waiting for server message: ' + label));
       }, 5000);
     });
   }
@@ -91,6 +92,147 @@ async function startServer(): Promise<{ port: number; child: ChildProcessWithout
   child.kill();
   throw new Error('Server never started: ' + output);
 }
+
+test('shared file admission bounds retained bytes, rejects conflicts and preserves full-room retries and healthy ranges', { timeout: 35000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; code: string; hostToken: string; joinToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken }); peers.push(host);
+    await host.wait('room.state');
+    const phones: TestPeer[] = [];
+    for (let i = 0; i < 4; i++) {
+      const phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone); phones.push(phone);
+      await phone.wait('join.accepted');
+    }
+    const offer = (i: number) => ({ type: 'file.offer', fileId: 'budget-file-' + i, name: 'original-' + i + '.bin', size: MAX_FILE_BYTES });
+    for (let i = 0; i < 20; i++) {
+      const phone = phones[Math.floor(i / 10)]; phone.send(offer(i)); await phone.wait('file.state');
+    }
+    phones[2].send({ ...offer(20), size: MAX_ROOM_BYTES - 20 * MAX_FILE_BYTES - 100 });
+    await phones[2].wait('file.state');
+    phones[3].send(offer(0));
+    const conflict = await phones[3].wait('file.rejected');
+    assert.equal(conflict.code, 'FILE_CONFLICT'); assert.equal(conflict.file, undefined);
+    // Two simultaneous offers compete for the last 100 bytes. Reserve before
+    // Cloudflare persistence yields, so exactly one can enter the manifest.
+    for (const i of [2, 3]) phones[i].send({ ...offer(30 + i), size: 100 });
+    const outcomes = await Promise.all([2, 3].map(i => phones[i].waitFor(e => !e.binary &&
+      (e.msg.type === 'file.state' || e.msg.type === 'file.rejected'))));
+    assert.equal(outcomes.filter(e => !e.binary && e.msg.type === 'file.state').length, 1);
+    assert.equal(outcomes.filter(e => !e.binary && e.msg.code === 'ROOM_BYTE_LIMIT').length, 1);
+    phones[0].send(offer(0));
+    assert.equal(((await phones[0].wait('file.state')).file as { fileId: string }).fileId, offer(0).fileId,
+      'Exact replay succeeds at capacity');
+    phones[0].send({ type: 'file.revoke', fileId: offer(0).fileId });
+    phones[0].send(offer(0));
+    const stopped = (await phones[0].wait('file.state')).file as { revoked: boolean; status: string };
+    assert.equal(stopped.revoked, true); assert.equal(stopped.status, 'offline');
+    phones[2].send({ ...offer(90), size: 1 });
+    assert.equal((await phones[2].wait('file.rejected')).code, 'ROOM_BYTE_LIMIT', 'Stop does not discard already cached bytes');
+    host.send({ type: 'room.sync' });
+    const files = (await host.wait('room.state')).files as Array<{ size: number }>;
+    assert.equal(files.length, 22); assert.equal(files.reduce((sum, file) => sum + file.size, 0), MAX_ROOM_BYTES);
+    host.send({ type: 'range.request', requestId: 'healthy-budget-range', fileId: offer(1).fileId, begin: 0, end: 4 });
+    await phones[0].wait('range.request');
+    phones[0].ws.send(encodeRangePacket({ type: 'range.data', requestId: 'healthy-budget-range', fileId: offer(1).fileId, begin: 0 }, Uint8Array.of(5, 1, 8, 9)));
+    const packet = await host.waitBinary();
+    assert.deepEqual([...decodeRangePacket(packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer).bytes], [5, 1, 8, 9]);
+  } finally { for (const peer of peers) peer.ws.terminate(); child.kill(); }
+});
+
+test('shared participant admission keeps takeover at capacity and retries disconnected resume without losing ownership', { timeout: 35000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken }); peers.push(host); await host.wait('room.state');
+    let firstToken: unknown;
+    const phones: TestPeer[] = [];
+    for (let i = 0; i < MAX_ACTIVE_SENDERS; i++) {
+      const phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone); phones.push(phone);
+      const joined = await phone.wait('join.accepted'); if (i === 0) firstToken = joined.resumeToken;
+    }
+    const offer = { type: 'file.offer', fileId: 'capacity-resume-file', name: 'original.bin', size: 4 };
+    phones[0].send(offer); await phones[0].wait('file.state');
+    const surplus = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(surplus);
+    assert.equal((await surplus.wait('join.rejected')).code, 'ROOM_ACTIVE_LIMIT');
+    phones[0].ws.pause();
+    const replacement = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: firstToken }); peers.push(replacement);
+    await replacement.wait('join.resumed');
+    replacement.close(); await host.wait('student.left');
+    const newcomer = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(newcomer);
+    await newcomer.wait('join.accepted');
+    const busy = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: firstToken }); peers.push(busy);
+    const retry = await busy.wait('error'); assert.equal(retry.code, 'ROOM_ACTIVE_LIMIT'); assert.equal(retry.retryable, true);
+    newcomer.close(); await host.wait('student.left');
+    const resumed = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: firstToken }); peers.push(resumed);
+    const restored = await resumed.wait('join.resumed');
+    assert.equal((restored.files as Array<{ fileId: string; status: string }>)[0].fileId, offer.fileId);
+    assert.equal((restored.files as Array<{ status: string }>)[0].status, 'approved');
+    host.send({ type: 'room.sync' });
+    assert.equal(((await host.wait('room.state')).students as unknown[]).length, MAX_ACTIVE_SENDERS);
+  } finally { for (const peer of peers) { peer.ws.resume(); peer.ws.terminate(); } child.kill(); }
+});
+
+test('historical joins are bounded without expiring existing private resume capabilities', { timeout: 45000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken }); peers.push(host); await host.wait('room.state');
+    let firstToken: unknown;
+    for (let i = 0; i < MAX_ROOM_SESSIONS; i++) {
+      const phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone);
+      const joined = await phone.wait('join.accepted'); if (i === 0) firstToken = joined.resumeToken;
+      phone.close(); await host.wait('student.left');
+    }
+    const surplus = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(surplus);
+    assert.equal((await surplus.wait('join.rejected')).code, 'ROOM_SESSION_LIMIT');
+    const resumed = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: firstToken }); peers.push(resumed);
+    await resumed.wait('join.resumed');
+  } finally { for (const peer of peers) peer.ws.terminate(); child.kill(); }
+});
+
+test('rejecting a sender immediately releases its place, authority and pending ranges without a close acknowledgement', { timeout: 25000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken }); peers.push(host); await host.wait('room.state');
+    const phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone);
+    await phone.wait('join.accepted');
+    const student = (await host.wait('student.updated')).student as { id: string };
+    const fileId = 'reject-pending-file';
+    phone.send({ type: 'file.offer', fileId, name: 'original.bin', size: 4 }); await phone.wait('file.state');
+    host.send({ type: 'range.request', requestId: 'rejected-range', fileId, begin: 0, end: 4 }); await phone.wait('range.request');
+    phone.ws.pause();
+    host.send({ type: 'student.reject', studentId: student.id });
+    assert.equal((await host.wait('range.error')).requestId, 'rejected-range');
+    await host.wait('student.left');
+    phone.ws.send(encodeRangePacket({ type: 'range.data', requestId: 'rejected-range', fileId, begin: 0 }, Uint8Array.of(1, 2, 3, 4)));
+    phone.send({ type: 'file.revoke', fileId });
+    phone.send({ type: 'file.offer', fileId: 'rejected-new-file', name: 'late.bin', size: 4 });
+    await delay(100);
+    host.send({ type: 'room.sync' });
+    const state = await host.wait('room.state');
+    const files = state.files as Array<{ fileId: string; status: string; revoked?: boolean }>;
+    assert.equal((state.students as unknown[]).length, 0);
+    assert.equal(files.length, 1); assert.equal(files[0].status, 'offline'); assert.equal(files[0].revoked, undefined);
+    assert.equal(host.events.some(event => event.binary), false, 'A rejected socket cannot forward pending original bytes');
+    const next = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(next); await next.wait('join.accepted');
+    next.send({ type: 'file.offer', fileId, name: 'original.bin', size: 4 });
+    assert.equal((await next.wait('file.rejected')).code, 'FILE_CONFLICT');
+  } finally { for (const peer of peers) { peer.ws.resume(); peer.ws.terminate(); } child.kill(); }
+});
 
 test('room cache identity is generation-scoped and stable across sync and host replacement', { timeout: 25000 }, async () => {
   const { port, child } = await startServer();

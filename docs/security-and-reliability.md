@@ -41,6 +41,8 @@ This document describes **current boundaries and recovery behavior**, not a secu
 | Lost end-room response | Durable browser intent; generation-scoped HTTP retry confirms closed/absent before deletion | Server absence confirms current generation absence, not historical command execution |
 | Local cleanup fails after closure | Keep confirmed closure and cache handle; explicit retry or refresh retries deletion | Clearing session storage manually discards the cleanup intent |
 | A six-digit code is reused | Newly negotiated rooms use immutable generation cache namespaces for originals/previews/readers/deletion | Existing rooms drain in their original namespace; this does not isolate same-origin rendering or detect same-length corruption |
+| Room admission exceeds capacity | Shared rules bound retained files/bytes/session identities; denials stop candidate replay; current work stays admitted | This is not a browser free-space estimate; explicit Stop does not delete already-cached bytes or release reserved room budget |
+| Sender is rejected while its socket stays open | Retire authority/serialized attachment, mark originals offline and cancel pending ranges before closing | Cached bytes remain; an open-admission room may still accept a fresh identity, which cannot own the old files |
 
 **Important:** A filename appearing in the host list is **not** proof of receipt. The sender's **Done** state means the host has verified all original bytes as locally persisted. A preview image is not proof that all PDF bytes arrived.
 
@@ -53,6 +55,11 @@ This document describes **current boundaries and recovery behavior**, not a secu
 - **Temporary room credentials and invitations** should be treated as sensitive; don't paste them into logs, issue reports or public documentation.
 - **Presenter lease** can renew only its own generation. It cannot authenticate as host, request original bytes, or close a room. Removing copied session credentials narrows access; same-origin storage/rendering isolation remains additional work.
 - **Public deployment** needs rate-limit and abuse/operational review appropriate to expected load; existing caps are defenses, not a proof of hardening.
+- **Room admission** now bounds normal growth at 300 manifests / 4 GiB and 120
+  retained identities. Reconnects preserve known capabilities, with at most 30
+  simultaneous sender places. Unauthenticated sockets and distributed room
+  creation/join rate limiting remain open; do not describe these caps as complete
+  abuse protection. Already-admitted legacy data above a new cap is not evicted.
 
 ## Triage when a transfer stalls
 

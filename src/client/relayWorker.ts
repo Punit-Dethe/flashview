@@ -16,7 +16,11 @@ let versions = new RoomRevisionTracker();
 let mailboxBusy = false;
 const mailbox = new Map<string, WorkerEvent>();
 const sources = new Map<string, { file: File; approved: boolean; stopped: boolean; known: boolean; offeredAt: number }>();
-const reads = new Map<string, object>();
+const stoppedSources = new Set<string>();
+const reads = new Map<string, { fileId: string; timer: ReturnType<typeof setTimeout> }>();
+function retireReads(fileId?: string): void {
+  for (const [id, read] of reads) if (!fileId || read.fileId === fileId) { clearTimeout(read.timer); reads.delete(id); }
+}
 const localReads = new Map<number, AbortController>();
 const manifests = new Map<string, PdfManifest>();
 const receipts = new Set<string>();
@@ -84,14 +88,19 @@ async function respond(message: ServerMessage): Promise<void> {
   const { requestId, fileId, begin, end } = message;
   if (typeof requestId !== 'string' || typeof fileId !== 'string' || !Number.isSafeInteger(begin) || !Number.isSafeInteger(end)) return;
   const source = sources.get(fileId);
-  let attempt: object;
+  let attempt: { fileId: string; timer: ReturnType<typeof setTimeout> };
   const response = socket.rangeResponse(requestId, fileId, Number(begin), () =>
     !!source && reads.get(requestId) === attempt && sources.get(fileId) === source && source.approved && !source.stopped);
   if (!source || !source.approved || source.stopped || Number(begin) < 0 || Number(end) > source.file.size ||
       Number(end) <= Number(begin) || Number(end) - Number(begin) > MAX_RANGE_BYTES || reads.size >= 48) {
     response.fail('File is no longer available'); return;
   }
-  attempt = {}; reads.set(requestId, attempt);
+  // Native Blob reads cannot be physically aborted, but a late result loses
+  // authority and its logical slot well before the receiver's range deadline.
+  attempt = { fileId, timer: setTimeout(() => {
+    if (reads.get(requestId) !== attempt) return;
+    reads.delete(requestId); response.fail('File read timed out');
+  }, 15_000) }; reads.set(requestId, attempt);
   const current = () => reads.get(requestId) === attempt && sources.get(fileId) === source && source.approved && !source.stopped;
   try {
     const started = performance.now();
@@ -99,14 +108,15 @@ async function respond(message: ServerMessage): Promise<void> {
     if (perf.enabled) perf.record('sender_read_ms', performance.now() - started, { bytes: bytes.byteLength });
     if (current() && !await response.send(bytes) && current()) response.fail('Network sender is busy');
   } catch { if (current()) response.fail('Cannot read file from sender device'); }
-  finally { if (reads.get(requestId) === attempt) reads.delete(requestId); }
+  finally { clearTimeout(attempt.timer); if (reads.get(requestId) === attempt) reads.delete(requestId); }
 }
 function initialize(): void {
   socket = new RoomSocket({ protocol: location.protocol, host: location.host, search: query });
   socket.onStatus = status => {
-    if (status !== 'connected') reads.clear();
+    if (status !== 'connected') retireReads();
     if (status === 'connected') {
       receipts.clear(); receiptSent.clear(); cache?.connectionRestored();
+      if (role === 'student') for (const fileId of stoppedSources) socket.send({ type: 'file.revoke', fileId });
       socket.send({ type: role === 'host' ? 'room.sync' : 'file.sync' });
       for (const source of sources.values()) source.offeredAt = -Infinity;
     }
@@ -129,7 +139,11 @@ function initialize(): void {
       else if (message.type === 'cache.progress.receipt' && typeof message.fileId === 'string' &&
           manifests.get(message.fileId)?.size === message.bytes) { receipts.add(message.fileId); receiptSent.delete(message.fileId); }
     } else {
-      if (Array.isArray(message.files)) reconcile(message.files as PdfManifest[]);
+      if (Array.isArray(message.files)) {
+        const files = message.files as PdfManifest[]; reconcile(files);
+        for (const fileId of stoppedSources) if (files.some(file => file.fileId === fileId && !file.revoked))
+          socket.send({ type: 'file.revoke', fileId });
+      }
       if (message.type === 'host.online') socket.send({ type: 'file.sync' });
       if (message.type === 'file.state') {
         const file = message.file as PdfManifest, source = sources.get(file.fileId);
@@ -142,7 +156,7 @@ function initialize(): void {
         if (message.type === 'file.rejected') { source.stopped = true; if (message.code) sources.delete(String(message.fileId)); }
       }
     }
-    if (message.type === 'room.closed' || message.type === 'join.rejected') { cache?.dispose(); sources.clear(); reads.clear(); }
+    if (message.type === 'room.closed' || message.type === 'join.rejected') { cache?.dispose(); sources.clear(); retireReads(); }
     const key = ['student.pending', 'student.updated', 'student.left'].includes(message.type)
       ? 'student:' + String((message.student as { id?: string })?.id ?? message.id)
       : message.type + ':' + String(message.fileId ?? (message.file as PdfManifest)?.fileId ?? '') +
@@ -183,7 +197,7 @@ scope.onmessage = event => {
   if (!socket) initialize();
   if (event.data.session < session) return;
   if (event.data.session !== session) {
-    socket.close(); sources.clear(); reads.clear(); manifests.clear(); receipts.clear(); receiptSent.clear();
+    socket.close(); sources.clear(); stoppedSources.clear(); retireReads(); manifests.clear(); receipts.clear(); receiptSent.clear();
     for (const read of localReads.values()) read.abort(); localReads.clear();
     session = event.data.session; mailbox.clear(); mailboxBusy = false;
   }
@@ -200,17 +214,19 @@ scope.onmessage = event => {
   } else if (command.type === 'room') setRoom(command.roomId);
   else if (command.type === 'sources') {
     for (const { fileId, file } of command.files) {
-      if (sources.size >= MAX_STUDENT_FILES || !file.size || file.size > MAX_FILE_BYTES || sources.has(fileId)) continue;
+      if (sources.size >= MAX_STUDENT_FILES || !file.size || file.size > MAX_FILE_BYTES || sources.has(fileId) || stoppedSources.has(fileId)) continue;
       sources.set(fileId, { file, approved: false, stopped: false, known: false, offeredAt: -Infinity }); offer(fileId);
     }
   } else if (command.type === 'send') {
     const message = command.message;
     if (message.type === 'file.offer' && typeof message.fileId === 'string') offer(message.fileId);
-    else if (message.type === 'file.revoke' && typeof message.fileId === 'string') { sources.delete(message.fileId); socket.send(message); }
+    else if (message.type === 'file.revoke' && typeof message.fileId === 'string') {
+      sources.delete(message.fileId); stoppedSources.add(message.fileId); retireReads(message.fileId); socket.send(message);
+    }
     else if (message.type !== 'cache.progress') socket.send(message);
   } else if (command.type === 'wake') socket.wake(command.reason);
   else if (command.type === 'pause') socket.pauseHeartbeat(command.frozen);
-  else if (command.type === 'close') { socket.close(); sources.clear(); reads.clear(); if (syncTimer) clearInterval(syncTimer); syncTimer = null; }
+  else if (command.type === 'close') { socket.close(); sources.clear(); stoppedSources.clear(); retireReads(); if (syncTimer) clearInterval(syncTimer); syncTimer = null; }
   else if (command.type === 'stop') cache?.dispose();
   else if (command.type === 'retry-storage') cache?.retryBlockedStorage();
   else if (command.type === 'rpc') void rpc(command);

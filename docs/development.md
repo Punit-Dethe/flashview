@@ -107,6 +107,10 @@ receiver workers, and stop held requests before releasing obsolete source reads.
 are installed via Playwright, rather than adding production debug APIs. Faults
 that affect WebSockets, File reads or transfer-cache writes must run in the
 worker; page DOM and completed export checks still run in the page.
+The offline-Stop case can also target the deployed app: set
+`WORKER_RECOVERY_ORIGIN` and run only `--test-name-pattern="offline Stop"`
+against `tests/browser.smoke.ts`. It creates/ends a synthetic room, exercises a
+real private reconnect and explicitly exports only its generated test binary.
 
 - A transfer or storage code change updates [Architecture](./architecture.md), [Protocol](./transfer-protocol.md) or [Security and reliability](./security-and-reliability.md) if behavior changes.
 - Every reliability-audit PR updates the matching entry in [the tracker](./reliability-audit.md), including limitations and a specific test or CI result.

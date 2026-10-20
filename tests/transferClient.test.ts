@@ -73,6 +73,21 @@ test('worker crash preserves the initial private capability, learned generation 
   assert.equal(identity.resumeToken, initial.resumeToken); assert.equal(identity.roomGeneration, 'generation-a');
   assert.equal(replacement.sent.find(message => message.command.type === 'sources').command.files[0].file, file);
 });
+test('Stop while disconnected retires its File and survives a worker replacement without registering it again', t => {
+  const client = setup(t); client.connect({ role: 'student', code: '123456' });
+  const first = FakeWorker.instances[0];
+  const original = { fileId: 'stopped123', file: new File([Uint8Array.of(9)], 'stopped.bin') };
+  client.addSources([original]);
+  assert.equal(client.connected, false);
+  assert.equal(client.send({ type: 'file.revoke', fileId: original.fileId }), true);
+  assert.equal(first.sent.at(-1).command.message.type, 'file.revoke');
+  client.addSources([original]);
+  assert.deepEqual(first.sent.at(-1).command.files, []);
+  first.onerror?.({ preventDefault() {} });
+  const replacement = FakeWorker.instances[1];
+  assert.ok(replacement.sent.some(message => message.command.message?.type === 'file.revoke'));
+  assert.deepEqual(replacement.sent.find(message => message.command.type === 'sources').command.files, []);
+});
 test('unsupported worker startup and exhausted restart budget stop cleanly without an implicit UI transfer', t => {
   const client = setup(t); let warning = '';
   client.onWarning = value => { warning = value; };

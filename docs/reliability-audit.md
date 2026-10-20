@@ -366,6 +366,14 @@ the original 30 findings remain unchanged until merge.
 | N36 | **In progress** | A new worker failure boundary must not silently lose private identity/File handles, leave RPCs pending or create a parallel UI scheduler. | Worker replacement terminates the old owner, rejects pending reads and retains initial private capability, learned generation and source handles. Two automatic attempts are bounded. Browser tests crash sender/receiver mid-file and verify one participant/file plus exact export. Bridge cases cover settlement, cancelled reads, stale-session replies, startup failure and exhaustion. Page cleanup can delete only after a failed worker is terminated. |
 | N37 | **Open** | Complete UI independence is not established in the tested Firefox build: worker timers ran during a ten-second parent-page busy loop, but native Blob reads and incoming WebSocket delivery waited for the page to yield. | In the gated native-read stress test, first source read/send and receiver delivery occurred at/after the block ended. A test-only FileReaderSync probe moved source reading/sending inside the block, but receiver delivery still waited; that probe is not production code. Chromium must finish persistence/relayed completion inside both blocks. Firefox is explicitly tested for bounded, exact recovery after the block, not silently counted as passing the stricter criterion. Mitigation continues through bounded renderer work/process separation and real-browser/device validation. |
 
+Final Stop review also caught connection gating before local worker retirement.
+The rollout was temporarily reverted while Stop was made independent of current
+socket status, retained across worker replacement and replayed after reconnect.
+The offline Stop regression verifies no late binary data, terminal relay state
+and healthy subsequent transfer on both backends. Final local validation passed
+116 unit/protocol tests, 35 Chromium cases per backend and 16 targeted Firefox
+cases, with N37's weaker Firefox stress criterion explicitly retained.
+
 Initial checks caught React callback replacement delaying displayed completion;
 the listener is now bound from the stable presentation instance. Page-only fault
 hooks also had to move into the actual worker. Failed attempts are not counted

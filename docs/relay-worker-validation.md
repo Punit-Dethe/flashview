@@ -24,7 +24,8 @@ readers still use local cache.
 
 ## Correctness evidence
 
-115 unit/protocol cases passed, including idle worker warm-up with no socket,
+116 unit/protocol cases passed, including offline Stop across replacement,
+idle worker warm-up with no socket,
 worker RPC settlement/cancellation,
 stale session replies, capability/generation preservation, startup failure,
 retry exhaustion and source revocation during backpressure.
@@ -35,10 +36,10 @@ without reselection/duplicates; and stop held reads while a healthy file finishe
 verifying request cancellation and no late binary responses. Exports must match
 synthetic originals exactly. Existing picker/disconnect, stale snapshot, quota,
 storage failure, eviction, handover, PDF/PPTX and binary tests remain.
-Full Chromium suites passed **34/34 each** on Node and local Cloudflare.
+Final full Chromium suites passed **35/35 each** on Node and local Cloudflare.
 The final gated UI-stall case passed on each backend: persisted cache and relay
 completion landed about 1.5–1.6 s into both ten-second blocks. The final Node
-three-case worker stress run also passed. **15/15** targeted Firefox cases passed
+three-case worker stress run also passed. **16/16** targeted Firefox cases passed
 with the explicit weaker stall criterion below; Firefox `157.0`, Chromium
 `156.0.8078.4`. Normal recovery, worker crashes, Stop and exact exports passed.
 Build, TypeScript and Worker dry-run passed. A small 2 MiB synthetic baseline
@@ -47,6 +48,18 @@ After the warm-up follow-up, targeted cache-upgrade/UI-stall/worker-crash/picker
 checks passed 4/4 on Node and 4/4 on local Cloudflare, plus 3/3 Firefox worker and
 picker checks. The warm-up only overlaps worker-script loading with room setup;
 it does not open an idle WebSocket or change the transfer worker.
+
+The final review found an offline Stop edge: checking page-side connection state
+before retiring the worker's source could leave its File alive for reconnect.
+The worker rollout was temporarily reverted to the prior room-engine release
+while this was corrected. Stop now retires local source/reader authority even
+offline, retains intent across worker replacement and replays it after private
+authentication or an unreconciled manifest. A real-browser case holds original
+reads, disconnects, stops offline, releases old reads and reconnects: no binary
+response is sent, the relay records terminal revocation, and another exact file
+still finishes. Pending reader slots are retired on Stop/disconnect; a 15-second
+read deadline also rejects late results. Native Blob reads are not physically
+abortable with this API; their late results have no send authority.
 
 ### Firefox limitation (audit N37, still open)
 

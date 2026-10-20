@@ -88,6 +88,10 @@ Exhaustion/startup failure reports an explicit error, with no second UI transfer
 implementation. End-room cleanup can delete cache directly only after a failed
 worker has been terminated. Closing/reloading a sender page still loses its
 selected File handles.
+Stop removes the local source even while disconnected, retains the terminal
+intent across worker replacement and retries it after private reconnect/sync.
+Read attempts have a 15-second deadline and lose their slots/authority on
+Stop or connection replacement; late native Blob results cannot send bytes.
 
 Audit N37 records a measured Firefox limitation: under a ten-second parent-page
 busy loop, worker timers ran but native File/WebSocket delivery still waited.

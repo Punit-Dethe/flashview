@@ -13,6 +13,7 @@ export class RoomTransferClient {
   private identity: Record<string, unknown> | null = null;
   private roomId = '';
   private sources = new Map<string, File>();
+  private stoppedSources = new Set<string>();
   private pending = new Map<number, Pending>();
   private nextId = 0;
   private restarts = 0;
@@ -73,6 +74,7 @@ export class RoomTransferClient {
         try {
           this.post({ type: 'room', roomId: this.roomId });
           this.post({ type: 'connect', identity: this.identity });
+          for (const fileId of this.stoppedSources) this.post({ type: 'send', message: { type: 'file.revoke', fileId } });
           this.post({ type: 'sources', files: [...this.sources].map(([fileId, file]) => ({ fileId, file })) });
         } catch { this.onWarning('Transfers could not restart. Refresh this page and reselect sender files if needed.'); }
       } else { this.failed = true; this.onWarning('Transfers stopped. Refresh this page and reselect sender files if needed.'); }
@@ -99,26 +101,30 @@ export class RoomTransferClient {
     this.identity = { ...identity };
     if (identity.role === 'student' && typeof identity.resumeToken !== 'string')
       this.identity.resumeToken = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('');
-    this.sources.clear(); this.restarts = 0; this.failed = false; this.status = 'connecting'; this.onStatus('connecting');
+    this.sources.clear(); this.stoppedSources.clear(); this.restarts = 0; this.failed = false; this.status = 'connecting'; this.onStatus('connecting');
     this.post({ type: 'connect', identity: this.identity });
   }
   /** Fetch/initialize before room creation; no identity or socket is opened. */
   warm(): void { if (!this.worker && !this.failed) this.post({ type: 'room', roomId: this.roomId }); }
   send(message: Record<string, unknown>): boolean {
+    if (message.type === 'file.revoke' && typeof message.fileId === 'string') {
+      this.sources.delete(message.fileId); this.stoppedSources.add(message.fileId);
+      return this.post({ type: 'send', message });
+    }
     if (!this.connected) return false;
-    if (message.type === 'file.revoke' && typeof message.fileId === 'string') this.sources.delete(message.fileId);
     return this.post({ type: 'send', message });
   }
   addSources(files: Array<{ fileId: string; file: File }>): void {
-    for (const entry of files) this.sources.set(entry.fileId, entry.file);
-    this.post({ type: 'sources', files });
+    const available = files.filter(entry => !this.stoppedSources.has(entry.fileId));
+    for (const entry of available) this.sources.set(entry.fileId, entry.file);
+    this.post({ type: 'sources', files: available });
   }
   wake(reason: 'focus' | 'online' = 'focus'): void { if (this.identity) this.post({ type: 'wake', reason }); }
   pauseHeartbeat(frozen = false): void { if (this.identity) this.post({ type: 'pause', frozen }); }
   close(): void {
     for (const request of this.pending.values()) request.reject(Error('Room closed'));
     this.session++;
-    this.identity = null; this.sources.clear(); this.status = 'disconnected';
+    this.identity = null; this.sources.clear(); this.stoppedSources.clear(); this.status = 'disconnected';
     if (this.worker) this.post({ type: 'close' });
     this.onStatus('disconnected');
   }

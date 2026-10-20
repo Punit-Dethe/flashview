@@ -1766,6 +1766,59 @@ test('transfer worker: Stop cancels held ranges and ignores late original reads 
   } finally { await browser.close(); child.kill(); }
 });
 
+test('transfer worker: offline Stop retires source bytes and is replayed after private reconnect', { timeout: 45000 }, async () => {
+  const remote = process.env.WORKER_RECOVERY_ORIGIN;
+  const { port, child } = remote ? { port: 0, child: null } : await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true }); const phone = await browser.newPage();
+  let revoked = false, stopped = false, binaryAfterStop = 0;
+  host.on('websocket', socket => socket.on('framereceived', ({ payload }) => {
+    if (typeof payload === 'string') { const message = JSON.parse(payload); if (message.type === 'file.updated' && message.file.name === 'offline-stop.bin' && message.file.revoked) revoked = true; }
+  }));
+  phone.on('websocket', socket => socket.on('framesent', ({ payload }) => { if (stopped && typeof payload !== 'string') binaryAfterStop++; }));
+  try {
+    await transferInit(phone, `{
+      const Native=WebSocket;window.__offlineSockets=[];
+      window.WebSocket=class extends Native {constructor(...args){super(...args);window.__offlineSockets.push(this)}};
+      const slice=File.prototype.slice;window.__offlineReads=[];
+      File.prototype.slice=function(...args){const blob=slice.apply(this,args),read=blob.arrayBuffer.bind(blob);
+        if(this.name==='offline-stop.bin')blob.arrayBuffer=()=>new Promise(resolve=>window.__offlineReads.push(()=>read().then(resolve)));return blob;};
+    }`);
+    const root = remote ? new URL(remote).origin : 'http://127.0.0.1:' + port;
+    await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click(); await host.locator('.connection.connected').waitFor();
+    const token = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken);
+    await phone.goto(root + '/?join=' + encodeURIComponent(token)); await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    await phone.locator('input[type=file]').setInputFiles({ name: 'offline-stop.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2 * 1024 * 1024, 47) });
+    await transferWait(phone, 'window.__offlineReads.length > 0');
+    await phone.context().setOffline(true);
+    await transferEval(phone, 'window.__offlineSockets.at(-1).close(4100,"Synthetic offline Stop")');
+    await host.waitForFunction(() => document.querySelectorAll('.participant-row').length === 0);
+    await phone.getByRole('button', { name: 'Stop sharing' }).click(); await phone.getByText('Sharing stopped', { exact: true }).waitFor();
+    stopped = true;
+    await transferEval(phone, 'window.__offlineReads.splice(0).forEach(release=>release())');
+    await phone.context().setOffline(false); await phone.evaluate(() => window.dispatchEvent(new Event('online')));
+    for (let attempt = 0; attempt < 150 && !revoked; attempt++) await delay(50);
+    assert.equal(revoked, true, 'Reconnect must replay the terminal command, not just drop the source bytes');
+    assert.equal(binaryAfterStop, 0); stopped = false;
+    await host.waitForFunction(() => document.querySelectorAll('.participant-row').length === 1);
+    const healthy = Buffer.alloc(512 * 1024 + 7, 93);
+    await phone.locator('input[type=file]').setInputFiles({ name: 'after-offline-stop.bin', mimeType: 'application/octet-stream', buffer: healthy });
+    await host.locator('.document-row').filter({ hasText: 'after-offline-stop.bin' }).locator('.cache-ring[aria-valuenow="100"]').waitFor();
+    const exporting = host.waitForEvent('download'); await host.getByRole('button', { name: 'Download after-offline-stop.bin' }).click();
+    assert.deepEqual(await readFile((await (await exporting).path())!), healthy);
+  } finally {
+    await phone.context().setOffline(false).catch(() => {});
+    try {
+      if (remote && await host.getByRole('button', { name: 'End room', exact: true }).isVisible().catch(() => false)) {
+        await host.getByRole('button', { name: 'End room', exact: true }).click();
+        await host.locator('.end-check input').check();
+        await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+        await host.locator('.welcome').waitFor();
+      }
+    } finally { await browser.close(); child?.kill(); }
+  }
+});
+
 test('network packet sizes 128/256 KiB preserve exact original PDF bytes in 64 KiB browser cache', { timeout: 110000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });

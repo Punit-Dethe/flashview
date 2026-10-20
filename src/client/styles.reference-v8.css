@@ -132,21 +132,20 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
     radial-gradient(30% 75% at 95% 100%,#fff 40%,transparent 72%); }
 .premium-app .reference-hero { position:relative; z-index:2; text-align:center; padding-top:24px; }
 .premium-app .home-wordmark {
-  margin:0 auto 64px; color:#fff; font-size:36px; font-weight:700;
+  margin:0 auto 64px; color:#000; font-size:46px; font-weight:700;
   line-height:1.2; letter-spacing:-.03em;
 }
 .premium-app .home-wordmark span { display:inline-block; }
 @media (prefers-reduced-motion:no-preference) {
-  .premium-app .home-wordmark span { animation:wordmark-arrive .85s cubic-bezier(.16,1,.3,1) both; }
-  .premium-app .home-wordmark span+span { animation-name:wordmark-settle; }
+  .premium-app .home-wordmark span {
+    animation:wordmark-wave 3.2s ease-in-out infinite;
+    animation-delay:calc(var(--letter) * -.18s); animation-play-state:paused;
+  }
+  .premium-app .home-wordmark.is-animating span { animation-play-state:running; }
 }
-@keyframes wordmark-arrive {
-  from { transform:translateX(-12px) rotate(-3deg); }
-  to { transform:translateX(0) rotate(0); }
-}
-@keyframes wordmark-settle {
-  from { transform:translateX(12px) rotate(3deg); }
-  to { transform:translateX(0) rotate(0); }
+@keyframes wordmark-wave {
+  0%,100% { transform:translateY(2px); }
+  50% { transform:translateY(-3px); }
 }
 .premium-app .reference-hero h1.reference-serif {
   color:#fff; font-size:clamp(52px,7.6vw,112px); line-height:.94;
@@ -534,7 +533,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
  .premium-app .reference-nav .reference-logo-mark,.premium-app .reference-nav .reference-logo-mark svg { width:22px; height:22px; }
  .premium-app .reference-sky { margin:8px; border-radius:25px; padding:16px 11px 120px; min-height:calc(100vh - 16px); }
  .premium-app .reference-hero { padding-top:18px; }
- .premium-app .home-wordmark { font-size:32px; margin-bottom:52px; }
+ .premium-app .home-wordmark { font-size:40px; margin-bottom:52px; }
  .premium-app .reference-hero h1.reference-serif { font-size:clamp(49px,13.4vw,72px); }
  .premium-app .reference-actions { margin:32px auto 0; border-radius:23px; gap:5px; padding:7px; }
  .premium-app .reference-pane { padding:22px 19px; border-radius:18px; }

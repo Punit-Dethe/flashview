@@ -542,16 +542,27 @@ test('home branding and end-room dialog: no header, responsive warning and direc
           overflow: document.documentElement.scrollWidth > innerWidth };
       });
       assert.ok(Math.abs(geometry.center - width / 2) < 2, 'Brand stays centered');
-      assert.ok(geometry.gap >= 48 && geometry.font >= 32, 'Brand is larger with breathing room above the title');
+      assert.ok(geometry.gap >= 48 && geometry.font >= 40, 'Brand is larger with breathing room above the title');
       assert.equal(geometry.overflow, false);
     }
+    assert.equal(await page.locator('.home-wordmark').evaluate(el => getComputedStyle(el).color), 'rgb(0, 0, 0)');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.waitForFunction(() => {
+      const style = getComputedStyle(document.querySelector('.home-wordmark span')!);
+      return style.animationIterationCount === 'infinite' && style.animationPlayState === 'running';
+    });
+    await page.locator('.reference-footer').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.home-wordmark span')!).animationPlayState === 'paused');
+    await page.locator('.home-wordmark').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.home-wordmark span')!).animationPlayState === 'running');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.setViewportSize({ width: 1280, height: 844 });
     await page.getByRole('button', { name: /Create a room/ }).click();
     await page.locator('.connection.connected').waitFor();
     await seedLifecycleCache(page);
     const room = await page.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).cacheId as string);
     await page.getByRole('button', { name: 'End room', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Cached room files will be deleted.' });
+    const dialog = page.getByRole('dialog', { name: 'Room files will be deleted.' });
     await dialog.waitFor();
     assert.equal(await dialog.getByRole('checkbox').count(), 0);
     assert.equal(await dialog.getByRole('button', { name: 'End & clear cache', exact: true }).isEnabled(), true);

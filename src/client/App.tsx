@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } fro
 import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
 import { SiteHeader } from './SiteHeader';
+import { HomeWordmark } from './HomeWordmark';
 import { JoinWelcome } from './JoinWelcome';
 import { invitationFor, invitationUrl, readInvitation, rememberInvitation } from './joinInvitation';
 import { assignParticipantColors } from './participantColors';
@@ -959,7 +960,7 @@ export function App() {
           <div className="welcome reference-welcome">
             <section className="reference-sky">
               <div className="reference-hero">
-                <p className="home-wordmark" aria-label="WarpView"><span>warp</span><span>view</span></p>
+                <HomeWordmark/>
                 <h1 className="reference-serif">From your phone, onto the big screen.</h1>
                 <div className="reference-actions" id="start-room">
                   <div className="reference-pane host-card">
@@ -1262,7 +1263,7 @@ export function App() {
         {endConfirm && mode === 'host' && hostSession && (
           <div className="dialog-backdrop">
             <section className="end-dialog" role="dialog" aria-modal="true" aria-labelledby="end-title" aria-describedby="end-description">
-              <h2 id="end-title" className="reference-serif">Cached room files will be deleted.</h2>
+              <h2 id="end-title" className="reference-serif">Room files will be deleted.</h2>
               <p id="end-description">Ending room <strong>{hostSession.code}</strong> clears its files and previews
                 from <strong>this computer</strong>, closes presentation tabs, and disconnects everyone.</p>
               <p>Original files on people's devices stay untouched. Clearing this room's cache cannot be undone.</p>

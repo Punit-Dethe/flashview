@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export function SiteHeader({ landing, onHome }: { landing: boolean; onHome: () => void }) {
+export function SiteHeader({ landing, onHome, entry = false }: { landing: boolean; onHome: () => void; entry?: boolean }) {
   const [scrolled, setScrolled] = useState(() => window.scrollY > 20);
 
   useEffect(() => {
@@ -17,7 +17,7 @@ export function SiteHeader({ landing, onHome }: { landing: boolean; onHome: () =
   }
 
   return (
-    <header className={'site-header reference-nav' + (landing ? ' is-landing' : '') +
+    <header className={'site-header reference-nav' + (landing ? ' is-landing' : '') + (entry ? ' is-entry' : '') +
       (!landing || scrolled ? ' is-scrolled' : '')}>
       <button type="button" className="brand" onClick={onHome} aria-label="WarpView home">
         <span className="reference-logo-mark" aria-hidden="true">
@@ -26,14 +26,14 @@ export function SiteHeader({ landing, onHome }: { landing: boolean; onHome: () =
         </span>
         <span>warpview</span>
       </button>
-      <nav aria-label="Site navigation">
+      {!entry && <nav aria-label="Site navigation">
         <a href="#how">How it works</a>
         <a href="#privacy">Privacy</a>
         <a href="#start-room">Share any file</a>
-      </nav>
-      <button type="button" className="primary-button reference-pill nav-start" onClick={startRoom}>
+      </nav>}
+      {!entry && <button type="button" className="primary-button reference-pill nav-start" onClick={startRoom}>
         Start a room
-      </button>
+      </button>}
     </header>
   );
 }

@@ -86,6 +86,9 @@ Do not infer a faster real-world connection from one localhost throughput sample
 `npm run bench:transfer` measures a synthetic 20 MiB arbitrary binary three times
 and requires a SHA-256 match of each browser-cached original. `BENCH_TARGET` is
 `node` (default), `cloudflare` (local emulation) or `public` (the deployed relay).
+For an isolated public preview, `BENCH_ORIGIN=https://<worker>.workers.dev`
+overrides the default origin. The benchmark explicitly skips the optional-name
+screen before starting its transfer timer; room entry time is separate.
 Optional `BENCH_MIB=1..45`, `BENCH_RUNS=1..10` and `BENCH_RESULT` select fixture,
 repetitions and report path; defaults write ignored `test-artifacts/` JSON.
 Public mode creates and ends temporary rooms and consumes that source's normal

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } fro
 import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
 import { SiteHeader } from './SiteHeader';
+import { JoinWelcome } from './JoinWelcome';
+import { invitationFor, invitationUrl, readInvitation, rememberInvitation } from './joinInvitation';
 import { assignParticipantColors } from './participantColors';
 import { MAX_FILE_BYTES, MAX_STUDENT_FILES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { hostCacheIdentity } from '../shared/roomCacheIdentity';
@@ -44,10 +46,10 @@ function savedSession(): HostSession | null {
       ? candidate as HostSession : null;
   } catch { return null; }
 }
-const initialSession = savedSession();
-const initialJoin = new URLSearchParams(window.location.search).get('join') || '';
-// Open the upload workspace on the first render, before QR authentication.
-const initialJoinRoomCode = /^\d{6}(?=\.|$)/.exec(initialJoin)?.[0] ?? '';
+const initialInvitation = readInvitation(new URL(window.location.href), window.history.state);
+const initialSession = initialInvitation ? null : savedSession();
+const initialJoin = initialInvitation?.credential ?? '';
+const initialJoinRoomCode = initialInvitation?.code ?? '';
 
 function statusText(status: SocketStatus): string {
   if (status === 'connected') return 'Connected';
@@ -85,8 +87,8 @@ export function App() {
   const [blockedStorageFiles, setBlockedStorageFiles] = useState<string[]>([]);
   const [retryingBlockedStorage, setRetryingBlockedStorage] = useState(false);
   const [joinCode, setJoinCode] = useState(initialJoin);
-  const [studentName, setStudentName] = useState('');
-  const [joinState, setJoinState] = useState<'idle' | 'connecting' | 'pending' | 'accepted' | 'rejected'>(initialJoin ? 'connecting' : 'idle');
+  const [studentName, setStudentName] = useState(initialInvitation?.name ?? '');
+  const [joinState, setJoinState] = useState<'idle' | 'connecting' | 'pending' | 'accepted' | 'rejected'>(initialInvitation?.entered ? 'connecting' : 'idle');
   const [students, setStudents] = useState<StudentInfo[]>([]);
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
   // Shared-file ownership outlives live sockets, including stopped originals.
@@ -506,6 +508,9 @@ export function App() {
         setJoinState('pending');
       }
       if (type === 'join.accepted' || type === 'join.resumed') {
+        const entry = readInvitation(new URL(window.location.href), window.history.state);
+        if (entry?.entered && typeof message.resumeToken === 'string') rememberInvitation({ ...entry,
+          code: typeof message.roomCode === 'string' ? message.roomCode : entry.code, resumeToken: message.resumeToken });
         const previousNotice = admissionError.current;
         if (previousNotice) setError(current => current === previousNotice ? '' : current);
         admissionError.current = '';
@@ -641,9 +646,10 @@ export function App() {
         socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken, roomGeneration: initialSession.roomGeneration });
       }
     }
-    else if (initialJoin) socket.connect({ role: 'student', name: 'Student',
+    else if (initialInvitation?.entered) socket.connect({ role: 'student', name: initialInvitation.name?.trim() || 'Student', resumeToken: initialInvitation.resumeToken,
       ...(/^\d{6}$/.test(initialJoin) ? { code: initialJoin } : { joinToken: initialJoin }),
     });
+    if (initialInvitation) rememberInvitation(initialInvitation);
     return () => {
       document.removeEventListener('visibilitychange', visibility);
       document.removeEventListener('freeze', freeze);
@@ -692,8 +698,11 @@ export function App() {
     } finally { setBusy(false); }
   }
 
-  function connectStudent(): void {
+  function connectStudent(name = studentName): void {
     if (!joinCode.trim()) return setError('Enter a code or use the QR code link.');
+    const key = joinCode.trim();
+    const invitation = invitationFor(key, currentRoomCode);
+    if (!invitation) return setError('Enter a valid six-digit room code or scan the QR code again.');
     roomVersions.reset();
     setError('');
     setJoinState('connecting');
@@ -705,13 +714,16 @@ export function App() {
     setSentFiles([]);
     setStudentCacheProgress({});
     setPhonePreviews({});
-    const key = joinCode.trim();
-    setCurrentRoomCode(/^\d{6}(?=\.|$)/.exec(key)?.[0] ?? '');
+    const chosenName = name.trim().slice(0, 32);
+    setStudentName(chosenName);
+    const resumeToken = Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+    rememberInvitation({ ...invitation, entered: true, name: chosenName, resumeToken });
+    setCurrentRoomCode(invitation.code);
     setHostAvailable(true);
     modeRef.current = 'student';
     setMode('student');
     const identifier = /^\d{6}$/.test(key) ? { code: key } : { joinToken: key };
-    socket.connect({ role: 'student', name: studentName.trim() || 'Student', ...identifier });
+    socket.connect({ role: 'student', name: chosenName || 'Student', resumeToken, ...identifier });
   }
 
   async function addFiles(event: ChangeEvent<HTMLInputElement>): Promise<void> {
@@ -935,13 +947,14 @@ export function App() {
     returnHome();
   }
 
-  const joinLink = hostSession ? window.location.origin + '/?join=' + encodeURIComponent(hostSession.joinToken) : '';
+  const joinLink = hostSession ? invitationUrl(window.location.origin, hostSession.joinToken, hostSession.code) : '';
+  const showInviteEntry = mode === 'student' && joinState === 'idle' && Boolean(initialInvitation);
 
   return (
-    <div className={'app premium-app' + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
+    <div className={'app premium-app' + (showInviteEntry ? ' is-invite-entry' : '') + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
       (mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending') ? ' is-student-room' : '')}>
       {mode !== 'host' && !(mode === 'student' && joinState !== 'idle' && joinState !== 'rejected') && (
-        <SiteHeader landing={mode === 'welcome'} onHome={startFresh}/>
+        <SiteHeader landing={mode === 'welcome' || showInviteEntry} entry={showInviteEntry} onHome={startFresh}/>
       )}
       <main className="app-content">
         {mode === 'welcome' && (
@@ -1176,7 +1189,8 @@ export function App() {
           <div className="simple-state"><h1>Room ended.</h1><p>Create a new classroom to continue.</p><button className="primary-button" onClick={startFresh}>Go home →</button></div>
         )}
 
-        {mode === 'student' && (
+        {showInviteEntry && <JoinWelcome code={currentRoomCode} name={studentName} onName={setStudentName} onJoin={connectStudent}/>}
+        {mode === 'student' && !showInviteEntry && (
           <div className={'student-screen' + (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending' ? ' room-files-screen' : '')}>
             {(joinState === 'idle' || joinState === 'rejected') && (
               <div className="room-entry">

@@ -7,6 +7,7 @@ import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium, firefox, type Page } from 'playwright';
 import { makePowerPointFixture } from './pptxFixture';
+import { invitationUrl } from '../src/client/joinInvitation';
 const browserEngine = process.env.FLASHVIEW_BROWSER === 'firefox' ? firefox : chromium;
 import { mkdir, readFile } from 'node:fs/promises';
 
@@ -120,6 +121,64 @@ async function lifecycleCacheCount(page: import('playwright').Page, room: string
   }), room);
 }
 
+test('QR welcome: optional name, explicit skip, clean URLs and private refresh resume', { timeout: 60000 }, async () => {
+  const { port, child } = await runningServer(), browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage(), named = await browser.newPage(), skipped = await browser.newPage(), legacy = await browser.newPage();
+  const root = 'http://127.0.0.1:' + port;
+  const hellos: Record<string, unknown>[] = [], skippedHellos: Record<string, unknown>[] = [];
+  for (const [page, messages] of [[named, hellos], [skipped, skippedHellos]] as const)
+    page.on('websocket', socket => socket.on('framesent', ({ payload }) => {
+      if (typeof payload === 'string') { const message = JSON.parse(payload); if (message.type === 'hello') messages.push(message); }
+    }));
+  try {
+    await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const session = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    const url = invitationUrl(root, session.joinToken, session.code);
+    await named.addInitScript(() => sessionStorage.setItem('flashview-host', JSON.stringify({ roomId: 'unrelated', code: '111111', hostToken: 'unrelated', joinToken: 'unrelated' })));
+    await named.goto(url); await named.locator('.invite-card').waitFor();
+    await named.waitForURL(value => value.pathname === '/join/' + session.code && !value.search && !value.hash);
+    await mkdir('test-artifacts/ui', { recursive: true });
+    const screenPrefix = 'test-artifacts/ui/qr-welcome-' + browserEngine.name() + '-' + (process.env.FLASHVIEW_BACKEND ?? 'node');
+    await named.screenshot({ path: screenPrefix + '-desktop.png' });
+    assert.equal(hellos.length, 0, 'Scanning must not join before the name/skip choice');
+    assert.equal(await named.getByLabel('Your name (optional)').getAttribute('required'), null);
+    assert.equal(await named.getByRole('button', { name: 'Add files', exact: true }).count(), 0);
+    await named.getByLabel('Your name (optional)').fill('  Asha  ');
+    await named.getByLabel('Your name (optional)').press('Enter');
+    await named.locator('.student-add-fab:not([disabled])').waitFor();
+    assert.equal(hellos[0].name, 'Asha');
+    await named.locator('input[type=file]').setInputFiles({ name: 'named.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('named original') });
+    await host.locator('.document-row').filter({ hasText: 'named.bin' }).locator('.cache-ring.is-complete').waitFor();
+    assert.equal(await host.locator('.participant-row').filter({ hasText: 'Asha' }).count(), 1);
+    const resume = hellos[0].resumeToken;
+    await named.reload(); await named.locator('.student-add-fab:not([disabled])').waitFor();
+    assert.equal(await named.locator('.invite-card').count(), 0, 'Refresh must not repeat the choice');
+    assert.equal(hellos.at(-1)?.resumeToken, resume); assert.equal(hellos.at(-1)?.name, 'Asha');
+    await named.getByRole('button', { name: 'Leave room', exact: true }).click();
+    await named.locator('.welcome').waitFor();
+    assert.equal(await named.evaluate(() => history.state?.warpviewJoin), undefined, 'Leave clears the remembered invitation');
+    await skipped.setViewportSize({ width: 390, height: 844 });
+    await skipped.goto(url); await skipped.locator('.invite-card').waitFor();
+    await skipped.reload(); await skipped.locator('.invite-card').waitFor();
+    await skipped.screenshot({ path: screenPrefix + '-mobile.png' });
+    assert.equal(skippedHellos.length, 0, 'Refreshing an unchosen invitation must remain pending');
+    await skipped.getByLabel('Your name (optional)').fill('Do not use this name');
+    await skipped.getByRole('button', { name: 'Skip for now', exact: true }).click();
+    await skipped.locator('.student-add-fab:not([disabled])').waitFor();
+    assert.equal(skippedHellos[0].name, 'Student', 'Skip discards a partially entered name');
+    await skipped.locator('input[type=file]').setInputFiles({ name: 'skipped.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('anonymous original') });
+    await host.locator('.document-row').filter({ hasText: 'skipped.bin' }).locator('.cache-ring.is-complete').waitFor();
+    assert.equal(await host.locator('.participant-row').filter({ hasText: 'Student' }).count(), 1);
+    await legacy.goto(root + '/?join=' + encodeURIComponent(session.joinToken));
+    await legacy.locator('.invite-card').waitFor(); await legacy.getByRole('button', { name: 'Skip for now', exact: true }).click();
+    await legacy.locator('.student-add-fab:not([disabled])').waitFor();
+    await legacy.waitForURL(value => value.pathname === '/join/' + session.code && !value.search && !value.hash);
+    await host.getByRole('button', { name: 'End room', exact: true }).click(); await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click(); await host.locator('.welcome').waitFor();
+  } finally { await browser.close(); child.kill(); }
+});
+
 test('room cache identity: reused code cannot inherit bytes or previews and cleanup stays scoped', { timeout: 70000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
@@ -171,6 +230,7 @@ test('room cache identity: reused code cannot inherit bytes or previews and clea
       crypto.randomUUID = () => '12345678-1234-4234-8234-123456789abc';
     });
     await student.goto(root + '/?join=' + encodeURIComponent(session.joinToken));
+    await student.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await student.locator('.student-add-fab:not([disabled])').waitFor();
     await student.locator('input[type=file]').setInputFiles({ name: 'isolated.bin', mimeType: 'application/octet-stream', buffer: original });
     await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
@@ -241,6 +301,7 @@ test('room cache identity: legacy rooms keep original bytes when lease metadata 
     assert.equal(saved.cacheId, saved.code);
     const original = Buffer.from('Legacy original bytes must stay readable after upgrading room leases.');
     await student.goto(root + '/?join=' + encodeURIComponent(saved.joinToken));
+    await student.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await student.locator('.student-add-fab:not([disabled])').waitFor();
     await student.locator('input[type=file]').setInputFiles({ name: 'legacy.bin', mimeType: 'application/octet-stream', buffer: original });
     await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
@@ -425,6 +486,7 @@ test('room lifecycle: hidden host and visible presenter renew separately; bridge
     await host.locator('.connection.connected').waitFor();
     const invite = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken as string);
     await student.goto(root + '/?join=' + encodeURIComponent(invite));
+    await student.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await student.locator('.student-add-fab:not([disabled])').waitFor();
     await student.locator('input[type=file]').setInputFiles({ name: 'lease.pdf', mimeType: 'application/pdf', buffer: makePdf(1) });
     const card = host.locator('.document-row').filter({ hasText: 'lease.pdf' });
@@ -1548,6 +1610,7 @@ test('room engine: stale snapshots, pending approvals and foreign closure cannot
     await host.locator('.connection.connected').waitFor();
     const session = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
     await phone.goto(root + '/?join=' + encodeURIComponent(session.joinToken));
+    await phone.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await phone.getByText('Waiting to join', { exact: true }).waitFor();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
     await phone.locator('.student-add-fab:not([disabled])').waitFor();
@@ -1623,6 +1686,7 @@ test('transfer worker: UI stalls preserve exact originals; Chromium receipt rema
     await host.locator('.connection.connected').waitFor();
     const saved = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
     await phone.goto(root + '/?join=' + encodeURIComponent(saved.joinToken));
+    await phone.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await phone.locator('.student-add-fab:not([disabled])').waitFor();
     await observer.goto(root);
     assert.equal(await observer.evaluate(() => sessionStorage.getItem('flashview-host')), null);
@@ -1705,6 +1769,7 @@ test('transfer worker: sender and receiver crashes resume the same private origi
     await host.locator('.connection.connected').waitFor();
     const saved = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
     await phone.goto(root + '/?join=' + encodeURIComponent(saved.joinToken));
+    await phone.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await phone.locator('.student-add-fab:not([disabled])').waitFor();
     await phone.locator('input[type=file]').setInputFiles({ name: 'restartable.bin', mimeType: 'application/octet-stream', buffer: original });
     await host.waitForFunction(() => Number(document.querySelector('.cache-ring')?.getAttribute('aria-valuenow')) >= 5);
@@ -1756,7 +1821,8 @@ test('transfer worker: Stop cancels held ranges and ignores late original reads 
     await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click();
     await host.locator('.connection.connected').waitFor();
     const token = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken);
-    await phone.goto(root + '/?join=' + encodeURIComponent(token)); await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    await phone.goto(root + '/?join=' + encodeURIComponent(token));
+    await phone.getByRole('button', { name: 'Skip for now', exact: true }).click(); await phone.locator('.student-add-fab:not([disabled])').waitFor();
     const healthy = Buffer.alloc(768 * 1024 + 7, 31);
     await phone.locator('input[type=file]').setInputFiles([
       { name: 'held-original.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2 * 1024 * 1024, 17) },
@@ -1802,7 +1868,8 @@ test('transfer worker: offline Stop retires source bytes and is replayed after p
     const root = remote ? new URL(remote).origin : 'http://127.0.0.1:' + port;
     await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click(); await host.locator('.connection.connected').waitFor();
     const token = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken);
-    await phone.goto(root + '/?join=' + encodeURIComponent(token)); await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    await phone.goto(root + '/?join=' + encodeURIComponent(token));
+    await phone.getByRole('button', { name: 'Skip for now', exact: true }).click(); await phone.locator('.student-add-fab:not([disabled])').waitFor();
     await phone.locator('input[type=file]').setInputFiles({ name: 'offline-stop.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2 * 1024 * 1024, 47) });
     await transferWait(phone, 'window.__offlineReads.length > 0');
     await phone.context().setOffline(true);
@@ -1903,15 +1970,14 @@ test('network packet sizes 128/256 KiB preserve exact original PDF bytes in 64 K
 
 
 
-test('QR joins open the upload workspace immediately; leaving or ending a room returns to a clean homepage', {timeout: 100000}, async () => {
+test('QR joins open the upload workspace after the name choice; leaving or ending returns to a clean homepage', {timeout: 100000}, async () => {
   const {port,child}=await runningServer();
   const browser=await browserEngine.launch({headless:true});
   const host=await browser.newPage();
   const student=await browser.newPage({viewport:{width:390,height:820}});
   const root='http://127.0.0.1:'+port;
   try {
-    // Capture a flash even if the server accepts before Playwright evaluates
-    // the page; a MutationObserver sees every mounted join-form panel.
+    // The QR name choice must never flash the manual room-code form.
     await student.addInitScript(() => {
       const scoped=window as typeof window & {__sawQrJoinForm?:boolean};
       scoped.__sawQrJoinForm=false;
@@ -1930,6 +1996,7 @@ test('QR joins open the upload workspace immediately; leaving or ending a room r
     assert.ok(invite.length >= 20,'QR link must include an authorized invite token');
 
     await student.goto(root+'/?join='+encodeURIComponent(invite));
+    await student.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await student.locator('.student-drive').waitFor();
     assert.equal(await student.locator('.student-screen .room-entry').count(),0,
       'QR links must never render the manual room-code form');
@@ -2538,6 +2605,7 @@ test('connection guard: admission retry delay retains selected bytes and clears 
       };
     }`);
     await phone.goto(root + '/?join=' + encodeURIComponent(token));
+    await phone.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await phone.getByRole('alert').getByText(/Your files are kept/).waitFor();
     const original = Buffer.alloc(768 * 1024 + 7, 61);
     await phone.locator('input[type=file]').setInputFiles({ name: 'retained-during-wait.bin', mimeType: 'application/octet-stream', buffer: original });
@@ -2586,6 +2654,7 @@ test('room admission: capacity denial stops replay, releases local slots and pre
     await host.locator('.connection.connected').waitFor();
     const session = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
     await phone.goto(root + '/?join=' + encodeURIComponent(session.joinToken));
+    await phone.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await phone.locator('.student-add-fab:not([disabled])').waitFor();
     const original = Buffer.alloc(4096, 73);
     await phone.locator('input[type=file]').setInputFiles({ name: 'already-received.bin', mimeType: 'application/octet-stream', buffer: original });

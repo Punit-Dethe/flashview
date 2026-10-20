@@ -22,6 +22,10 @@ This document describes **current boundaries and recovery behavior**, not a secu
 2. **In flight:** Bytes travel as bounded WebSocket binary frames through the relay, which need not store whole files.
 3. **Receiver:** IndexedDB database `flashview-room-cache` stores 64 KiB chunks indexed by room/document, optional JPEG previews and local room-expiry data. A bounded memory LRU accelerates reads.
 4. **Metadata:** Node uses an in-memory room map. Cloudflare Durable Objects persist **room, session, file manifests and completion metadata** to survive hibernation. This is *not* persistent original-file storage.
+   Shared room revisions, private sessions, file metadata and the admission
+   window now save atomically through an ordered metadata queue. Client
+   snapshots are generation-scoped and stale lists/terminal notices are rejected.
+   A pending participant can sync only their own metadata and approval state.
    Creation protection also keeps a counter/reset time under a hashed source
    address key for its one-hour window, independently of End room. Cleanup is
    scheduled at window expiry; an expired counter is ignored on reuse. The

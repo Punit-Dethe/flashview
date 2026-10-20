@@ -1,10 +1,11 @@
 import { DurableObject } from 'cloudflare:workers';
 import { checkCreationPermit } from './creationPermit';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity';
-import { admitSender } from '../shared/roomAdmission';
-import { RoomFileEngine, persistRoomFiles, type FileTransition } from '../shared/roomFileEngine';
-import { AUTH_TIMEOUT_MS, MAX_PENDING_ROOM, MAX_ROOM_SOCKETS, CREATION_LIMIT, CREATION_WINDOW_MS, JOIN_LIMIT, JOIN_WINDOW_MS,
-  consumeWindow, nextRoomAlarm, retryAfterSeconds, JOIN_RATE_MESSAGE, type RateWindow } from '../shared/connectionGuards';
+import { RoomEngine, type ResumeSession } from '../shared/roomEngine';
+import { versionedMetadata } from '../shared/roomVersion';
+import type { FileTransition } from '../shared/roomFileEngine';
+import { AUTH_TIMEOUT_MS, MAX_PENDING_ROOM, MAX_ROOM_SOCKETS, CREATION_LIMIT, CREATION_WINDOW_MS,
+  consumeWindow, nextRoomAlarm, retryAfterSeconds, type RateWindow } from '../shared/connectionGuards';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
@@ -22,7 +23,6 @@ type Role = 'host' | 'student' | null;
 interface Peer { id: string; role: Role; name: string; approved: boolean; authDeadline?: number }
 interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; lastActivityAt?: number; autoApprove?: boolean;
   roomGeneration?: string; leaseToken?: string; cacheVersion?: 2 }
-interface ResumeSession { id: string; name: string; approved: boolean; token: string }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
 const OPEN = 1;
 function token(size = 24): string {
@@ -52,10 +52,9 @@ function json(value: unknown, status = 200): Response {
 export class ClassroomRoom extends DurableObject<Env> {
   private peers = new Map<WebSocket, Peer>();
   private config: RoomConfig | null = null;
-  private fileState = new RoomFileEngine();
+  private engine = new RoomEngine();
+  private get fileState() { return this.engine.fileState; }
   private get files(): ReadonlyMap<string, PdfManifest> { return this.fileState.files; }
-  private sessions = new Map<string, ResumeSession>();
-  private joinWindow: RateWindow | null = null;
   private creationWindow: RateWindow | null = null;
   // Deliberately volatile: a hibernation race is retried by the client's range timeout.
   private ranges = new Map<string, RangeRequest>();
@@ -76,11 +75,19 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
     ctx.blockConcurrencyWhile(async () => {
       this.config = await ctx.storage.get<RoomConfig>('config') ?? null;
-      const stored = await ctx.storage.get<PdfManifest[]>('files') ?? [];
-      this.fileState = new RoomFileEngine(stored);
-      const sessions = await ctx.storage.get<ResumeSession[]>('sessions') ?? [];
-      this.sessions = new Map(sessions.map(session => [session.token, session]));
-      this.joinWindow = await ctx.storage.get<RateWindow>('joinWindow') ?? null;
+      const metadata = await ctx.storage.get<unknown>(['files', 'sessions', 'joinWindow', 'roomRevision']);
+      this.engine = new RoomEngine({ files: metadata.get('files') as PdfManifest[] | undefined,
+        sessions: metadata.get('sessions') as ResumeSession[] | undefined,
+        joinWindow: metadata.get('joinWindow') as RateWindow | undefined,
+        roomRevision: metadata.get('roomRevision') as number | undefined });
+      for (const [ws, peer] of this.peers) {
+        if (peer.role === 'host') this.engine.restoreHost(ws);
+        if (peer.role === 'student') {
+          const participant = this.engine.restoreParticipant(ws, peer.id);
+          if (participant) this.putPeer(ws, { ...peer, name: participant.name, approved: participant.approved });
+          else { this.peers.delete(ws); ws.serializeAttachment(null); try { ws.close(4000, 'Session not restored'); } catch {} }
+        }
+      }
       this.creationWindow = await ctx.storage.get<RateWindow>('creationWindow') ?? null;
       // Never postpone an already-due alarm when recovering from hibernation.
       if (this.config && upgradedPending) {
@@ -93,46 +100,49 @@ export class ClassroomRoom extends DurableObject<Env> {
 
   private get host(): WebSocket | null {
     for (const [ws, peer] of this.peers) {
-      if (peer.role === 'host' && ws.readyState === OPEN) return ws;
+      if (peer.role === 'host' && ws.readyState === OPEN && this.engine.isHost(ws)) return ws;
     }
     return null;
   }
   private student(id: string): { ws: WebSocket; peer: Peer } | null {
     for (const [ws, peer] of this.peers)
-      if (peer.role === 'student' && peer.id === id && ws.readyState === OPEN)
+      if (peer.role === 'student' && peer.id === id && ws.readyState === OPEN && this.engine.participant(id)?.connection === ws)
         return { ws, peer };
     return null;
   }
   private students(): StudentInfo[] {
-    return [...this.peers.values()]
-      .filter(p => p.role === 'student')
-      .map(p => ({ id: p.id, name: p.name, approved: p.approved }));
+    return this.engine.students();
   }
-  private sendHost(message: Record<string, unknown>): void { send(this.host, message); }
+  private sendPeer(ws: WebSocket | null, message: Record<string, unknown>): void {
+    send(ws, { ...message, ...(this.config && versionedMetadata(message.type)
+      ? { roomGeneration: this.config.roomGeneration, roomRevision: this.engine.revision } : {}) });
+  }
+  private sendHost(message: Record<string, unknown>): void { this.sendPeer(this.host, message); }
+
   private putPeer(ws: WebSocket, peer: Peer): void {
     this.peers.set(ws, peer);
     ws.serializeAttachment(peer);
   }
-  private async commitFiles(changes: FileTransition[], actor?: WebSocket, includeSessions = false): Promise<void> {
-    const engine = this.fileState, config = this.config;
-    await persistRoomFiles(engine, files => includeSessions
-      ? this.ctx.storage.put({ files, sessions: [...this.sessions.values()], joinWindow: this.joinWindow })
-      : this.ctx.storage.put('files', files), includeSessions);
-    if (this.fileState !== engine || this.config !== config || !config) return;
-    for (const change of changes) for (const effect of engine.effects(change)) {
+  private async commitFiles(changes: FileTransition[], actor?: WebSocket): Promise<void> {
+    const engine = this.engine, config = this.config;
+    if (!config) return;
+    do {
+      await engine.persist(snapshot => this.engine !== engine || this.config !== config ? Promise.resolve() :
+        this.ctx.storage.put({ files: snapshot.files, sessions: snapshot.sessions,
+          joinWindow: snapshot.joinWindow, roomRevision: snapshot.roomRevision }));
+    } while (this.engine === engine && this.config === config && engine.needsPersistence);
+    if (this.engine !== engine || this.config !== config || !config) return;
+    for (const change of changes) for (const effect of engine.fileState.effects(change)) {
       if (effect.to === 'host') this.sendHost(effect.message);
       else if (effect.to === 'owner') {
         const owner = this.student(effect.ownerId!);
-        if (owner?.peer.approved) send(owner.ws, effect.message);
+        if (owner?.peer.approved) this.sendPeer(owner.ws, effect.message);
       } else if (actor) {
         const peer = this.peers.get(actor);
         if (peer?.role === 'host' ? this.host === actor :
-            peer?.role === 'student' && this.student(peer.id)?.ws === actor) send(actor, effect.message);
+            peer?.role === 'student' && this.student(peer.id)?.ws === actor) this.sendPeer(actor, effect.message);
       }
     }
-  }
-  private async persistSessions(): Promise<void> {
-    await this.ctx.storage.put({ sessions: [...this.sessions.values()], joinWindow: this.joinWindow });
   }
   private nextAlarm(): number {
     const expires = this.config ? roomExpiresAt(this.config.created, this.config.lastActivityAt) : Date.now();
@@ -148,7 +158,7 @@ export class ClassroomRoom extends DurableObject<Env> {
   }
   private rejectAuthentication(ws: WebSocket, message: string): void {
     this.peers.delete(ws); ws.serializeAttachment(null);
-    try { send(ws, { type: 'error', message }); } catch { /* Already closing. */ }
+    try { this.sendPeer(ws, { type: 'error', message }); } catch { /* Already closing. */ }
     try { ws.close(1008, 'Authentication failed'); } catch { /* Already closed. */ }
   }
   private expirePending(now: number): void {
@@ -159,19 +169,18 @@ export class ClassroomRoom extends DurableObject<Env> {
   private async terminate(): Promise<void> {
     // Commit termination before announcing it. A lost response can be retried
     // against this generation without resurrecting it or ending a reused code.
+    const roomGeneration = this.config?.roomGeneration;
     await this.ctx.storage.deleteAll();
     this.config = null;
     const sockets = [...this.peers.keys()];
     this.peers.clear();
-    this.fileState.clear();
-    this.sessions.clear();
-    this.joinWindow = null;
+    this.engine.clear();
     this.ranges.clear();
     for (const ws of sockets) {
       ws.serializeAttachment(null);
       // Committed closure must not become a failed command because one peer's
       // transport was already closing or failed to accept its final notice.
-      try { send(ws, { type: 'room.closed' }); } catch { /* Best-effort notice. */ }
+      try { this.sendPeer(ws, { type: 'room.closed', roomGeneration, roomRevision: this.engine.revision }); } catch { /* Best-effort notice. */ }
       try { ws.close(1000, 'Classroom ended'); } catch { /* Already closing. */ }
     }
   }
@@ -220,8 +229,7 @@ export class ClassroomRoom extends DurableObject<Env> {
         if (!this.expired()) return new Response('Room code in use', { status: 409 });
         if (this.config) await this.terminate();
         const created = Date.now();
-        this.fileState = new RoomFileEngine();
-        this.joinWindow = null;
+        this.engine = new RoomEngine();
         this.config = {
           code: incoming.code!, hostToken: incoming.hostToken!, joinToken: incoming.joinToken!, created,
           lastActivityAt: created, autoApprove: incoming.autoApprove === true,
@@ -292,6 +300,7 @@ export class ClassroomRoom extends DurableObject<Env> {
           other.close(4000, 'Host reconnected');
         }
       }
+      this.engine.connectHost(ws);
       this.putPeer(ws, { ...peer, role: 'host', name: 'Host', approved: true });
       if (!cfg.roomGeneration || !cfg.leaseToken) {
         cfg.roomGeneration ??= crypto.randomUUID();
@@ -306,7 +315,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       this.ranges.clear();
       await this.commitFiles([]);
       if (this.config !== cfg || this.host !== ws) return;
-      send(ws, {
+      this.sendPeer(ws, {
         type: 'room.state', id: cfg.code, code: cfg.code, joinToken: cfg.joinToken,
         roomGeneration: cfg.roomGeneration, leaseToken: cfg.leaseToken,
         cacheId: roomCacheIdentity(cfg),
@@ -314,84 +323,41 @@ export class ClassroomRoom extends DurableObject<Env> {
         autoApprove: cfg.autoApprove === true,
       });
       for (const [studentSocket, student] of this.peers)
-        if (student.role === 'student') send(studentSocket, { type: 'host.online' });
+        if (student.role === 'student') this.sendPeer(studentSocket, { type: 'host.online' });
       return;
     }
     if (msg.role === 'student') {
       if (msg.code !== cfg.code && msg.joinToken !== cfg.joinToken) {
         return void this.rejectAuthentication(ws, 'Room not found');
       }
-      const previous = typeof msg.resumeToken === 'string' ? this.sessions.get(msg.resumeToken) : undefined;
-      const admission = admitSender(this.students().length, this.sessions.size, Boolean(previous),
-        Boolean(previous && [...this.peers.values()].some(p => p.role === 'student' && p.id === previous.id)));
-      if (admission.kind === 'rejected') {
-        this.peers.delete(ws);
-        ws.serializeAttachment(null);
-        send(ws, { type: admission.retryable ? 'error' : 'join.rejected', code: admission.code,
-          message: admission.message, retryable: admission.retryable });
-        ws.close(1008, 'Room admission limit');
-        return;
-      }
-      if (previous) {
-        // The resume token only exists in this page's memory. Never send it to the teacher.
-        for (const [other, active] of this.peers) {
-          if (other !== ws && active.role === 'student' && active.id === previous.id) {
-            this.peers.delete(other);
-            other.serializeAttachment(null);
-            if (other.readyState === OPEN) other.close(4000, 'Session resumed on another socket');
-          }
-        }
-        this.putPeer(ws, {
-          ...peer, id: previous.id, role: 'student', name: previous.name, approved: previous.approved,
-        });
-        await this.commitFiles(this.fileState.ownerStatus(previous.id, 'resume', previous.approved));
-        if (this.config !== cfg || this.peers.get(ws)?.id !== previous.id) return;
-        const ownFiles = [...this.files.values()].filter(file => file.ownerId === previous.id);
-        send(ws, {
-          type: previous.approved ? 'join.resumed' : 'join.pending',
-          roomCode: cfg.code, resumeToken: previous.token, files: ownFiles,
-        });
-        if (!this.host) send(ws, { type: 'host.offline' });
-        // Recover requests sent into the previous half-open phone socket.
-        // Keep IDs/deadlines: duplicate or late responses remain harmless.
-        for (const [requestId, range] of this.ranges) {
-          if (range.senderId === previous.id && this.files.get(range.fileId)?.status === 'approved')
-            send(ws, { type: 'range.request', requestId, fileId: range.fileId, begin: range.begin, end: range.end });
-        }
-        this.sendHost({
-          type: 'student.updated',
-          student: { id: previous.id, name: previous.name, approved: previous.approved },
-        });
-        return;
-      }
-      if (!this.host) return void this.rejectAuthentication(ws, 'The host is offline');
-      const rate = consumeWindow(this.joinWindow, JOIN_LIMIT, JOIN_WINDOW_MS, Date.now());
-      if (!rate.allowed) {
+      const joined = this.engine.join({ connection: ws, id: peer.id, name: msg.name, resumeToken: msg.resumeToken,
+        newToken: token(32), autoApprove: cfg.autoApprove === true, hostOnline: !!this.host, now: Date.now() });
+      if (joined.kind === 'rejected') {
+        if (joined.code === 'HOST_OFFLINE') { this.rejectAuthentication(ws, joined.message); return; }
         this.peers.delete(ws); ws.serializeAttachment(null);
-        send(ws, { type: 'error', code: 'JOIN_RATE_LIMIT', retryable: true,
-          retryAfterMs: rate.retryAfterMs, message: JOIN_RATE_MESSAGE });
-        ws.close(1008, 'Join rate limit'); return;
+        this.sendPeer(ws, { type: joined.retryable ? 'error' : 'join.rejected', code: joined.code,
+          message: joined.message, retryable: joined.retryable, retryAfterMs: joined.retryAfterMs });
+        ws.close(1008, 'Room admission limit'); return;
       }
-      this.joinWindow = rate.window;
-      const approved = cfg.autoApprove === true;
-      const newSession: ResumeSession = {
-        id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved,
-        token: typeof msg.resumeToken === 'string' && /^[a-f0-9]{64}$/.test(msg.resumeToken)
-          ? msg.resumeToken : token(32),
-      };
-      this.sessions.set(newSession.token, newSession);
-      // Reserve the active place before persistence yields; a simultaneous
-      // hello must count it, and a takeover must be able to retire this socket.
-      const admittedPeer = { ...peer, role: 'student' as const, name: newSession.name, approved };
-      this.putPeer(ws, admittedPeer);
-      await this.persistSessions();
-      if (this.peers.get(ws) !== admittedPeer) return;
-      send(ws, { type: approved ? 'join.accepted' : 'join.pending',
-        roomCode: cfg.code, resumeToken: newSession.token });
-      this.sendHost({
-        type: approved ? 'student.updated' : 'student.pending',
-        student: { id: peer.id, name: newSession.name, approved },
-      });
+      if (joined.displaced) {
+        const old = joined.displaced as WebSocket;
+        this.peers.delete(old); old.serializeAttachment(null);
+        if (old.readyState === OPEN) old.close(4000, 'Session resumed on another socket');
+      }
+      const participant = joined.participant;
+      this.putPeer(ws, { ...peer, id: participant.id, role: 'student', name: participant.name, approved: participant.approved });
+      await this.commitFiles(joined.changes);
+      if (this.config !== cfg || !this.engine.isCurrent(participant)) return;
+      this.sendPeer(ws, { type: participant.approved ? (joined.resumed ? 'join.resumed' : 'join.accepted') : 'join.pending',
+        roomCode: cfg.code, resumeToken: participant.token,
+        ...(joined.resumed ? { files: [...this.files.values()].filter(file => file.ownerId === participant.id) } : {}) });
+      if (joined.resumed && !this.host) this.sendPeer(ws, { type: 'host.offline' });
+      if (joined.resumed) for (const [requestId, range] of this.ranges) {
+        if (range.senderId === participant.id && this.files.get(range.fileId)?.status === 'approved')
+          this.sendPeer(ws, { type: 'range.request', requestId, fileId: range.fileId, begin: range.begin, end: range.end });
+      }
+      this.sendHost({ type: joined.resumed || participant.approved ? 'student.updated' : 'student.pending',
+        student: { id: participant.id, name: participant.name, approved: participant.approved } });
       return;
     }
     this.rejectAuthentication(ws, 'Invalid role');
@@ -420,13 +386,13 @@ export class ClassroomRoom extends DurableObject<Env> {
           try {
             host.send(message);
           } catch {
-            send(host, { type: 'range.error', requestId: header.requestId,
+            this.sendPeer(host, { type: 'range.error', requestId: header.requestId,
               message: 'Receiver relay is temporarily overloaded' });
           }
         } else {
           // Never silently lose a response: the existing receiver backoff
           // retries this *same original file range*. The relay stores no bytes.
-          send(host, { type: 'range.error', requestId: header.requestId,
+          this.sendPeer(host, { type: 'range.error', requestId: header.requestId,
             message: 'Receiver relay is temporarily overloaded' });
         }
       } catch { /* Ignore invalid binary frames and do not log user data. */ }
@@ -434,7 +400,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
     if (message.length > 8192) {
       if (peer.role === null) this.rejectAuthentication(ws, 'Message too large');
-      else send(ws, { type: 'error', message: 'Message too large' });
+      else this.sendPeer(ws, { type: 'error', message: 'Message too large' });
       return;
     }
     let msg: Record<string, unknown>;
@@ -444,11 +410,11 @@ export class ClassroomRoom extends DurableObject<Env> {
       msg = value as Record<string, unknown>;
     } catch {
       if (peer.role === null) this.rejectAuthentication(ws, 'Invalid message');
-      else send(ws, { type: 'error', message: 'Invalid message' });
+      else this.sendPeer(ws, { type: 'error', message: 'Invalid message' });
       return;
     }
     if (msg.type === 'hello') {
-      if (peer.role !== null) return void send(ws, { type: 'error', message: 'Already authenticated' });
+      if (peer.role !== null) return void this.sendPeer(ws, { type: 'error', message: 'Already authenticated' });
       await this.authenticate(ws, peer, msg);
       return;
     }
@@ -457,16 +423,16 @@ export class ClassroomRoom extends DurableObject<Env> {
       await this.touchHostActivity();
       if (this.peers.get(ws) !== peer) return;
     }
-    if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
+    if (msg.type === 'heartbeat.ping') return void this.sendPeer(ws, { type: 'heartbeat.pong' });
     if ((msg.type === 'room.sync' && peer.role === 'host') ||
-        (msg.type === 'file.sync' && peer.role === 'student' && peer.approved)) {
+        (msg.type === 'file.sync' && peer.role === 'student')) {
       const config = this.config;
-      if (this.fileState.needsPersistence) await this.commitFiles([]);
+      if (this.engine.needsPersistence) await this.commitFiles([]);
       if (this.config !== config || this.peers.get(ws) !== peer) return;
     }
     // The database-backed manifest is authoritative, not best-effort live notifications.
     if (msg.type === 'room.sync' && peer.role === 'host') {
-      return void send(ws, {
+      return void this.sendPeer(ws, {
         type: 'room.state', id: this.config?.code, code: this.config?.code,
         joinToken: this.config?.joinToken, students: this.students(),
         roomGeneration: this.config?.roomGeneration, leaseToken: this.config?.leaseToken,
@@ -474,9 +440,9 @@ export class ClassroomRoom extends DurableObject<Env> {
         files: [...this.files.values()],
       });
     }
-    if (msg.type === 'file.sync' && peer.role === 'student' && peer.approved) {
-      send(ws, {
-        type: 'file.manifest',
+    if (msg.type === 'file.sync' && peer.role === 'student') {
+      this.sendPeer(ws, {
+        type: 'file.manifest', approved: peer.approved, roomCode: this.config?.code, hostOnline: !!this.host,
         files: [...this.files.values()].filter(file => file.ownerId === peer.id),
       });
       return;
@@ -489,35 +455,26 @@ export class ClassroomRoom extends DurableObject<Env> {
         return;
       }
       if ((msg.type === 'student.accept' || msg.type === 'student.reject') && typeof msg.studentId === 'string') {
-        const student = this.student(msg.studentId);
-        if (student) {
-          if (msg.type === 'student.accept') {
-            student.peer.approved = true;
-            this.putPeer(student.ws, student.peer);
-            const changes = this.fileState.ownerStatus(student.peer.id, 'approve');
-            const session = [...this.sessions.values()].find(record => record.id === student.peer.id);
-            if (session) session.approved = true;
-            // Reserve approval synchronously and commit session/file metadata together.
-            const config = this.config;
-            await this.commitFiles(changes, undefined, true);
-            const current = this.student(student.peer.id);
-            if (this.config !== config || !current?.peer.approved ||
-                !session || this.sessions.get(session.token) !== session) return;
-            send(current.ws, {
-              type: 'join.accepted', roomCode: this.config?.code, resumeToken: session?.token,
-            });
-            this.sendHost({ type: 'student.updated', student: { id: current.peer.id, name: current.peer.name, approved: true } });
-          } else {
-            const session = [...this.sessions.values()].find(record => record.id === student.peer.id);
-            if (session) this.sessions.delete(session.token);
-            // removePeer retires the peer synchronously before its first
-            // storage await. Clear hibernation authority at the same boundary.
-            const disconnected = this.removePeer(student.ws);
-            student.ws.serializeAttachment(null);
-            await Promise.all([disconnected, this.persistSessions()]);
-            send(student.ws, { type: 'join.rejected' });
-            student.ws.close(1008, 'Rejected');
+        const config = this.config, student = this.student(msg.studentId);
+        if (msg.type === 'student.accept') {
+          const result = this.engine.approve(msg.studentId);
+          if (!result || !student) return;
+          this.putPeer(student.ws, { ...student.peer, approved: true });
+          await this.commitFiles(result.changes);
+          if (this.config !== config || !this.engine.isCurrent(result.participant)) return;
+          this.sendPeer(student.ws, { type: 'join.accepted', roomCode: config?.code, resumeToken: result.participant.token });
+          this.sendHost({ type: 'student.updated', student: { id: result.participant.id, name: result.participant.name, approved: true } });
+        } else {
+          const result = this.engine.reject(msg.studentId);
+          if (!result) return;
+          if (student) { this.peers.delete(student.ws); student.ws.serializeAttachment(null); }
+          for (const [id, range] of this.ranges) if (range.senderId === msg.studentId) {
+            this.ranges.delete(id); this.sendHost({ type: 'range.error', requestId: id, message: 'Sender disconnected' });
           }
+          await this.commitFiles(result.changes);
+          if (this.config !== config) return;
+          if (!this.engine.participant(msg.studentId)) this.sendHost({ type: 'student.left', id: msg.studentId });
+          if (student) { this.sendPeer(student.ws, { type: 'join.rejected' }); student.ws.close(1008, 'Rejected'); }
         }
       } else if (msg.type === 'range.request') {
         // Critical ordering: expired requests must be removed *before* the
@@ -533,18 +490,18 @@ export class ClassroomRoom extends DurableObject<Env> {
             !Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
             Number(begin) < 0 || Number(end) <= Number(begin) || Number(end) > file.size ||
             Number(end) - Number(begin) > MAX_RANGE_BYTES || this.ranges.size >= 48) {
-          return void send(ws, { type: 'range.error', requestId, message: 'Invalid or unavailable file range' });
+          return void this.sendPeer(ws, { type: 'range.error', requestId, message: 'Invalid or unavailable file range' });
         }
         const student = this.student(file.ownerId);
         if (!student || !student.peer.approved) {
-          return void send(ws, { type: 'range.error', requestId, message: 'Sender is offline' });
+          return void this.sendPeer(ws, { type: 'range.error', requestId, message: 'Sender is offline' });
         }
         if (this.ranges.has(requestId)) return;
         this.ranges.set(requestId, {
           fileId: file.fileId, senderId: student.peer.id,
           begin: Number(begin), end: Number(end), created: Date.now(),
         });
-        send(student.ws, { type: 'range.request', requestId, fileId: file.fileId, begin, end });
+        this.sendPeer(student.ws, { type: 'range.request', requestId, fileId: file.fileId, begin, end });
       } else if (msg.type === 'range.cancel' && typeof msg.requestId === 'string') {
         this.ranges.delete(msg.requestId);
       } else if (msg.type === 'room.end') {
@@ -553,7 +510,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       return;
     }
 
-    if (!peer.approved) return void send(ws, { type: 'error', message: 'Waiting for teacher approval' });
+    if (!peer.approved) return void this.sendPeer(ws, { type: 'error', message: 'Waiting for teacher approval' });
     if (msg.type === 'preview.chunk') {
       const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
       if (!file || file.ownerId !== peer.id || file.status !== 'approved' ||
@@ -570,7 +527,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
     if (msg.type === 'file.offer') {
       const result = this.fileState.offer(peer, msg);
-      if (result.kind === 'rejected') return void send(ws, {
+      if (result.kind === 'rejected') return void this.sendPeer(ws, {
         type: 'file.rejected', fileId: msg.fileId, code: result.code, message: result.message,
       });
       await this.commitFiles([result], ws);
@@ -602,25 +559,20 @@ export class ClassroomRoom extends DurableObject<Env> {
       // Old socket's close event arrived after a successful session resume.
       return;
     }
+    const config = this.config;
     if (peer.role === 'host') {
-      // Host handover closes the old socket after its replacement authenticates.
-      // Do not tell phones the room is offline when that OLD socket closes.
-      if (!this.host) {
-        for (const [other, student] of this.peers)
-          if (student.role === 'student') send(other, { type: 'host.offline' });
-      }
+      if (!this.engine.disconnectHost(ws)) return;
+      await this.commitFiles([]);
+      if (this.config === config && !this.host) for (const [other, student] of this.peers)
+        if (student.role === 'student') this.sendPeer(other, { type: 'host.offline' });
     } else if (peer.role === 'student') {
-      const config = this.config;
-      const changes = this.fileState.ownerStatus(peer.id, 'disconnect');
-      for (const [id, req] of this.ranges) {
-        if (req.senderId === peer.id) {
-          this.ranges.delete(id);
-          this.sendHost({ type: 'range.error', requestId: id, message: 'Sender disconnected' });
-        }
+      const departure = this.engine.disconnect(peer.id, ws);
+      if (!departure) return;
+      for (const [id, req] of this.ranges) if (req.senderId === peer.id) {
+        this.ranges.delete(id); this.sendHost({ type: 'range.error', requestId: id, message: 'Sender disconnected' });
       }
-      await this.commitFiles(changes);
-      // A returning private identity may already have replaced this disconnect.
-      if (this.config !== config || this.student(peer.id)) return;
+      await this.commitFiles(departure.changes);
+      if (this.config !== config || this.engine.participant(peer.id)) return;
       this.sendHost({ type: 'student.left', id: peer.id });
     }
   }

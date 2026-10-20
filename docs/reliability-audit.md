@@ -323,6 +323,36 @@ The shared checkpoint tests deliberately model failure without that automatic
 reset. They make the engine's adapter contract explicit; they do not prove the
 deployed runtime previously acknowledged failed disk writes.
 
+## 20 October room metadata engine integration (in progress)
+
+PR #44's full CI passed. This finishes the planned shared metadata-engine
+implementation on the integration line; the original 9/3/18 counts remain
+unchanged until appropriately verified fixes merge.
+
+| New ID | Status | Problem / correction | Evidence |
+| --- | --- | --- | --- |
+| N31 | **In progress** | Participant admission, capability ownership, names, approval/rejection and host presence were still duplicated between adapters. Shared `RoomEngine` now owns these transitions, including retiring an offline capability without deleting retained originals. | Unit cases cover immutable pending/approval results, private takeover, obsolete disconnects, join quota after rejection, host absence, end and offline rejection. Matching relay contracts check pending-private snapshots and ensure a retired capability cannot regain old file ownership. Existing capacity, Stop and byte-forwarding contracts remain. |
+| N32 | **In progress** | File-only saves could not express one ordered checkpoint for session, file, quota and room-revision state. | One serialized/coalescing queue atomically saves existing `files`, `sessions`, `joinWindow` plus additive `roomRevision`. Failed writes stay retryable; queued saves cannot recreate an ended room. Restore active authority from trusted attachments plus durable sessions. Fault tests hold/fail saves and race End; the Cloudflare contract restarts with a persisted room revision and verifies it advances on host return. Default platform storage gates remain enabled. |
+| N33 | **In progress** | Clients had no room-wide stale-snapshot guard; replaying an older list or pending approval could replace current UI state. Terminal notices could stop recovery before the UI checked generation. | Generation-scoped room revisions reject older metadata, preserve equal-revision effects, request private resync and leave same-generation host capability negotiation intact. Pending snapshots include only own files/approval/host status. Socket rejects foreign/old terminal notices before stopping. The browser injects old room/pending snapshots plus a foreign closure, verifies the cached row never disappears, preserves cache identity and exports the exact original on Node/Cloudflare/Firefox. |
+
+110 unit/protocol cases passed, including 19 Node contracts; a fresh complete
+Cloudflare contract run also passed 19/19.
+Full Chromium suites passed 31/31 on each backend and 10 targeted Firefox cases
+passed. Build/TypeScript and Worker dry-run passed. An initial Cloudflare
+new-join-rate wait timed out during a run concurrent with an asset build; the
+isolated and subsequent full 18-case runs passed, followed by the new 19th
+contract and strengthened revision-restoration case. The cause of that initial
+timeout is unconfirmed; it is not silently counted as a passing run.
+Fresh-suite, speed and public release evidence are recorded in
+[shared room engine validation](./shared-room-engine-validation.md) and the PR.
+
+This does not migrate byte routing, packet sizes, scheduling, browser storage or
+viewers. Node retains process-local metadata. Legacy unstamped peers remain
+compatible without the new ordering guarantee. End-to-end worker/OPFS transfer
+isolation, content hashes, completed-file readers/viewers, campus/device proof
+and broader operational abuse controls remain later work. R2 and personal
+multi-gigabyte mode remain deferred; the 200 MiB cap is unchanged.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

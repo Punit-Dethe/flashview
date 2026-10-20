@@ -42,6 +42,8 @@ Sender browser(s)                       Relay                         Host brows
 | Cloudflare relay | [`src/cloudflare/index.ts`](../src/cloudflare/index.ts) | Worker routes, per-room Durable Object, hibernation and room metadata |
 | Shared contracts | [`src/shared/`](../src/shared/) | File manifests, binary encoding, limits, liveness and backpressure |
 | File metadata engine | [`roomFileEngine.ts`](../src/shared/roomFileEngine.ts) | Offers, terminal Stop, approval/reconnect/disconnect, completion/reset, immutable results, file revisions and persistence checkpoints; no byte packets or renderer work |
+| Room metadata engine | [`roomEngine.ts`](../src/shared/roomEngine.ts) | Shared participant/host authority, private takeover, room revisions, and serialized atomic metadata saves |
+| Client snapshot cursor | [`roomRevision.ts`](../src/client/roomRevision.ts) | Generation-scoped metadata ordering, equal-version effects, stale snapshot rejection and private resync |
 
 ## A file's journey
 
@@ -118,9 +120,22 @@ identity and the chunk schema are unchanged.
 Persistence checkpoints advance only after a successful write. A duplicate
 command after a failed save must still flush unsaved metadata before acknowledgment.
 Approving a participant commits its session approval and affected legacy files
-together. Socket authority, participant admission, range tables and room controls
-still belong partly to adapters; this slice does not finish the whole room engine.
-File revisions do not yet provide client-side room-wide snapshot ordering.
+together. Shared `RoomEngine` now owns participant admission, names, private
+capabilities, approval/rejection, takeover/disconnect and host-connection identity.
+Adapters keep actual sockets, source creation guards, range tables and scoped
+HTTP control I/O. Connections enter the engine only as opaque identities, never
+file transports. Retired offline capabilities cannot regain their old ownership;
+an open-admission room may still admit the holder as a new identity.
+
+Every metadata mutation advances a room revision. Cloudflare atomically saves
+files, private sessions, the join window and room revision under the existing
+keys plus one additive key. A serialized/coalescing queue prevents old saves from
+overwriting newer ones, and queued saves cannot recreate an ended generation.
+No disk work is added to individual binary frames. The client accepts multiple
+effects at one revision, rejects older snapshots, coalesces private resync, and
+keeps host credential negotiation separate from stale list replacement. Foreign
+or older terminal notices are rejected before they can stop socket recovery.
+Legacy unstamped peers retain compatible behavior without the new ordering guarantee.
 Cloudflare's default [storage gates](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
 remain enabled. A resolved `put()` can mean buffered submission; the runtime
 holds network output until flush and resets the object on write failure. The
@@ -156,7 +171,8 @@ in separate prefixed objects within the existing Cloudflare namespace; they do
 not store files or share room metadata. New-identity join quotas persist with
 sessions, while authenticated private resumes and host/control operations bypass
 that quota. One room alarm services both login deadlines and room expiry.
-Node guards are process-local. Full shared room-command/revision orchestration
-and broader deployment abuse controls remain separate work.
+Node guards are process-local. Shared metadata commands/revision orchestration
+are implemented; broader deployment abuse controls and physical-device proof
+remain separate work.
 
 No HTTP-only transport fallback or end-to-end file encryption is implemented. Sender tab suspension can halt uncached byte delivery. Large PPTX/PDF renderers still require significant host memory despite lower-copy download assembly. These are **known limitations**, not resolved by the room relay. Track verification in [the audit](./reliability-audit.md).

@@ -146,11 +146,10 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 }
 .premium-app .hero-room-stage { position:relative; width:100%; }
 .premium-app .hero-accents { position:absolute; inset:0; pointer-events:none; }
-.premium-app .hero-accent { position:absolute; width:128px; }
-.premium-app .hero-accent svg { display:block; width:100%; height:auto;
-  filter:drop-shadow(0 12px 18px rgba(14,35,91,.16)); }
-.premium-app .hero-accent-speed { top:18%; left:12px; transform:rotate(-12deg); }
-.premium-app .hero-accent-account { top:55%; right:16px; transform:rotate(10deg); }
+.premium-app .hero-accent { position:absolute; width:144px; }
+.premium-app .hero-accent svg { display:block; width:100%; height:auto; }
+.premium-app .hero-accent-speed { top:18%; left:12px; }
+.premium-app .hero-accent-account { top:55%; right:32px; width:96px; }
 @media(max-width:1199px) {
   .premium-app .reference-hero { --hero-title-space:clamp(300px,40svh,380px); }
   .premium-app .hero-accent { width:72px; top:-82px; }

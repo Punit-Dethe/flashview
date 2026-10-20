@@ -125,7 +125,7 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.match(firstCode ?? '', /^\d{6}$/);
     assert.equal(await first.locator('.qr-plate svg').count(), 1);
     const sidebarWordmark = first.locator('.sidebar-brand');
-    assert.equal((await sidebarWordmark.innerText()).trim(), 'flashview');
+    assert.equal((await sidebarWordmark.innerText()).trim(), 'warpview');
     const wordmarkBox = await sidebarWordmark.boundingBox();
     const qrBox = await first.locator('.qr-plate').boundingBox();
     const brandFontSize = await sidebarWordmark.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
@@ -1520,7 +1520,7 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
     assert.ok(await compact.isVisible(),'A phone host sees the compact room header');
     const code=(await compact.locator('.mobile-host-code').innerText()).trim();
     assert.match(code,/^\d{6}$/);
-    assert.equal((await compact.locator('.mobile-host-byline').innerText()).trim(),'by flashview');
+    assert.equal((await compact.locator('.mobile-host-byline').innerText()).trim(),'by warpview');
     const configure=host.getByRole('button',{name:'Configure'});
     assert.equal(await configure.getAttribute('aria-expanded'),'false');
     assert.equal(await host.locator('.qr-plate').isVisible(),false,

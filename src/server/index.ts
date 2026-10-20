@@ -6,10 +6,10 @@ import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { roomExpiresAt } from '../shared/roomLifetime.js';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity.js';
-import { admitFile, admitSender } from '../shared/roomAdmission.js';
+import { admitSender } from '../shared/roomAdmission.js';
+import { RoomFileEngine, type FileTransition } from '../shared/roomFileEngine.js';
 import { AUTH_TIMEOUT_MS, MAX_PENDING_NODE, MAX_NODE_SOCKETS, CreationBuckets, consumeWindow, JOIN_LIMIT, JOIN_WINDOW_MS,
   JOIN_RATE_MESSAGE, retryAfterSeconds, type RateWindow } from '../shared/connectionGuards.js';
-import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle.js';
 import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl.js';
 import {
   decodeRangePacket, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
@@ -25,7 +25,7 @@ type Room = {
   autoApprove: boolean; cacheVersion?: 2; joinWindow?: RateWindow;
   created: number; lastActivityAt: number; host: Peer | null; students: Map<string, Peer>;
   sessions: Map<string, ResumeSession>;
-  files: Map<string, PdfManifest>; outstanding: Map<string, Outstanding>;
+  files: ReadonlyMap<string, PdfManifest>; fileState: RoomFileEngine; outstanding: Map<string, Outstanding>;
 };
 const rooms = new Map<string, Room>();
 const connections = new WeakMap<WebSocket, Peer>();
@@ -50,6 +50,16 @@ function send(ws: WebSocket | null | undefined, msg: Record<string, unknown>): v
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ v: 1, ...msg }));
 }
 function notifyHost(room: Room, msg: Record<string, unknown>): void { send(room.host?.ws, msg); }
+function publishFiles(room: Room, changes: FileTransition[], actor?: WebSocket): void {
+  for (const change of changes) for (const effect of room.fileState.effects(change)) {
+    if (effect.to === 'host') notifyHost(room, effect.message);
+    else if (effect.to === 'actor') send(actor, effect.message);
+    else {
+      const owner = room.students.get(effect.ownerId!);
+      if (owner?.approved) send(owner.ws, effect.message);
+    }
+  }
+}
 function students(room: Room): StudentInfo[] {
   return [...room.students.values()].map(p => ({ id: p.id, name: p.name, approved: p.approved }));
 }
@@ -78,12 +88,7 @@ function removeStudent(peer: Peer): void {
   const room = peer.room;
   if (room.students.get(peer.id) !== peer) return;
   room.students.delete(peer.id);
-  for (const file of room.files.values()) {
-    if (file.ownerId === peer.id && file.status === 'approved') {
-      file.status = 'offline';
-      notifyHost(room, { type: 'file.updated', file });
-    }
-  }
+  publishFiles(room, room.fileState.ownerStatus(peer.id, 'disconnect'));
   for (const [id, pending] of room.outstanding) {
     if (pending.senderId === peer.id) {
       room.outstanding.delete(id);
@@ -100,7 +105,7 @@ function closeRoom(room: Room): void {
   if (room.host) { send(room.host.ws, { type: 'room.closed' }); room.host.ws.close(1000, 'Room ended'); }
   room.students.clear();
   room.sessions.clear();
-  room.files.clear();
+  room.fileState.clear();
   room.outstanding.clear();
   rooms.delete(room.id);
 }
@@ -171,12 +176,8 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       room.students.set(peer.id, peer);
       connections.set(ws, peer);
       releasePending(ws);
+      publishFiles(room, room.fileState.ownerStatus(peer.id, 'resume', previous.approved));
       const ownFiles = [...room.files.values()].filter(f => f.ownerId === peer.id);
-      for (const file of ownFiles) {
-        if (resumeDisconnectedFile(file, previous.approved)) {
-          notifyHost(room, { type: 'file.updated', file });
-        }
-      }
       send(ws, {
         type: previous.approved ? 'join.resumed' : 'join.pending',
         roomCode: room.code, resumeToken: previous.token, files: ownFiles,
@@ -262,39 +263,15 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   }
   if (peer.role === 'host') {
     if (msg.type === 'cache.progress') {
-      const file = typeof msg.fileId === 'string' ? room.files.get(msg.fileId) : undefined;
-      const bytes = msg.bytes;
-      // Only a finished PDF deserves network metadata. Older hosts may
-      // still send intermediate cache.progress events: ignore them entirely.
-      // Explicit zero snapshots repair a stale completion after host storage loss.
-      if (file && Number.isSafeInteger(bytes) &&
-          (bytes === file.size || (msg.snapshot === true && bytes === 0))) {
-        const next = Number(bytes);
-        if (file.cachedBytes !== next) {
-          file.cachedBytes = next;
-          const student = room.students.get(file.ownerId);
-          if (student && student.approved) send(student.ws, {
-            type: 'cache.progress', fileId: file.fileId, bytes: next,
-            size: file.size, complete: next === file.size,
-          });
-        }
-        // A duplicate finished-file notice is a retry, not a new download.
-        // Always receipt it, even if the previous receipt was lost.
-        if (next === file.size)
-          send(ws, { type: 'cache.progress.receipt', fileId: file.fileId, bytes: next });
-      }
+      const change = room.fileState.cacheProgress(msg.fileId, msg.bytes, msg.snapshot);
+      if (change) publishFiles(room, [change], ws);
       return;
     }
     if (msg.type === 'student.accept' && typeof msg.studentId === 'string') {
       const student = room.students.get(msg.studentId);
       if (student) {
         student.approved = true;
-        for (const file of room.files.values()) {
-          if (file.ownerId === student.id && file.status === 'pending') {
-            file.status = 'approved';
-            notifyHost(room, { type: 'file.updated', file });
-          }
-        }
+        publishFiles(room, room.fileState.ownerStatus(student.id, 'approve'));
         const session = [...room.sessions.values()].find(record => record.id === student.id);
         if (session) session.approved = true;
         send(student.ws, { type: 'join.accepted', roomCode: room.code, resumeToken: session?.token });
@@ -352,15 +329,11 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     return;
   }
   if (msg.type === 'file.offer') {
-    const result = admitFile(room.files, peer, msg);
+    const result = room.fileState.offer(peer, msg);
     if (result.kind === 'rejected') return void send(ws, {
       type: 'file.rejected', fileId: msg.fileId, code: result.code, message: result.message,
     });
-    if (result.kind === 'created') {
-      notifyHost(room, { type: 'file.announced', file: result.file });
-      send(ws, { type: 'file.approved', fileId: result.file.fileId });
-    } else if (result.kind === 'updated') notifyHost(room, { type: 'file.updated', file: result.file });
-    send(ws, { type: 'file.state', file: result.file });
+    publishFiles(room, [result], ws);
   } else if (msg.type === 'range.error' && typeof msg.requestId === 'string') {
     const pending = room.outstanding.get(msg.requestId);
     if (pending?.senderId === peer.id) {
@@ -371,16 +344,15 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
       });
     }
   } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
-    const file = room.files.get(msg.fileId);
-    if (file?.ownerId === peer.id) {
-      revokeFile(file);
+    const change = room.fileState.revoke(peer.id, msg.fileId);
+    if (change) {
       for (const [id, pending] of room.outstanding) {
         if (pending.fileId === msg.fileId) {
           room.outstanding.delete(id);
           notifyHost(room, { type: 'range.error', requestId: id, message: 'File sharing stopped' });
         }
       }
-      notifyHost(room, { type: 'file.updated', file });
+      publishFiles(room, [change], ws);
     }
   }
 }
@@ -487,11 +459,12 @@ const http = createServer((req, res) => {
     let code: string;
     do { code = String(randomInt(100_000, 1_000_000)); }
     while ([...rooms.values()].some(r => r.code === code));
+    const fileState = new RoomFileEngine();
     const room: Room = {
       id: randomUUID(), roomGeneration: randomUUID(), leaseToken: randomToken(32), code, joinToken: randomToken(20),
       hostToken: randomToken(32), created: now, lastActivityAt: now, autoApprove,
       cacheVersion: url.searchParams.get('cache') === '2' ? 2 : undefined,
-      host: null, students: new Map(), sessions: new Map(), files: new Map(), outstanding: new Map(),
+      host: null, students: new Map(), sessions: new Map(), files: fileState.files, fileState, outstanding: new Map(),
     };
     rooms.set(room.id, room);
     res.writeHead(201, {

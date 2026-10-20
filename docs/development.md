@@ -83,6 +83,21 @@ Query parameters for controlled transfer comparisons:
 
 Do not infer a faster real-world connection from one localhost throughput sample. Compare consistent fixtures, senders, network conditions and number of students, and keep benchmark artifacts with the PR when useful.
 
+`npm run bench:transfer` measures a synthetic 20 MiB arbitrary binary three times
+and requires a SHA-256 match of each browser-cached original. `BENCH_TARGET` is
+`node` (default), `cloudflare` (local emulation) or `public` (the deployed relay).
+Optional `BENCH_MIB=1..45`, `BENCH_RUNS=1..10` and `BENCH_RESULT` select fixture,
+repetitions and report path; defaults write ignored `test-artifacts/` JSON.
+Public mode creates and ends temporary rooms and consumes that source's normal
+creation quota. It never selects existing user files or uses OS Downloads.
+Run comparisons sequentially while other suites are idle. The interval includes
+automated file selection, transfer, persistence and the completion UI; hashing
+must pass but is outside that interval. It is not isolated network throughput,
+multi-sender fairness or a physical-phone/campus benchmark. Room setup is timed
+separately. Keep before/after raw samples and source/version information.
+The 45 MiB fixture ceiling avoids the automation API's large in-memory upload
+restriction; the application's 200 MiB allowance is unchanged.
+
 ## Documentation and review expectations
 
 - A transfer or storage code change updates [Architecture](./architecture.md), [Protocol](./transfer-protocol.md) or [Security and reliability](./security-and-reliability.md) if behavior changes.

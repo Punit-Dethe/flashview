@@ -56,7 +56,7 @@ test('conflicting/unauthorized offers cannot approve, replace or reveal another 
     assert.equal(file.status, 'pending'); assert.equal(file.size, 4); assert.equal(files.size, 1);
   }
   assert.equal(admitFile(files, owner, offer).kind, 'updated');
-  assert.equal(file.status, 'approved');
+  assert.equal(files.get(file.fileId)?.status, 'approved');
   assert.equal(admitFile(files, owner, offer).kind, 'replayed');
 });
 

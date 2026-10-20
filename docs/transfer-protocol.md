@@ -270,4 +270,14 @@ connections and scoped HTTP controls retain their independent paths.
 
 ## Changing the protocol
 
+File manifests may include `revision`, increased only for a real metadata
+transition. Old records/clients can omit or ignore it. Completion progress and
+receipts may include `fileRevision`; original byte packets are unchanged.
+Offers, terminal Stop, legacy approval, temporary disconnect/private resume,
+completion and explicit zero reset use the shared file engine. Retries preserve
+the revision and budget. Cloudflare confirms the pending metadata checkpoint
+before publishing success; replay after a failed write is not a saved-state
+shortcut. Delayed effects are checked against current immutable state.
+This does not yet add client-side room-wide revision reconciliation.
+
 Update the shared encoder/types, **both** [Node](../src/server/index.ts) and [Cloudflare](../src/cloudflare/index.ts) handlers, browser sender/receiver, protocol and browser regression tests, then this guide. Make completion changes carefully: false Done acknowledgments are data-integrity bugs. See [Development and testing](./development.md).

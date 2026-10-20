@@ -22,6 +22,7 @@
     "prebuild": "npm run prepare:pdf",
     "predev:client": "npm run prepare:pdf",
     "bench:baseline": "node --import tsx tests/benchmark.baseline.ts",
+    "bench:transfer": "node scripts/benchmark-transfer.mjs",
     "bench:resume": "node --import tsx tests/resumeThroughput.ts"
   },
   "dependencies": {

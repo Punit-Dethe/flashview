@@ -28,8 +28,9 @@ export function admitFile(files: Map<string, FileManifest>, owner: Owner, offer:
     if (existing.ownerId !== owner.id || existing.size !== size || existing.name !== name)
       return reject('FILE_CONFLICT', 'Conflicting document ID.');
     if (existing.status === 'pending' && existing.revoked !== true) {
-      existing.status = 'approved';
-      return { kind: 'updated', file: existing };
+      const file = { ...existing, status: 'approved' as const };
+      files.set(fileId, file);
+      return { kind: 'updated', file };
     }
     return { kind: 'replayed', file: existing };
   }

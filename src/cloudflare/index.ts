@@ -22,7 +22,7 @@ interface Env {
 type Role = 'host' | 'student' | null;
 interface Peer { id: string; role: Role; name: string; approved: boolean; authDeadline?: number }
 interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; lastActivityAt?: number; autoApprove?: boolean;
-  roomGeneration?: string; leaseToken?: string; cacheVersion?: 2 }
+  roomGeneration?: string; leaseToken?: string; cacheVersion?: 2 | 3 }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
 const OPEN = 1;
 function token(size = 24): string {
@@ -234,11 +234,11 @@ export class ClassroomRoom extends DurableObject<Env> {
           code: incoming.code!, hostToken: incoming.hostToken!, joinToken: incoming.joinToken!, created,
           lastActivityAt: created, autoApprove: incoming.autoApprove === true,
           roomGeneration: incoming.roomGeneration ?? crypto.randomUUID(), leaseToken: incoming.leaseToken ?? token(32),
-          cacheVersion: incoming.cacheVersion === 2 ? 2 : undefined,
+          cacheVersion: incoming.cacheVersion === 3 ? 3 : incoming.cacheVersion === 2 ? 2 : undefined,
         };
         await this.ctx.storage.put('config', this.config);
         await this.ctx.storage.setAlarm(created + ROOM_TTL_MS);
-        return json({ roomId: this.config.code, code: this.config.code }, 201);
+        return json({ roomId: this.config.code, code: this.config.code, cacheVersion: this.config.cacheVersion }, 201);
       });
     }
     if (url.pathname === '/lease' || url.pathname === '/end') {
@@ -349,7 +349,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       await this.commitFiles(joined.changes);
       if (this.config !== cfg || !this.engine.isCurrent(participant)) return;
       this.sendPeer(ws, { type: participant.approved ? (joined.resumed ? 'join.resumed' : 'join.accepted') : 'join.pending',
-        roomCode: cfg.code, resumeToken: participant.token,
+        integrityRequired: cfg.cacheVersion === 3, roomCode: cfg.code, resumeToken: participant.token,
         ...(joined.resumed ? { files: [...this.files.values()].filter(file => file.ownerId === participant.id) } : {}) });
       if (joined.resumed && !this.host) this.sendPeer(ws, { type: 'host.offline' });
       if (joined.resumed) for (const [requestId, range] of this.ranges) {
@@ -442,7 +442,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
     if (msg.type === 'file.sync' && peer.role === 'student') {
       this.sendPeer(ws, {
-        type: 'file.manifest', approved: peer.approved, roomCode: this.config?.code, hostOnline: !!this.host,
+        type: 'file.manifest', integrityRequired: this.config?.cacheVersion === 3, approved: peer.approved, roomCode: this.config?.code, hostOnline: !!this.host,
         files: [...this.files.values()].filter(file => file.ownerId === peer.id),
       });
       return;
@@ -462,7 +462,7 @@ export class ClassroomRoom extends DurableObject<Env> {
           this.putPeer(student.ws, { ...student.peer, approved: true });
           await this.commitFiles(result.changes);
           if (this.config !== config || !this.engine.isCurrent(result.participant)) return;
-          this.sendPeer(student.ws, { type: 'join.accepted', roomCode: config?.code, resumeToken: result.participant.token });
+          this.sendPeer(student.ws, { type: 'join.accepted', integrityRequired: config?.cacheVersion === 3, roomCode: config?.code, resumeToken: result.participant.token });
           this.sendHost({ type: 'student.updated', student: { id: result.participant.id, name: result.participant.name, approved: true } });
         } else {
           const result = this.engine.reject(msg.studentId);
@@ -526,7 +526,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       return;
     }
     if (msg.type === 'file.offer') {
-      const result = this.fileState.offer(peer, msg);
+      const result = this.fileState.offer(peer, msg, this.config?.cacheVersion === 3);
       if (result.kind === 'rejected') return void this.sendPeer(ws, {
         type: 'file.rejected', fileId: msg.fileId, code: result.code, message: result.message,
       });
@@ -620,7 +620,7 @@ export default {
         const config: RoomConfig = {
           code, hostToken: token(32), joinToken: code + '.' + token(24), created: Date.now(),
           roomGeneration: crypto.randomUUID(), leaseToken: token(32),
-          cacheVersion: url.searchParams.get('cache') === '2' ? 2 : undefined,
+          cacheVersion: url.searchParams.get('cache') === '3' ? 3 : url.searchParams.get('cache') === '2' ? 2 : undefined,
           autoApprove: url.searchParams.get('autoApprove') === '1',
         };
         const room = env.ROOMS.getByName(code);
@@ -628,6 +628,8 @@ export default {
           method: 'POST', body: JSON.stringify(config),
         }));
         if (initialized.status === 201) {
+          if (config.cacheVersion === 3 && (await initialized.json() as { cacheVersion?: number }).cacheVersion !== 3)
+            return json({ error: 'The new cache mode is not ready on this relay yet. Please retry creating the room.' }, 503);
           const response = json({
             roomId: code, code, joinToken: config.joinToken, hostToken: config.hostToken,
             roomGeneration: config.roomGeneration, leaseToken: config.leaseToken,

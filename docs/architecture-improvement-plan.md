@@ -1,6 +1,6 @@
 # WarpView implementation plan — fast relay, independent transfer and viewing
 
-**Revision 4 · 20 October 2026 · R2 deferred by the user after live testing.**
+**Revision 5 · 21 October 2026 · R2 deferred; storage choice follows measurements.**
 Keep the existing relay as the production byte path. Continue the reliability,
 worker, browser-cache and viewer improvements without making them depend on R2.
 The earlier cloud proposal is [archived](./archive/r2-migration-proposal-2026-10-19.md);
@@ -9,7 +9,8 @@ it is not the current implementation specification.
 ## Product contract and transport decision
 
 - Accountless phone-to-classroom sharing through QR/code rooms remains the workflow.
-- Receive originals automatically into private browser cache, preferably OPFS.
+- Receive originals automatically into private browser cache. Matched measurements
+  currently favor bounded batched IndexedDB; keep OPFS experimental.
   Never silently save originals into Downloads or invoke a save picker.
 - All admitted files transfer automatically through one bounded, fair queue.
   Opening, navigating or closing a viewer cannot change transfer scheduling,
@@ -46,12 +47,12 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | Area | Status |
 |---|---|
 | Relay transfer path | Existing production architecture; retained |
-| Terminal file stop and pending-range cancellation | Ported to the current handover-fix branch for both backends; regression-tested; not merged to main |
+| Terminal file stop and pending-range cancellation | Merged in the worker/lifecycle releases through #46; tested on both backends, including offline Stop and late source reads |
 | Reconnection and socket handover | Immediate foreground recovery on #37; 20 October follow-up retires obsolete authority, clears receiver requests and preserves sender resume during host absence |
-| All-file benchmark and bounded original-byte readback | Implemented on #35; not ported to this branch |
-| Lockfile and reproducible installs | Implemented on #35; not ported to this branch |
+| All-file benchmark and bounded original-byte readback | Current relay implementation has arbitrary-file benchmarks and bounded original readback; experimental checks add integrity and backend comparison |
+| Lockfile and reproducible installs | Current integration branch commits the lockfile and uses npm ci; full CI passed at 6599eca |
 | Worker-owned relay transfer | Implemented/tested and deployed for user-authorized live reproduction: one socket, source reads, automatic receipt/cache and completion receipts, bounded bridge, cancellation and crash recovery. N38's speed outlier remains unexplained; N37/N39 and phone preview removal remain |
-| OPFS receipt and content verification | Demonstrated in the isolated R2 pilot; not integrated into the relay application |
+| Verified originals and storage choice | Gated OPFS integration has immutable roots, range checks, durable checkpoints and reader leases. Matched evaluation favors bounded batched IDB as the next production candidate; it is not yet integrated. Normal rooms stay unchanged. See [decision](./storage-evaluation.md) and [experimental contract](./opfs-cache-validation.md) |
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | Shared metadata engine owns file transitions, participant admission/approval/rejection, private takeover and host presence; serialized atomic checkpoints, room revisions and client stale-snapshot handling implemented. Integration/release evidence tracked in N31–N33 |
 | Room admission budgets | 300 retained manifests / 4 GiB originals, 120 retained session identities, 30 concurrent senders; exact retries and existing capabilities preserved |
@@ -178,19 +179,38 @@ cache-worker interfaces. Preserve the measured relay packet path initially.
 bytes survive interruption/cancellation tests, and no material speed regression
 appears against the relay baseline. Worker lifetime remains tied to its page.
 
-### Phase 3 — Production OPFS cache and content integrity
+### Phase 3 — Verified originals and measured storage choice
+
+**Current slice (21 October):** version 3 OPFS rooms, worker-side bounded hashing,
+ordered flush/checkpoints, restored-block validation, sealed original readback,
+reader leases and cleanup fencing are implemented on the integration branch.
+Version 2/legacy rooms drain unchanged. This is explicitly selected during room
+creation, not the normal default: the first ordinary local comparison is slower
+with the added integrity contract, so public/device performance and fallback
+gates remain. See [the contract, evidence and open work](./opfs-cache-validation.md).
+
+**Decision after evaluation:** the current OPFS design is not justified as the
+default. Matched strict-batch IDB references are faster; Firefox native close
+cost is particularly high. See [the storage decision](./storage-evaluation.md).
+Use the existing OPFS integrity tests/contract as a specification for a bounded
+batched IDB integration, not as a requirement to select OPFS. The reference
+driver is benchmark-only; production integration and device proof are pending.
+Keep the completed-file interface independent of the backing store and preserve
+old room namespaces. Retaining an OPFS writer would require a separately tested
+ownership/handoff design; it is not the next production step on this evidence.
 
 **Touch:** transfer worker persistence, cache metadata, original-file manifests
 and completed-file storage. This work is independent of remote object storage.
 
-1. Adapt OPFS receipt to relay ranges, replacing the per-64-KiB IndexedDB write
-   path. Keep compact metadata/checkpoints in IndexedDB and buffers bounded.
-   Handle partial writes, quota errors, stalled operations and writer closure.
+1. Adapt verified receipt to relay ranges using bounded batched IDB writes,
+   replacing one transaction per 64 KiB block. Commit bytes and checkpoints
+   atomically; keep metadata and buffers bounded. Preserve the gated OPFS reader.
+   Handle failed transactions, quota errors, stalled operations and cancellation.
 2. Hash source data off the UI thread and pin integrity metadata to an immutable
    file generation. Verify received content before declaring cached-ready;
    length/index checks alone do not detect same-length corruption. Account for
    hashing time in speed comparisons, including on slower phones.
-3. Commit completion metadata only after validated persistence and writer close.
+3. Commit completion metadata only after validated persistence and settled writes.
    On restart reconcile bytes/checkpoints, discard uncommitted tails and resume
    verified missing ranges instead of trusting stale 100% metadata.
 4. Implement an immutable CompletedFileStore with reader leases. Cleanup must
@@ -202,7 +222,7 @@ and completed-file storage. This work is independent of remote object storage.
 **Exit:** corrupt/truncated/interrupted writes never become ready, memory stays
 bounded at 200 MiB, and storage removal/quota recovery affect only the relevant
 file. Current Chrome/Firefox plus physical target-browser checks establish the
-supported behavior; OPFS is not assumed to guarantee permanent storage.
+   supported behavior; neither backend guarantees permanent browser storage.
 
 ### Phase 4 — Completed-file viewers with independent lifetimes
 

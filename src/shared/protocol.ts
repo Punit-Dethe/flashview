@@ -21,6 +21,8 @@ export interface FileManifest {
   cachedBytes?: number;
   /** Metadata transition version; absent in rooms written by older relays. */
   revision?: number;
+  /** Immutable SHA-256 of the selected original; mandatory in OPFS rooms. */
+  sha256?: string;
 }
 
 export interface StudentInfo {
@@ -34,6 +36,7 @@ export interface RangeHeader {
   requestId: string;
   fileId: string;
   begin: number;
+  sha256?: string;
 }
 
 /** Compatibility alias while the PDF-only presenter keeps its original types. */

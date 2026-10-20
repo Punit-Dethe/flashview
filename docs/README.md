@@ -11,6 +11,8 @@ This directory is the **current, code-backed documentation** for FlashView. The 
 | [Security and reliability](./security-and-reliability.md) | Developers, operators | Trust model, failure recovery and production caveats |
 | [Reliability audit tracker](./reliability-audit.md) | Maintainers | Original 30-issue audit, verified fixes, partial work and next priorities |
 | [Implementation plan](./architecture-improvement-plan.md) | Maintainers | Accepted relay, worker, OPFS and independent-viewer phases; R2 deferred |
+| [OPFS cache validation](./opfs-cache-validation.md) | Maintainers | Gated relay cache, integrity/checkpoint contract, fault tests and promotion gates |
+| [Storage evaluation](./storage-evaluation.md) | Maintainers | Matched IDB/OPFS measurements, Firefox close diagnosis and backend decision |
 | [Foreground reconnect research](./reconnection-design-proposal.md) | Maintainers | Sources, alternatives and the selected immediate-resume decision |
 | [Reconnect evaluation](./reconnection-evaluation.md) | Maintainers | Two selected policies, recovery measurements, healthy-transfer control and validation |
 | [Original engineering plan (archive)](./archive/initial-engineering-plan.md) | Historical reference | Outdated PDF-first design; **do not use as an implementation specification** |

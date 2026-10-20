@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       - run: npm run build
       - run: npm run check:cloudflare
       - run: npm test
@@ -25,6 +25,21 @@ jobs:
           FLASHVIEW_BACKEND: cloudflare
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+      - name: OPFS original integrity, recovery and cleanup — Chromium
+        run: node --import tsx --test tests/opfs.browser.ts
+      - name: Storage comparison correctness — Chromium (timing is not a CI gate)
+        run: npm run bench:storage
+        env:
+          STORAGE_MIB: 2
+          STORAGE_RUNS: 1
+      - name: Worker-local transfer trace correctness
+        run: node --import tsx scripts/benchmark-transfer.mjs
+        env:
+          BENCH_MIB: 2
+          BENCH_RUNS: 1
+          BENCH_STORAGE: opfs
+          BENCH_WORKER_TRACE: 1
+          BENCH_RESULT: test-artifacts/transfer-worker-trace.json
       - name: Install Firefox for fullscreen compatibility checks
         run: npx playwright install --with-deps firefox
       - name: Firefox presenter, lifecycle and interrupted transfers
@@ -35,6 +50,20 @@ jobs:
         run: npm run test:browser
         env:
           FLASHVIEW_BACKEND: cloudflare
+      - name: OPFS original integrity, recovery and cleanup — Cloudflare
+        run: node --import tsx --test tests/opfs.browser.ts
+        env:
+          FLASHVIEW_BACKEND: cloudflare
+      - name: OPFS original integrity, recovery and cleanup — Firefox
+        run: node --import tsx --test tests/opfs.browser.ts
+        env:
+          FLASHVIEW_BROWSER: firefox
+      - name: Storage comparison correctness — Firefox (timing is not a CI gate)
+        run: npm run bench:storage
+        env:
+          STORAGE_MIB: 2
+          STORAGE_RUNS: 1
+          STORAGE_BROWSER: firefox
       - name: Stage 0 baseline — Node (synthetic 2 MiB)
         run: npm run bench:baseline
         env:

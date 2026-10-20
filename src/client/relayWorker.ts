@@ -4,6 +4,8 @@ import { RoomPdfCache } from './pdf/roomCache';
 import { configureWorkerPerf, perf } from './perf';
 import { RoomRevisionTracker } from './roomRevision';
 import type { WorkerCommand, WorkerEnvelope, WorkerEvent, WorkerReply } from './transferProtocol';
+import { hashBlob, digestBytes } from './storage/integrity';
+import { probeOpfs } from './storage/opfsStore';
 
 const scope = globalThis as unknown as {
   onmessage: (event: MessageEvent<WorkerEnvelope & { query?: string }>) => void;
@@ -15,7 +17,8 @@ let cache: RoomPdfCache | null = null;
 let versions = new RoomRevisionTracker();
 let mailboxBusy = false;
 const mailbox = new Map<string, WorkerEvent>();
-const sources = new Map<string, { file: File; approved: boolean; stopped: boolean; known: boolean; offeredAt: number }>();
+const sources = new Map<string, { file: File; approved: boolean; stopped: boolean; known: boolean; offeredAt: number; sha256?: string; hashing?: boolean }>();
+let integrityRequired: boolean | undefined;
 const stoppedSources = new Set<string>();
 const reads = new Map<string, { fileId: string; timer: ReturnType<typeof setTimeout> }>();
 function retireReads(fileId?: string): void {
@@ -74,13 +77,32 @@ function queue(file: PdfManifest): void {
 function offer(fileId: string): void {
   const source = sources.get(fileId);
   if (!source || source.stopped || source.known || Date.now() - source.offeredAt < 7000) return;
-  if (socket.send({ type: 'file.offer', fileId, name: source.file.name, size: source.file.size })) source.offeredAt = Date.now();
+  if (integrityRequired === undefined) return;
+  if (integrityRequired && !source.sha256) {
+    // Retired native reads may resolve late. They cannot occupy the live queue
+    // after Stop or a room/session change and delay an unrelated new source.
+    if (source.hashing || [...sources.values()].filter(candidate => candidate.hashing && !candidate.sha256).length >= 2) return;
+    source.hashing = true;
+    const hashStarted = performance.now();
+    void hashBlob(source.file, () => sources.get(fileId) === source && !source.stopped).then(hash => {
+      if (perf.enabled) perf.record('source_hash_ms', performance.now() - hashStarted, { bytes: source.file.size });
+      if (sources.get(fileId) === source && !source.stopped) { source.sha256 = hash; offer(fileId); }
+    }).catch(() => {
+      if (sources.get(fileId) !== source || source.stopped) return;
+      sources.delete(fileId);
+      emit('file:' + fileId, { type: 'message', message: { type: 'file.rejected', fileId,
+        code: 'SOURCE_READ_FAILED', message: 'Could not read this original. Please select it again.' } });
+    }).finally(() => { source.hashing = false; for (const id of sources.keys()) offer(id); });
+    return;
+  }
+  if (socket.send({ type: 'file.offer', fileId, name: source.file.name, size: source.file.size,
+    ...(source.sha256 ? { sha256: source.sha256 } : {}) })) source.offeredAt = Date.now();
 }
 function reconcile(files: PdfManifest[]): void {
   const known = new Map(files.map(file => [file.fileId, file]));
   for (const [id, source] of sources) {
     const file = known.get(id);
-    if (file) { source.known = true; source.approved = file.status === 'approved' && !file.revoked; source.stopped ||= file.revoked === true || file.status === 'rejected'; }
+    if (file) { source.known = true; source.sha256 ??= file.sha256; source.approved = file.status === 'approved' && !file.revoked; source.stopped ||= file.revoked === true || file.status === 'rejected'; }
     else { source.known = false; offer(id); }
   }
 }
@@ -106,7 +128,7 @@ async function respond(message: ServerMessage): Promise<void> {
     const started = performance.now();
     const bytes = await source.file.slice(Number(begin), Number(end)).arrayBuffer();
     if (perf.enabled) perf.record('sender_read_ms', performance.now() - started, { bytes: bytes.byteLength });
-    if (current() && !await response.send(bytes) && current()) response.fail('Network sender is busy');
+    if (current() && !await response.send(bytes, source.sha256 ? await digestBytes(new Uint8Array(bytes)) : undefined) && current()) response.fail('Network sender is busy');
   } catch { if (current()) response.fail('Cannot read file from sender device'); }
   finally { clearTimeout(attempt.timer); if (reads.get(requestId) === attempt) reads.delete(requestId); }
 }
@@ -127,6 +149,8 @@ function initialize(): void {
     const observed = versions.observe(message);
     if (observed.resync) socket.send({ type: role === 'host' ? 'room.sync' : 'file.sync' });
     if (!observed.accept) return;
+    if (role === 'student' && ['join.accepted', 'join.resumed', 'join.pending', 'file.manifest'].includes(message.type))
+      integrityRequired = message.integrityRequired === true;
     if (role === 'host') {
       if (message.type === 'room.state') {
         if (typeof message.cacheId === 'string') setRoom(message.cacheId);
@@ -157,6 +181,7 @@ function initialize(): void {
       }
     }
     if (message.type === 'room.closed' || message.type === 'join.rejected') { cache?.dispose(); sources.clear(); retireReads(); }
+    if (role === 'student') for (const id of sources.keys()) offer(id);
     const key = ['student.pending', 'student.updated', 'student.left'].includes(message.type)
       ? 'student:' + String((message.student as { id?: string })?.id ?? message.id)
       : message.type + ':' + String(message.fileId ?? (message.file as PdfManifest)?.fileId ?? '') +
@@ -168,9 +193,14 @@ async function rpc(command: Extract<WorkerCommand, { type: 'rpc' }>): Promise<vo
   const owner = session, currentCache = cache;
   const controller = new AbortController();
   try {
-    if (!currentCache || currentCache.roomId !== command.roomId) throw Error('Local cache room changed');
     if (localReads.size >= 128) throw Error('Too many local cache reads');
     localReads.set(command.id, controller);
+    if (command.method === 'opfs-probe') {
+      await probeOpfs();
+      if (owner === session && !controller.signal.aborted) scope.postMessage({ session, type: 'result', id: command.id, value: true });
+      return;
+    }
+    if (!currentCache || currentCache.roomId !== command.roomId) throw Error('Local cache room changed');
     const file = command.file && manifests.get(command.file.fileId);
     if (command.file && (!file || file.size !== command.file.size)) throw Error('Local file metadata changed');
     let value: unknown;
@@ -203,6 +233,7 @@ scope.onmessage = event => {
   }
   if (command.type === 'ack') { mailboxBusy = false; flush(); }
   else if (command.type === 'connect') {
+    integrityRequired = undefined;
     role = command.identity.role; versions = new RoomRevisionTracker(typeof command.identity.roomGeneration === 'string' ? command.identity.roomGeneration : undefined);
     socket.connect(command.identity);
     if (syncTimer) clearInterval(syncTimer);

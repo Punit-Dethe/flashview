@@ -1,6 +1,10 @@
 # System architecture
 
-**Status:** Current source design on the unmerged integration line (20 October 2026); production deployment is tracked separately. For wire-level behavior see [Transfer protocol](./transfer-protocol.md); for current unresolved reliability work see [Audit tracker](./reliability-audit.md).
+**Status:** Worker ownership and the contributor sidebar are merged/live through PR #47. This branch adds opt-in OPFS rooms; normal rooms remain IndexedDB. See [OPFS validation](./opfs-cache-validation.md), [Transfer protocol](./transfer-protocol.md) and [Audit tracker](./reliability-audit.md) for release status and remaining work.
+
+Matched evaluation does not justify promoting this OPFS design. The next cache
+candidate is bounded batched IDB with the verified-original contract; its driver
+is currently benchmark-only. See [the storage decision](./storage-evaluation.md).
 
 ## Overview and ownership
 
@@ -66,6 +70,11 @@ The host's connection indicator still reports its own relay status.
 6. On full completion, the host sends a completion notice to the relay; the relay informs that file's sender and receipts the host's notice. Intermediate byte progress stays local to the host.
 7. A download builds validated browser-native `Blob` parts from stored chunks. The file is not reconstructed by the relay.
 
+Version 3 rooms explicitly created with `?storage=opfs` instead use flushed OPFS
+originals and a compact metadata/checkpoint database. Source/range digests and
+persisted-content verification precede completion. Existing rooms retain their
+original cache backend. See [the OPFS contract](./opfs-cache-validation.md).
+
 ### Host cache and scheduling
 
 [`RoomPdfCache`](../src/client/pdf/roomCache.ts) is instantiated in the dashboard's dedicated transfer worker and outlives presenter tabs. Its IndexedDB database (`flashview-room-cache`) contains `chunks`, `rooms` and `previews` stores. Chunk keys include room, file ID and numeric index, allowing room-scoped deletion. Existing cached chunks are skipped when a transfer resumes.
@@ -85,8 +94,8 @@ this mailbox, so diagnostic sample counts are not wire-packet counts.
 Passive cache operations have at most 128 pending RPCs and bounded deadlines.
 Read buffers transfer ownership back to the page; they are separate from
 original-byte scheduling. This is a transitional bridge for the existing
-progressive PDF viewer; completed-only viewers and OPFS/integrity remain later
-work. A worker cannot outlive a terminated parent page or guarantee that an OS
+progressive PDF viewer. OPFS/integrity is now opt-in; completed-only viewers and
+default storage promotion remain later work. A worker cannot outlive a terminated parent page or guarantee that an OS
 will keep it running in the background. See [MDN's worker lifecycle and API
 description](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers).
 

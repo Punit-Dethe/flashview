@@ -7,7 +7,7 @@ export const MAX_ROOM_SESSIONS = 120;
 export const MAX_ACTIVE_SENDERS = 30;
 
 type Rejection = { kind: 'rejected'; code: string; message: string };
-type Offer = { fileId?: unknown; name?: unknown; size?: unknown };
+type Offer = { fileId?: unknown; name?: unknown; size?: unknown; sha256?: unknown };
 type Owner = { id: string; name: string; approved: boolean };
 export type FileAdmission = Rejection | { kind: 'created' | 'updated' | 'replayed'; file: FileManifest };
 const reject = (code: string, message: string): Rejection => ({ kind: 'rejected', code, message });
@@ -16,6 +16,8 @@ const reject = (code: string, message: string): Rejection => ({ kind: 'rejected'
 export function admitFile(files: Map<string, FileManifest>, owner: Owner, offer: Offer): FileAdmission {
   if (!owner.approved) return reject('APPROVAL_REQUIRED', 'Waiting for teacher approval.');
   const { fileId, size } = offer;
+  if (offer.sha256 !== undefined && (typeof offer.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(offer.sha256)))
+    return reject('INVALID_INTEGRITY', 'Invalid original verification metadata.');
   if (typeof fileId !== 'string' || !/^[A-Za-z0-9_-]{6,80}$/.test(fileId) ||
       !Number.isSafeInteger(size) || Number(size) < 1 || Number(size) > MAX_FILE_BYTES)
     return reject('INVALID_FILE', 'Files must be between 1 byte and 200 MiB.');
@@ -25,7 +27,7 @@ export function admitFile(files: Map<string, FileManifest>, owner: Owner, offer:
   const existing = files.get(fileId);
   if (existing) {
     // Check immutable metadata and ownership BEFORE any pending -> approved change.
-    if (existing.ownerId !== owner.id || existing.size !== size || existing.name !== name)
+    if (existing.ownerId !== owner.id || existing.size !== size || existing.name !== name || existing.sha256 !== offer.sha256)
       return reject('FILE_CONFLICT', 'Conflicting document ID.');
     if (existing.status === 'pending' && existing.revoked !== true) {
       const file = { ...existing, status: 'approved' as const };
@@ -47,6 +49,7 @@ export function admitFile(files: Map<string, FileManifest>, owner: Owner, offer:
     return reject('ROOM_BYTE_LIMIT', 'This room has reached its 4 GiB file budget. Start a new room to share more.');
   const file: FileManifest = {
     fileId, name, size: Number(size), ownerId: owner.id, ownerName: owner.name, status: 'approved',
+    ...(typeof offer.sha256 === 'string' ? { sha256: offer.sha256 } : {}),
   };
   files.set(fileId, file);
   return { kind: 'created', file };

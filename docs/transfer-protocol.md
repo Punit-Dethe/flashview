@@ -28,6 +28,21 @@ credentials. They advertise `cacheId: <code>`; old servers/sessions without a
 renamed or erased to upgrade. This is namespace separation, not a content hash or
 isolation from arbitrary same-origin scripts.
 
+The experimental `?storage=opfs` client probes actual worker storage before
+creating a new room with `cache=3`. Both relays pin this version and return
+`opfs:<roomGeneration>`. Sender admission and `file.manifest` responses advertise
+`integrityRequired: true`. Every original offer must include its immutable
+lowercase SHA-256 digest; a sender without support receives `INTEGRITY_REQUIRED`
+and must refresh. Offers in older rooms keep their existing behavior.
+Binary range headers in these rooms carry a SHA-256 digest for the exact payload;
+the host checks it before accepting the range, then validates the complete
+persisted original against the manifest root before reporting completion.
+This detects corruption, not an untrusted sender supplying a malicious original.
+The Cloudflare creation route also checks that its room object accepted cache
+version 3, preventing silent downgrade during mixed-version deployment.
+Existing rooms are neither copied nor upgraded. See [OPFS validation](./opfs-cache-validation.md)
+for checkpoint ordering, compatibility and the promotion gates.
+
 ### HTTP lifecycle controls
 
 Both adapters implement `POST /api/rooms/<roomId>/lease` and `/end` with

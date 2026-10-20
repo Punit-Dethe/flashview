@@ -105,6 +105,34 @@ capabilities or original bytes. Selection latency is also reported in ordinary
 runs. Diagnostic overhead differs from ordinary timing; preserve both batches
 and never substitute fast traced runs for an unexplained slow ordinary sample.
 
+`BENCH_STORAGE=opfs` creates explicitly selected version 3 rooms and verifies the
+sealed OPFS original; `idb` is the unchanged default. Both include selection and
+cache completion, but only the OPFS contract includes production source/range/
+persisted-content hashes. This is not a storage-only performance comparison.
+`BENCH_ORIGIN=https://<isolated-worker>.workers.dev` selects an isolated public
+deployment when `BENCH_TARGET=public`; it must be a plain HTTPS origin.
+`node --import tsx --test tests/opfs.browser.ts` exercises real storage, bad
+packets, quota/cancellation, worker restart and read-lease cleanup. It supports
+the existing `FLASHVIEW_BACKEND=cloudflare` and `FLASHVIEW_BROWSER=firefox` flags.
+`OPFS_TEST_MIB=200` generates a path-based synthetic fixture just below the cap,
+uses bounded source reads and hashes its explicit test export as a stream.
+
+`npm run bench:storage` compares three verified storage designs in a persistent
+desktop profile, with no relay or viewers. `STORAGE_BROWSER=chromium|firefox|webkit`,
+`STORAGE_MIB=20,200`, `STORAGE_RUNS=1..5`, `STORAGE_MODES=idb-current,idb-batched,opfs`
+and `STORAGE_RESULT` select cases/output. `STORAGE_NATIVE_TRACE=1` profiles native
+OPFS methods separately. Every completed original must match; unsupported OPFS
+is recorded explicitly, never counted as a passed case. Profile folders are
+created under ignored `.wrangler/storage-profiles/` and removed after browser
+closure; generated source fixtures are removed too. Run modes serially without other builds/tests/downloads. Do not use
+these saturated storage results as whole-app network or memory benchmarks.
+
+For lighter live attribution, run `node --import tsx scripts/benchmark-transfer.mjs`
+with `BENCH_WORKER_TRACE=1`. This instruments the actual transfer worker through
+the existing test harness, without `?perf=1` or binary payload copies to the
+runner. Use a separate report from `BENCH_DIAGNOSTICS=1` and ordinary runs.
+See [storage evaluation](./storage-evaluation.md) for measurements and exclusions.
+
 ## Documentation and review expectations
 
 `transfer worker:` browser cases block both UI threads while independently

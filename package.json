@@ -23,6 +23,7 @@
     "predev:client": "npm run prepare:pdf",
     "bench:baseline": "node --import tsx tests/benchmark.baseline.ts",
     "bench:transfer": "node scripts/benchmark-transfer.mjs",
+    "bench:storage": "node scripts/benchmark-storage.mjs",
     "bench:resume": "node --import tsx tests/resumeThroughput.ts"
   },
   "dependencies": {
@@ -33,7 +34,8 @@
     "react-dom": "^19.2.0",
     "ws": "^8.18.3",
     "tsx": "^4.20.6",
-    "pptx-vanilla-viewer": "3.42.0"
+    "pptx-vanilla-viewer": "3.42.0",
+    "hash-wasm": "4.12.0"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

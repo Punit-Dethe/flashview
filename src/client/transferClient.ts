@@ -131,7 +131,7 @@ export class RoomTransferClient {
   setRoom(roomId: string): void { this.roomId = roomId; this.post({ type: 'room', roomId }); }
   stopTransfers(): void { if (this.worker) this.post({ type: 'stop' }); }
   retryBlockedStorage(): void { this.post({ type: 'retry-storage' }); }
-  request(method: 'progress' | 'preview' | 'save-preview' | 'read' | 'clear', args: {
+  request(method: Extract<WorkerCommand, { type: 'rpc' }>['method'], args: {
     roomId: string; file?: PdfManifest; fileId?: string; dataUrl?: string; begin?: number; end?: number;
   }, signal?: AbortSignal): Promise<unknown> {
     if (signal?.aborted) return Promise.reject(Error('Presentation range cancelled'));

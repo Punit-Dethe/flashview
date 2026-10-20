@@ -32,7 +32,7 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
     return ()=>clearTimeout(timer);
   },[pdf,powerpoint,previewUrl,file.fileId]);
   const cached=Boolean(progress?.complete);
-  const percent=cached?100:Math.max(0,Math.min(100,(progress?.bytes??0)/Math.max(1,file.size)*100));
+  const percent=cached?100:Math.max(0,Math.min(99,(progress?.bytes??0)/Math.max(1,file.size)*100));
   const available=pdf?(file.status==='approved'||cached):powerpoint&&cached;
   const imageFailed=imageState.url===previewUrl&&imageState.failed;
   const showingImage=(pdf||powerpoint)&&Boolean(previewUrl)&&imageState.url===previewUrl&&imageState.ready&&!imageFailed;

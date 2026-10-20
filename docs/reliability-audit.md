@@ -1,6 +1,6 @@
 # FlashView — Reliability Audit Tracker
 
-**Status:** Living engineering document · **Last updated:** 19 October 2026 · **Baseline audit:** `0581111e2` · **Latest merged fix:** [`30f011b`](https://github.com/Punit-Dethe/flashview/commit/30f011b2931d7d3891466897e0ee262dba93eb9e) (PR #32's full CI passed; post-merge main CI was started). The original audit remains at 9 resolved, 3 partial and 18 open/unverified.
+**Status:** Living engineering document · **Last updated:** 21 October 2026 · **Baseline audit:** `0581111e2` · **Latest merged fix:** [`84a28ab`](https://github.com/Punit-Dethe/flashview/commit/84a28ab31fcbe40ba408b2824d5dc0b34ba3de51) (PR #47 and post-merge main CI passed). The original audit remains at 9 resolved, 3 partial and 18 open/unverified. The OPFS slice below is experimental work on a separate branch, not a production resolution.
 
 This document tracks the original **30 reliability findings** (H1–H10, M1–M14, L1–L6). It is not a new audit, and it does **not** count PRs as bugs: one PR may fix multiple symptoms; several PRs may address one finding.
 
@@ -384,6 +384,21 @@ as passes. See [worker validation](./relay-worker-validation.md) for final
 suite/release/performance results. OPFS, production content hashes, phone PDF
 preview removal, completed-only viewers and physical-device/campus proof remain
 pending. This slice does not complete the entire roadmap.
+
+## OPFS slice — experimental, not promoted
+
+| ID | Status | Finding / change | Evidence and remaining gate |
+| --- | --- | --- | --- |
+| N41 | **In progress — regression covered** | A storage retry must persist retained memory bytes even when only one block was missing, rather than skip it or fetch it again. | Forced OPFS quota failure, healthy peer file and Retry saving verify completion without new range requests. Full browser results are recorded in [OPFS validation](./opfs-cache-validation.md). |
+| N42 | **In progress — gated architecture** | New rooms can use private original files with a flush-before-checkpoint journal, payload hashes and whole-original verification. | Real short writes, aborted flush, corruption, worker restart, exact export and cap-sized transfer tests. Normal rooms stay on the existing cache. Mobile/WebKit, eviction/fallback and retention gates remain. |
+| N43 | **In progress — regression covered** | Stopping the source after every original byte is saved must not cancel independent local verification; retired source hashes must not hold live queue slots; cleanup must wait for readers. | Held verification plus source Stop, two canceled/held source reads followed by a healthy transfer, sealed reader lease and closed-generation fencing tests. No completion before verification succeeds, and no late canceled offers. |
+| N44 | **Open — do not promote OPFS** | The current OPFS design has no demonstrated storage advantage and public tail latency remains unproven. | Full CI passed at 6599eca. Matched storage checks favor batched strict IDB: Chromium 20 MiB 441 vs 512 ms; Firefox 20 MiB 418 vs 7294 ms. Five lighter worker traces per public mode did not reproduce 16490 ms; N38 attribution is unconfirmed. See [decision/evidence](./storage-evaluation.md). |
+| N45 | **In progress — compatibility gate** | Unsupported storage or older code must not silently allocate a new room under the wrong cache contract. | Probe before room POST, explicit older-sender refresh error, immutable admission root and Cloudflare init acknowledgement. Disabling new v3 creation is a safe rollback only while keeping v3 readers/backend support. |
+| N46 | **Open — experimental native close cost** | Repeated OPFS handle closure dominates Firefox persistence in the tested persistent Windows profile. | Traced 20 MiB case: 22 closes took 6506 ms; writes plus flushes took 41 ms. Isolated 200 MiB smoke confirms slow receipt. Normal rooms remain IDB. A retained-writer redesign is unimplemented; prefer the measured batched IDB candidate rather than assuming OPFS is faster. |
+
+The original audit counts are unchanged. Existing Chromium browser regression
+suites pass 35/35 on each relay backend. See the validation document for current
+OPFS matrix and release status; this does not finish the viewer-separation phase.
 
 ## How to keep this tracker current
 

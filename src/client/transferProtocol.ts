@@ -13,7 +13,7 @@ export type WorkerCommand =
   | { type: 'room'; roomId: string }
   | { type: 'stop' }
   | { type: 'retry-storage' }
-  | { type: 'rpc'; id: number; method: 'progress' | 'preview' | 'save-preview' | 'read' | 'clear';
+  | { type: 'rpc'; id: number; method: 'progress' | 'preview' | 'save-preview' | 'read' | 'clear' | 'opfs-probe';
       roomId: string; file?: PdfManifest; fileId?: string; dataUrl?: string; begin?: number; end?: number }
   | { type: 'cancel'; id: number }
   | { type: 'ack' };

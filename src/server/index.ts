@@ -21,7 +21,7 @@ type Peer = { ws: WebSocket; id: string; role: Role; room: Room; approved: boole
 type Outstanding = { fileId: string; senderId: string; begin: number; end: number; created: number };
 type Room = {
   id: string; code: string; joinToken: string; hostToken: string; roomGeneration: string; leaseToken: string;
-  autoApprove: boolean; cacheVersion?: 2; engine: RoomEngine;
+  autoApprove: boolean; cacheVersion?: 2 | 3; engine: RoomEngine;
   created: number; lastActivityAt: number; host: Peer | null; students: Map<string, Peer>;
   files: ReadonlyMap<string, PdfManifest>; fileState: RoomFileEngine; outstanding: Map<string, Outstanding>;
 };
@@ -172,7 +172,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     room.students.set(peer.id, peer); connections.set(ws, peer); releasePending(ws);
     publishFiles(room, joined.changes);
     send(ws, { type: participant.approved ? (joined.resumed ? 'join.resumed' : 'join.accepted') : 'join.pending',
-      roomCode: room.code, resumeToken: participant.token,
+      integrityRequired: room.cacheVersion === 3, roomCode: room.code, resumeToken: participant.token,
       ...(joined.resumed ? { files: [...room.files.values()].filter(file => file.ownerId === peer.id) } : {}) });
     if (joined.resumed && room.host?.ws.readyState !== WebSocket.OPEN) send(ws, { type: 'host.offline' });
     if (joined.resumed) for (const [requestId, range] of room.outstanding) {
@@ -217,7 +217,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   }
   if (msg.type === 'file.sync' && peer.role === 'student') {
     send(ws, {
-      type: 'file.manifest', files: [...room.files.values()].filter(file => file.ownerId === peer.id),
+      type: 'file.manifest', integrityRequired: room.cacheVersion === 3, files: [...room.files.values()].filter(file => file.ownerId === peer.id),
       approved: peer.approved, roomCode: room.code, hostOnline: room.host?.ws.readyState === WebSocket.OPEN,
     });
     return;
@@ -234,7 +234,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
       if (result && student) {
         student.approved = result.participant.approved;
         publishFiles(room, result.changes);
-        send(student.ws, { type: 'join.accepted', roomCode: room.code, resumeToken: result.participant.token });
+        send(student.ws, { type: 'join.accepted', integrityRequired: room.cacheVersion === 3, roomCode: room.code, resumeToken: result.participant.token });
         notifyHost(room, { type: 'student.updated', student: { id: student.id, name: student.name, approved: true } });
       }
     } else if (msg.type === 'student.reject' && typeof msg.studentId === 'string') {
@@ -286,7 +286,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     return;
   }
   if (msg.type === 'file.offer') {
-    const result = room.fileState.offer(peer, msg);
+    const result = room.fileState.offer(peer, msg, room.cacheVersion === 3);
     if (result.kind === 'rejected') return void send(ws, {
       type: 'file.rejected', fileId: msg.fileId, code: result.code, message: result.message,
     });
@@ -420,7 +420,7 @@ const http = createServer((req, res) => {
     const room: Room = {
       id: randomUUID(), roomGeneration: randomUUID(), leaseToken: randomToken(32), code, joinToken: randomToken(20),
       hostToken: randomToken(32), created: now, lastActivityAt: now, autoApprove,
-      cacheVersion: url.searchParams.get('cache') === '2' ? 2 : undefined,
+      cacheVersion: url.searchParams.get('cache') === '3' ? 3 : url.searchParams.get('cache') === '2' ? 2 : undefined,
       host: null, students: new Map(), files: fileState.files, fileState, engine, outstanding: new Map(),
     };
     rooms.set(room.id, room);

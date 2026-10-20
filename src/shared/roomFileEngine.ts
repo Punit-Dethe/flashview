@@ -32,8 +32,10 @@ export class RoomFileEngine {
     this.onMutation();
     return next;
   }
-  offer(owner: Owner, command: { fileId?: unknown; name?: unknown; size?: unknown }):
+  offer(owner: Owner, command: { fileId?: unknown; name?: unknown; size?: unknown; sha256?: unknown }, integrityRequired = false):
     FileTransition | { kind: 'rejected'; code: string; message: string } {
+    if (integrityRequired && (typeof command.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(command.sha256)))
+      return { kind: 'rejected', code: 'INTEGRITY_REQUIRED', message: 'Refresh WarpView on this device before sharing in this room.' };
     const result = admitFile(this.records, owner, command);
     if (result.kind === 'rejected') return result;
     const changed = result.kind !== 'replayed';

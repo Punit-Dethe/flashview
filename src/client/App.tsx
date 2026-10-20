@@ -667,7 +667,12 @@ export function App() {
     setBlockedStorageFiles([]);
     setRetryingBlockedStorage(false);
     try {
-      const response = await fetch('/api/rooms?cache=2&autoApprove=' + (autoApprove ? '1' : '0'), { method: 'POST' });
+      const cacheVersion = new URLSearchParams(location.search).get('storage') === 'opfs' ? 3 : 2;
+      if (cacheVersion === 3) {
+        try { await socket.request('opfs-probe', { roomId: '' }); }
+        catch { throw Error('Private file storage is unavailable in this browser. Open WarpView without the storage option to create a regular room.'); }
+      }
+      const response = await fetch('/api/rooms?cache=' + cacheVersion + '&autoApprove=' + (autoApprove ? '1' : '0'), { method: 'POST' });
       if (!response.ok) {
         const body = await response.json().catch(() => null) as { error?: unknown } | null;
         throw new Error(typeof body?.error === 'string' ? body.error : 'Unable to create room (' + response.status + ')');

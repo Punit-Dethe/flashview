@@ -33,6 +33,11 @@ async function backend() {
 }
 
 async function digest(page: Page, room: string, name: string): Promise<string> {
+  const session = await page.evaluate(() => {
+    const saved = JSON.parse(sessionStorage.getItem('flashview-host')!);
+    return { code: saved.code, cacheId: saved.cacheId ?? saved.code };
+  });
+  assert.equal(session.code, room, 'Hash the expected room generation');
   return page.evaluate(async ({ room, name }) => {
     const req = indexedDB.open('flashview-room-cache');
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -52,7 +57,7 @@ async function digest(page: Page, room: string, name: string): Promise<string> {
     for (const row of chunks) { bytes.set(new Uint8Array(row.data), offset); offset += row.data.byteLength; }
     const hash = await crypto.subtle.digest('SHA-256', bytes);
     return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
-  }, { room, name });
+  }, { room: session.cacheId, name });
 }
 
 test('suspended file picker and repeated mid-file disconnects recover promptly with exact cached bytes', { timeout: 90000 }, async t => {

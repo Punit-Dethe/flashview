@@ -64,6 +64,10 @@ No particular free-tier request allowance or hosting cost is guaranteed by this 
 6. Drop/reconnect the sender network; ensure previously committed bytes are reused.
 7. Test End room, a lost close response, refresh with pending intent and retry after failed local cache cleanup. Cache deletion must follow confirmed closure.
 8. Observe room expiration and memory use with expected session load; CI does not replace production monitoring.
+9. Confirm new-client creation advertises `cacheId: generation:<roomGeneration>`;
+   refresh restores originals and End room deletes only that namespace. Keep an
+   existing legacy room through the upgrade and verify its code-based cache
+   remains readable. Cache format is pinned at creation, not changed by renewal.
 
 ## Network and security considerations
 
@@ -79,3 +83,9 @@ No particular free-tier request allowance or hosting cost is guaranteed by this 
 Both deploy targets accept normal source rollback/redeployment. **Do not promise an active transfer will survive a relay restart or incompatible protocol downgrade.** Roll back to a compatible commit and create a fresh classroom room when necessary. The host's local cache may remain until ended or cleaned, but sender source files must still be reachable to repair missing chunks.
 
 See [Development and testing](./development.md) for CI and performance regressions.
+
+Generation-cache rollout adds `cache=2` negotiation to room creation. Deploy
+frontend and relay together. Existing rooms drain in place. A rollback serving
+frontend code older than cache-identity support cannot be expected to reopen new
+generation-keyed files after refresh; drain those rooms first or retain the
+cache-aware frontend. Do not erase browser data to work around a rollback.

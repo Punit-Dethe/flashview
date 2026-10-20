@@ -92,6 +92,31 @@ async function startServer(): Promise<{ port: number; child: ChildProcessWithout
   throw new Error('Server never started: ' + output);
 }
 
+test('room cache identity is generation-scoped and stable across sync and host replacement', { timeout: 25000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const create = async (query = '?cache=2') => await (await fetch('http://127.0.0.1:' + port + '/api/rooms' + query,
+      { method: 'POST' })).json() as { roomId: string; code: string; hostToken: string; roomGeneration: string; cacheId: string };
+    const room = await create();
+    assert.equal(room.cacheId, 'generation:' + room.roomGeneration);
+    assert.notEqual(room.cacheId, room.code);
+    const auth = { role: 'host', roomId: room.roomId, token: room.hostToken };
+    const host = await connect(port, auth); peers.push(host);
+    assert.equal((await host.wait('room.state')).cacheId, room.cacheId);
+    host.send({ type: 'room.sync' });
+    assert.equal((await host.wait('room.state')).cacheId, room.cacheId);
+    const replacement = await connect(port, auth); peers.push(replacement);
+    assert.equal((await replacement.wait('room.state')).cacheId, room.cacheId);
+    const other = await create();
+    assert.notEqual(other.cacheId, room.cacheId);
+    const legacy = await create('');
+    assert.equal(legacy.cacheId, legacy.code, 'A still-open old client creates a compatible room');
+    const oldHost = await connect(port, { role: 'host', roomId: legacy.roomId, token: legacy.hostToken }); peers.push(oldHost);
+    assert.equal((await oldHost.wait('room.state')).cacheId, legacy.code);
+  } finally { for (const peer of peers) peer.close(); child.kill(); }
+});
+
 test('replaced peers cannot stop files or end the room while their close handshake is pending', { timeout: 25000 }, async () => {
   const { port, child } = await startServer();
   const peers: TestPeer[] = [];

@@ -39,7 +39,8 @@ This document describes **current boundaries and recovery behavior**, not a secu
 | Background phone tab | Pause picker heartbeat; foreground `wake()` validates or reconnects socket | Cannot override mobile OS suspension or recover destroyed `File` objects |
 | Hidden dashboard while presenting | Dashboard/presenter independently send scoped HTTP lease renewals; no fixed two-hour presenter bridge cutoff | If all pages are suspended/killed, renewal cannot be guaranteed; byte transfer still belongs to the dashboard |
 | Lost end-room response | Durable browser intent; generation-scoped HTTP retry confirms closed/absent before deletion | Server absence confirms current generation absence, not historical command execution |
-| Local cleanup fails after closure | Keep confirmed closure and cache handle; explicit retry or refresh retries deletion | Clearing session storage manually discards the cleanup intent; code-based cache identity migration remains pending |
+| Local cleanup fails after closure | Keep confirmed closure and cache handle; explicit retry or refresh retries deletion | Clearing session storage manually discards the cleanup intent |
+| A six-digit code is reused | Newly negotiated rooms use immutable generation cache namespaces for originals/previews/readers/deletion | Existing rooms drain in their original namespace; this does not isolate same-origin rendering or detect same-length corruption |
 
 **Important:** A filename appearing in the host list is **not** proof of receipt. The sender's **Done** state means the host has verified all original bytes as locally persisted. A preview image is not proof that all PDF bytes arrived.
 

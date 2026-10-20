@@ -178,6 +178,38 @@ Final broad suites and deployment validation are recorded with the integration P
 Short-code cache-key migration, aggregate admission limits, full room-rule
 extraction and worker/OPFS integration remain in the implementation plan.
 
+## 20 October cache namespace integration (in progress)
+
+N20: Original-byte and preview keys used only a reusable six-digit room code.
+With the same file ID, a later room could inherit old same-length chunks and
+incorrectly report complete, or read/delete another room's cached data. New
+clients now negotiate `cache=2`; both relays pin that choice and advertise an
+immutable generation namespace at creation and host sync. The receiver persists
+and uses it throughout cache, presenter, exports and cleanup.
+
+Older clients and existing rooms keep their original cache layout, including
+when adopting generation-scoped lease credentials. New rooms never fall back to
+legacy bytes. This drains old rooms rather than deleting or copying live data.
+It does not resolve content hashing, arbitrary same-origin access, storage
+eviction, aggregate admission or independent viewer lifetime.
+
+The new browser regression seeds complete same-length chunks and previews under
+the reused code and another generation, transfers the same file ID, disconnects
+the source, refreshes, checks the original export hash, then confirms cleanup
+preserves the other caches. A second case creates a real legacy-mode room and
+verifies exact bytes and cleanup after saved lease/cache metadata is removed.
+Protocol coverage checks creation, sync, host takeover and old-client creation
+against both adapters. Original 9/3/18 audit counts remain unchanged until merge.
+
+Prior recovery PRs #39 and #40 have now both passed their complete CI runs.
+Current slice's final validation and release evidence are recorded in its PR.
+Local validation: 71 unit/protocol tests, 10 Cloudflare relay contracts, full
+Chromium browser suites 28/28 on Node and 28/28 on Cloudflare, and 7/7 targeted
+Firefox cache/lifecycle/interrupted-transfer cases passed. The strengthened cache
+restoration case also removes saved namespace metadata before refresh and checks
+that preview reads use only the authenticated namespace. Build, TypeScript and
+Worker dry-run passed. Physical devices/campus networks remain unverified.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

@@ -108,7 +108,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   .premium-app .invite-card { padding:28px 24px; }
 }
 
-/* Sky, clouds, hero and side-by-side actions are direct matches for v8. */
+/* The existing sky frames one large wordmark and the centered room controls. */
 .premium-app .welcome.reference-welcome { max-width:none; margin:0; padding:0 0 0; color:#0b1230; }
 .premium-app .reference-sky {
   position:relative; isolation:isolate; overflow:hidden; margin:14px; min-height:calc(100vh - 28px);
@@ -130,10 +130,15 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
     radial-gradient(30% 80% at 40% 108%,#fff 45%,transparent 72%),
     radial-gradient(26% 70% at 68% 105%,#fff 40%,transparent 72%),
     radial-gradient(30% 75% at 95% 100%,#fff 40%,transparent 72%); }
-.premium-app .reference-hero { position:relative; z-index:2; text-align:center; padding-top:24px; }
-.premium-app .home-wordmark {
-  margin:0 auto 64px; color:#000; font-size:46px; font-weight:700;
-  line-height:1.2; letter-spacing:-.03em;
+.premium-app .reference-welcome>.reference-sky { display:grid; place-items:center; padding:64px 24px 112px; }
+.premium-app .reference-hero {
+  position:relative; z-index:2; width:100%; max-width:1400px; margin:auto;
+  display:flex; flex-direction:column; align-items:center; gap:48px; text-align:center;
+}
+.premium-app .reference-hero .home-wordmark {
+  position:relative; z-index:1; margin:0; color:#fff;
+  font-size:clamp(64px,calc(16vw + 8px),188px); font-weight:700;
+  line-height:1; letter-spacing:-.04em; white-space:nowrap;
 }
 .premium-app .home-wordmark span { display:inline-block; }
 @media (prefers-reduced-motion:no-preference) {
@@ -147,13 +152,21 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   0%,100% { transform:translateY(2px); }
   50% { transform:translateY(-3px); }
 }
-.premium-app .reference-hero h1.reference-serif {
-  color:#fff; font-size:clamp(52px,7.6vw,112px); line-height:.94;
-  letter-spacing:-.025em; font-weight:400; max-width:11.5em;
-  margin:0 auto; text-shadow:0 2px 30px rgba(14,20,40,.25);
+.premium-app .hero-room-stage { position:relative; width:100%; }
+.premium-app .hero-accents { position:absolute; inset:0; pointer-events:none; }
+.premium-app .hero-accent { position:absolute; width:128px; }
+.premium-app .hero-accent svg { display:block; width:100%; height:auto;
+  filter:drop-shadow(0 12px 18px rgba(14,35,91,.16)); }
+.premium-app .hero-accent-speed { top:18%; left:12px; transform:rotate(-12deg); }
+.premium-app .hero-accent-account { top:55%; right:16px; transform:rotate(10deg); }
+@media(max-width:1199px) {
+  .premium-app .reference-hero { gap:88px; }
+  .premium-app .hero-accent { width:72px; top:-82px; }
+  .premium-app .hero-accent-speed { left:8%; }
+  .premium-app .hero-accent-account { right:8%; }
 }
 .premium-app .reference-actions {
-  position:relative; z-index:3; width:min(940px,100%); margin:44px auto 0;
+  position:relative; z-index:1; width:min(840px,100%); margin:0 auto;
   display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px;
   text-align:left; padding:10px; border-radius:30px; background:#fff;
   box-shadow:0 40px 90px -24px rgba(14,20,40,.55);
@@ -532,10 +545,12 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
  .premium-app .reference-nav .brand { font-size:17px; }
  .premium-app .reference-nav .reference-logo-mark,.premium-app .reference-nav .reference-logo-mark svg { width:22px; height:22px; }
  .premium-app .reference-sky { margin:8px; border-radius:25px; padding:16px 11px 120px; min-height:calc(100vh - 16px); }
- .premium-app .reference-hero { padding-top:18px; }
- .premium-app .home-wordmark { font-size:40px; margin-bottom:52px; }
- .premium-app .reference-hero h1.reference-serif { font-size:clamp(49px,13.4vw,72px); }
- .premium-app .reference-actions { margin:32px auto 0; border-radius:23px; gap:5px; padding:7px; }
+ .premium-app .reference-welcome>.reference-sky { padding:36px 11px 96px; }
+ .premium-app .reference-hero { gap:72px; }
+ .premium-app .hero-accent { top:-66px; width:58px; }
+ .premium-app .hero-accent-speed { left:7%; }
+ .premium-app .hero-accent-account { right:7%; }
+ .premium-app .reference-actions { border-radius:23px; gap:5px; padding:7px; }
  .premium-app .reference-pane { padding:22px 19px; border-radius:18px; }
  .premium-app .reference-pane h2.reference-serif { font-size:33px; }
  .premium-app .reference-pane-icon { margin-bottom:13px; }

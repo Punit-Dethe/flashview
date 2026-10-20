@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
 import { SiteHeader } from './SiteHeader';
 import { HomeWordmark } from './HomeWordmark';
+import { HeroAccents } from './HeroAccents';
 import { JoinWelcome } from './JoinWelcome';
 import { invitationFor, invitationUrl, readInvitation, rememberInvitation } from './joinInvitation';
 import { assignParticipantColors } from './participantColors';
@@ -961,64 +962,66 @@ export function App() {
             <section className="reference-sky">
               <div className="reference-hero">
                 <HomeWordmark/>
-                <h1 className="reference-serif">From your phone, onto the big screen.</h1>
-                <div className="reference-actions" id="start-room">
-                  <div className="reference-pane host-card">
-                    <div className="reference-pane-icon"><PixelIcon kind="folder"/></div>
-                    <h2 className="reference-serif">Start a room on the board</h2>
-                    <p>Open this on the classroom computer. Students scan the code and share files here.</p>
-                    <div className="reference-pane-bottom">
-                      <label className="reference-toggle">
-                        <span><strong>Approve each person</strong><small>Off: anyone with the code can join</small></span>
-                        <input type="checkbox" aria-label="Require approval" checked={!autoApprove}
-                          onChange={event=>setAutoApprove(!event.target.checked)}/>
-                        <span className="reference-switch" aria-hidden="true"/>
-                      </label>
-                      <button type="button" className="primary-button reference-pill"
-                        disabled={busy} onClick={createRoom}>
-                        {busy?'Creating…':'Create a room'}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="reference-pane join-card">
-                    <div className="reference-pane-icon"><PixelIcon kind="doc"/></div>
-                    <h2 className="reference-serif">Send from your device</h2>
-                    <p>Enter the six digits shown on the board, then choose your files.</p>
-                    <form onSubmit={e=>{e.preventDefault();connectStudent();}} className="join-form reference-join-form">
-                      <div className="reference-digits" aria-label="Six-digit room code">
-                        {Array.from({length:6},(_,index)=>(
-                          <input key={index} id={index===0?'code':undefined}
-                            type="text" inputMode="numeric" autoComplete="off"
-                            aria-label={index===0?'Room code':'Digit '+(index+1)}
-                            maxLength={index===0?undefined:1}
-                            value={joinCode[index]??''}
-                            onChange={e=>{
-                              const digits=e.target.value.replace(/\D/g,'');
-                              if(digits.length>1){
-                                setJoinCode(digits.slice(0,6));
-                                return;
-                              }
-                              const updated=joinCode.padEnd(6,' ').split('');
-                              updated[index]=digits||' ';
-                              setJoinCode(updated.join('').trimEnd());
-                              if(digits&&index<5)
-                                (e.target.parentElement?.querySelectorAll('input')[index+1] as HTMLInputElement | undefined)?.focus();
-                            }}
-                            onKeyDown={e=>{
-                              if(e.key==='Backspace'&&!e.currentTarget.value&&index>0)
-                                (e.currentTarget.parentElement?.querySelectorAll('input')[index-1] as HTMLInputElement | undefined)?.focus();
-                            }}
-                            onPaste={e=>{
-                              const pasted=e.clipboardData.getData('text').replace(/\D/g,'').slice(0,6);
-                              if(pasted){e.preventDefault();setJoinCode(pasted);}
-                            }}/>
-                        ))}
+                <div className="hero-room-stage">
+                  <HeroAccents/>
+                  <div className="reference-actions" id="start-room">
+                    <div className="reference-pane host-card">
+                      <div className="reference-pane-icon"><PixelIcon kind="folder"/></div>
+                      <h2 className="reference-serif">Start a room on the board</h2>
+                      <p>Open this on the classroom computer. Students scan the code and share files here.</p>
+                      <div className="reference-pane-bottom">
+                        <label className="reference-toggle">
+                          <span><strong>Approve each person</strong><small>Off: anyone with the code can join</small></span>
+                          <input type="checkbox" aria-label="Require approval" checked={!autoApprove}
+                            onChange={event=>setAutoApprove(!event.target.checked)}/>
+                          <span className="reference-switch" aria-hidden="true"/>
+                        </label>
+                        <button type="button" className="primary-button reference-pill"
+                          disabled={busy} onClick={createRoom}>
+                          {busy?'Creating…':'Create a room'}
+                        </button>
                       </div>
-                      <input id="student-name" className="reference-name-input"
-                        placeholder="Your name (optional)" aria-label="Your name (optional)" maxLength={32}
-                        value={studentName} onChange={e=>setStudentName(e.target.value)}/>
-                      <button className="primary-button reference-pill" type="submit">Join room</button>
-                    </form>
+                    </div>
+                    <div className="reference-pane join-card">
+                      <div className="reference-pane-icon"><PixelIcon kind="doc"/></div>
+                      <h2 className="reference-serif">Send from your device</h2>
+                      <p>Enter the six digits shown on the board, then choose your files.</p>
+                      <form onSubmit={e=>{e.preventDefault();connectStudent();}} className="join-form reference-join-form">
+                        <div className="reference-digits" aria-label="Six-digit room code">
+                          {Array.from({length:6},(_,index)=>(
+                            <input key={index} id={index===0?'code':undefined}
+                              type="text" inputMode="numeric" autoComplete="off"
+                              aria-label={index===0?'Room code':'Digit '+(index+1)}
+                              maxLength={index===0?undefined:1}
+                              value={joinCode[index]??''}
+                              onChange={e=>{
+                                const digits=e.target.value.replace(/\D/g,'');
+                                if(digits.length>1){
+                                  setJoinCode(digits.slice(0,6));
+                                  return;
+                                }
+                                const updated=joinCode.padEnd(6,' ').split('');
+                                updated[index]=digits||' ';
+                                setJoinCode(updated.join('').trimEnd());
+                                if(digits&&index<5)
+                                  (e.target.parentElement?.querySelectorAll('input')[index+1] as HTMLInputElement | undefined)?.focus();
+                              }}
+                              onKeyDown={e=>{
+                                if(e.key==='Backspace'&&!e.currentTarget.value&&index>0)
+                                  (e.currentTarget.parentElement?.querySelectorAll('input')[index-1] as HTMLInputElement | undefined)?.focus();
+                              }}
+                              onPaste={e=>{
+                                const pasted=e.clipboardData.getData('text').replace(/\D/g,'').slice(0,6);
+                                if(pasted){e.preventDefault();setJoinCode(pasted);}
+                              }}/>
+                          ))}
+                        </div>
+                        <input id="student-name" className="reference-name-input"
+                          placeholder="Your name (optional)" aria-label="Your name (optional)" maxLength={32}
+                          value={studentName} onChange={e=>setStudentName(e.target.value)}/>
+                        <button className="primary-button reference-pill" type="submit">Join room</button>
+                      </form>
+                    </div>
                   </div>
                 </div>
               </div>

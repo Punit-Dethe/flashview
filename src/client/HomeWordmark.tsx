@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
 export function HomeWordmark() {
-  const wordmark = useRef<HTMLParagraphElement>(null);
+  const wordmark = useRef<HTMLHeadingElement>(null);
   const [animating, setAnimating] = useState(false);
 
   useEffect(() => {
@@ -22,10 +22,10 @@ export function HomeWordmark() {
   }, []);
 
   return (
-    <p ref={wordmark} className={'home-wordmark' + (animating ? ' is-animating' : '')} role="img" aria-label="WarpView">
+    <h1 ref={wordmark} className={'home-wordmark' + (animating ? ' is-animating' : '')} aria-label="WarpView">
       {'warpview'.split('').map((letter, index) => (
         <span key={index} aria-hidden="true" style={{ '--letter': index } as CSSProperties}>{letter}</span>
       ))}
-    </p>
+    </h1>
   );
 }

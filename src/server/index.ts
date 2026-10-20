@@ -4,6 +4,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { roomExpiresAt } from '../shared/roomLifetime.js';
+import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle.js';
 import {
   decodeRangePacket, MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
   type PdfManifest, type StudentInfo,
@@ -95,10 +96,13 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     // A holder of the high-entropy host secret may replace an outdated connection
     // (e.g. refresh or reconnection before the browser's close event is processed).
     if (room.host && room.host.ws.readyState === WebSocket.OPEN) {
+      connections.delete(room.host.ws);
       room.host.ws.close(4000, 'Host reconnected');
     }
     const peer: Peer = { ws, id: randomUUID(), role: 'host', room, name: 'Host', approved: true };
     room.host = peer;
+    // Old receiver requests cannot complete into the replacement's callbacks.
+    room.outstanding.clear();
     room.lastActivityAt = Date.now();
     connections.set(ws, peer);
     send(ws, {
@@ -113,14 +117,14 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     const code = typeof msg.code === 'string' ? msg.code : undefined;
     const room = findRoom(token, code);
     if (!room) return void sendError(ws, 'Room not found or expired');
-    if (!room.host || room.host.ws.readyState !== WebSocket.OPEN) {
-      return void sendError(ws, 'The host is offline');
-    }
     const previous = typeof msg.resumeToken === 'string'
       ? room.sessions.get(msg.resumeToken) : undefined;
     if (previous) {
       const oldPeer = room.students.get(previous.id);
-      if (oldPeer) oldPeer.ws.close(4000, 'Session resumed on another socket');
+      if (oldPeer) {
+        connections.delete(oldPeer.ws);
+        oldPeer.ws.close(4000, 'Session resumed on another socket');
+      }
       const peer: Peer = {
         ws, id: previous.id, role: 'student', room,
         name: previous.name, approved: previous.approved,
@@ -129,8 +133,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       connections.set(ws, peer);
       const ownFiles = [...room.files.values()].filter(f => f.ownerId === peer.id);
       for (const file of ownFiles) {
-        if (file.status === 'offline') {
-          file.status = previous.approved ? 'approved' : 'pending';
+        if (resumeDisconnectedFile(file, previous.approved)) {
           notifyHost(room, { type: 'file.updated', file });
         }
       }
@@ -138,6 +141,8 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
         type: previous.approved ? 'join.resumed' : 'join.pending',
         roomCode: room.code, resumeToken: previous.token, files: ownFiles,
       });
+      if (!room.host || room.host.ws.readyState !== WebSocket.OPEN)
+        send(ws, { type: 'host.offline' });
       // A suspended socket can still look OPEN at the relay. Its outstanding
       // requests belong to this same authenticated sender, so deliver them to
       // the replacement after its manifest, preserving IDs and deadlines.
@@ -147,6 +152,9 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       }
       notifyHost(room, { type: 'student.updated', student: { id: peer.id, name: peer.name, approved: peer.approved } });
       return;
+    }
+    if (!room.host || room.host.ws.readyState !== WebSocket.OPEN) {
+      return void sendError(ws, 'The host is offline');
     }
     if (room.students.size >= MAX_STUDENTS) return void sendError(ws, 'Room is full');
     const approved = room.autoApprove;
@@ -180,6 +188,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   const peer = connections.get(ws);
   if (!peer) return void sendError(ws, 'Authentication required');
   const room = peer.room;
+  if (peer.role === 'host' ? room.host !== peer : room.students.get(peer.id) !== peer) return;
   if (peer.role === 'host' && room.host === peer) room.lastActivityAt = Date.now();
   if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
   if (msg.type === 'room.sync' && peer.role === 'host') {
@@ -321,7 +330,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
   } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
     const file = room.files.get(msg.fileId);
     if (file?.ownerId === peer.id) {
-      file.status = 'offline';
+      revokeFile(file);
       for (const [id, pending] of room.outstanding) {
         if (pending.fileId === msg.fileId) {
           room.outstanding.delete(id);
@@ -336,6 +345,7 @@ function handleBinary(ws: WebSocket, raw: RawData): void {
   const sender = connections.get(ws);
   if (!sender || sender.role !== 'student' || !sender.approved) return;
   const room = sender.room;
+  if (room.students.get(sender.id) !== sender) return;
   const buffer = Buffer.isBuffer(raw) ? raw : Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw);
   try {
     const { header, bytes } = decodeRangePacket(buffer.buffer.slice(

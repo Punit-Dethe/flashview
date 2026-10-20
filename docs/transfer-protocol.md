@@ -60,6 +60,28 @@ the initial join retryable even when its acknowledgement is lost. This secret
 must never be derived from a room code or shared with the host. Clients that
 omit it still receive a server-generated capability as before.
 
+A known sender can resume its authenticated session while the host is temporarily
+offline. It receives its manifest/approval followed by `host.offline`, retaining
+the page's File references until `host.online`. A new admission still requires
+an online host. This does not recover files from a phone page the OS destroyed.
+
+Socket replacement retires the old peer's authority before initiating its close
+handshake; late control and binary messages are ignored. Receiver takeover clears
+obsolete outstanding requests on both adapters so the new receiver can request
+its missing chunks immediately.
+
+Each sender range response is bound to the socket that requested it, before any
+asynchronous file read starts. Success, backpressure failure and read errors from
+an obsolete connection cannot be emitted on its replacement, even when the relay
+replays the same request ID. Only the replacement's own response can complete it.
+
+An explicit `file.revoke` records `revoked: true` with the existing `offline`
+status, cancels the file's outstanding requests and discards late responses.
+Reconnecting or replaying the offer cannot resume that file ID. Transient network
+loss leaves `revoked` unset and remains recoverable. This optional field preserves
+older clients' status contract; stops recorded before this marker existed cannot
+be distinguished retroactively from a disconnection.
+
 ## Binary file data
 
 Byte payloads use a compact frame built by `encodeRangePacket`:

@@ -14,7 +14,7 @@ async function backend() {
   const port = address.port;
   await new Promise<void>(resolve => listener.close(() => resolve()));
   const child = spawn(process.execPath, process.env.FLASHVIEW_BACKEND === 'cloudflare'
-    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--port', String(port), '--ip', '127.0.0.1']
+    ? ['node_modules/wrangler/bin/wrangler.js', 'dev', '--inspector-port', '0', '--port', String(port), '--ip', '127.0.0.1']
     : ['--import', 'tsx', 'src/server/index.ts'], {
     env: { ...process.env, PORT: String(port), NODE_ENV: 'test', BROWSER: 'none' },
   });
@@ -88,6 +88,8 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
           super(...args);
           window.__sockets.push(this);
           this.addEventListener('message', event => {
+            if (typeof event.data === 'string' && JSON.parse(event.data).type === 'join.resumed')
+              window.__resumeCount = (window.__resumeCount || 0) + 1;
             if (window.__sockets[0] === this && location.search.includes('loseJoinAck=1') &&
                 typeof event.data === 'string' && JSON.parse(event.data).type === 'join.accepted') {
               window.__lostJoinAck = true;
@@ -105,6 +107,10 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
         const blob = slice.apply(this, args);
         const read = blob.arrayBuffer.bind(blob);
         blob.arrayBuffer = async function() {
+          if (window.__holdReads) {
+            window.__heldReads ||= [];
+            await new Promise((resolve, reject) => window.__heldReads.push(reject));
+          }
           await new Promise(resolve => setTimeout(resolve, 100));
           return read();
         };
@@ -184,6 +190,26 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
       t.diagnostic('Return to persisted progress ' + (round + 1) + ': ' + (Date.now() - returned) + ' ms');
       t.diagnostic('Return handler: ' + JSON.stringify(resume));
     }
+    // A read begun on the old socket may reject after a replacement has
+    // authenticated and replayed the same request. Its stale failure must not
+    // cancel the replacement's response or start a file retry cooldown.
+    await student.evaluate('window.__holdReads = true');
+    await student.waitForFunction('window.__heldReads?.length > 0');
+    const resumedBefore = Number(await student.evaluate('window.__resumeCount || 0'));
+    await student.evaluate(`{
+      window.__sockets.at(-1).__dead = true;
+      window.__holdReads = false;
+      document.dispatchEvent(new Event('freeze'));
+      document.dispatchEvent(new Event('resume'));
+    }`);
+    await student.waitForFunction(previous =>
+      Number((window as typeof window & { __resumeCount?: number }).__resumeCount) > previous, resumedBefore);
+    await student.evaluate(`{
+      for (const reject of window.__heldReads.splice(0)) reject(new Error('Old connection read failed'));
+    }`);
+    await delay(200);
+    assert.equal(trace.some(event => event.includes('range.error Cannot read file from sender device')), false,
+      'Old asynchronous reads must not fail replayed requests on the replacement connection');
     // Also return from a healthy picker without adding another file. Recovery
     // must preserve the active transfer and not create a duplicate file card.
     const healthyChooserReady = student.waitForEvent('filechooser');

@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
+import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle';
 import {
   MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
   decodeRangePacket, type PdfManifest, type StudentInfo,
@@ -161,10 +162,15 @@ export class ClassroomRoom extends DurableObject<Env> {
         return void send(ws, { type: 'error', message: 'Invalid host credentials' });
       }
       for (const [other, active] of this.peers) {
-        if (other !== ws && active.role === 'host') other.close(4000, 'Host reconnected');
+        if (other !== ws && active.role === 'host') {
+          this.peers.delete(other);
+          other.serializeAttachment(null);
+          other.close(4000, 'Host reconnected');
+        }
       }
       this.putPeer(ws, { ...peer, role: 'host', name: 'Host', approved: true });
       await this.touchHostActivity();
+      if (!this.peers.has(ws)) return;
       // Requests were owned by the old host socket. After a host resume they
       // cannot be delivered to the new socket safely; clear the volatile map
       // so it cannot block retries from the new receiver.
@@ -182,22 +188,22 @@ export class ClassroomRoom extends DurableObject<Env> {
       if (msg.code !== cfg.code && msg.joinToken !== cfg.joinToken) {
         return void send(ws, { type: 'error', message: 'Room not found' });
       }
-      if (!this.host) return void send(ws, { type: 'error', message: 'The host is offline' });
       const previous = typeof msg.resumeToken === 'string' ? this.sessions.get(msg.resumeToken) : undefined;
       if (previous) {
         // The resume token only exists in this page's memory. Never send it to the teacher.
-        const current = this.student(previous.id);
-        if (current && current.ws !== ws) {
-          this.peers.delete(current.ws);
-          current.ws.close(4000, 'Session resumed on another socket');
+        for (const [other, active] of this.peers) {
+          if (other !== ws && active.role === 'student' && active.id === previous.id) {
+            this.peers.delete(other);
+            other.serializeAttachment(null);
+            if (other.readyState === OPEN) other.close(4000, 'Session resumed on another socket');
+          }
         }
         this.putPeer(ws, {
           ...peer, id: previous.id, role: 'student', name: previous.name, approved: previous.approved,
         });
         let changed = false;
         for (const file of this.files.values()) {
-          if (file.ownerId === previous.id && file.status === 'offline') {
-            file.status = previous.approved ? 'approved' : 'pending';
+          if (file.ownerId === previous.id && resumeDisconnectedFile(file, previous.approved)) {
             this.sendHost({ type: 'file.updated', file });
             changed = true;
           }
@@ -208,6 +214,7 @@ export class ClassroomRoom extends DurableObject<Env> {
           type: previous.approved ? 'join.resumed' : 'join.pending',
           roomCode: cfg.code, resumeToken: previous.token, files: ownFiles,
         });
+        if (!this.host) send(ws, { type: 'host.offline' });
         // Recover requests sent into the previous half-open phone socket.
         // Keep IDs/deadlines: duplicate or late responses remain harmless.
         for (const [requestId, range] of this.ranges) {
@@ -220,6 +227,7 @@ export class ClassroomRoom extends DurableObject<Env> {
         });
         return;
       }
+      if (!this.host) return void send(ws, { type: 'error', message: 'The host is offline' });
       if (this.students().length >= MAX_STUDENTS) return void send(ws, { type: 'error', message: 'Room is full' });
       const approved = cfg.autoApprove === true;
       const newSession: ResumeSession = {
@@ -284,7 +292,10 @@ export class ClassroomRoom extends DurableObject<Env> {
       return;
     }
     if (!peer.role) return void send(ws, { type: 'error', message: 'Authentication required' });
-    if (peer.role === 'host') await this.touchHostActivity();
+    if (peer.role === 'host') {
+      await this.touchHostActivity();
+      if (this.peers.get(ws) !== peer) return;
+    }
     if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
     // The database-backed manifest is authoritative, not best-effort live notifications.
     if (msg.type === 'room.sync' && peer.role === 'host') {
@@ -446,7 +457,12 @@ export class ClassroomRoom extends DurableObject<Env> {
     } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
       const file = this.files.get(msg.fileId);
       if (file?.ownerId === peer.id) {
-        file.status = 'offline';
+        revokeFile(file);
+        for (const [requestId, range] of this.ranges) {
+          if (range.fileId !== file.fileId) continue;
+          this.ranges.delete(requestId);
+          this.sendHost({ type: 'range.error', requestId, message: 'File sharing stopped' });
+        }
         await this.persist();
         this.sendHost({ type: 'file.updated', file });
       }

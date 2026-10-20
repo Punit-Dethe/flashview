@@ -19,6 +19,8 @@ export interface FileManifest {
   revoked?: boolean;
   /** Cached bytes last acknowledged by the classroom computer (not sent bytes). */
   cachedBytes?: number;
+  /** Metadata transition version; absent in rooms written by older relays. */
+  revision?: number;
 }
 
 export interface StudentInfo {

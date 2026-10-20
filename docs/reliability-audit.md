@@ -286,6 +286,39 @@ contracts and three targeted Cloudflare browser cases (packet sizes, admission
 wait and interrupted 20 MiB integrity) passed. Final live results are recorded
 in the PR.
 
+## 20 October shared file engine integration (in progress)
+
+PR #43's full CI passed. N28–N30 advance the shared room-engine phase on top of
+that release; the original 9/3/18 counts remain unchanged until merge.
+
+| New ID | Status | Problem / correction | Evidence |
+| --- | --- | --- | --- |
+| N28 | **In progress** | File offer, completion/reset, approval, Stop and disconnect/resume logic was duplicated across the two relay adapters. A shared `RoomFileEngine` now owns those metadata transitions and their effects. It preserves budgets, ownership, terminal Stop, exact retries and optional per-file revisions, while leaving sockets/storage/byte forwarding in adapters. | Shared unit cases cover unauthorized commands, immutable snapshots, legacy records, terminal state, duplicate receipt/Stop and restoration. One contract scenario runs on both adapters and checks revisions, lost-receipt retry, zero reset, Stop/replay, disconnect/resume and exact original bytes; Cloudflare also restarts with persisted metadata. |
+| N29 | **In progress** | Cloudflare emitted some file updates before saving, and other updates after an await without checking whether a newer transition had superseded them. Disconnect cleanup also sent `student.left` after awaiting persistence even if the private identity had returned. | Publish after a confirmed save and re-evaluate immutable transition identity; suppress old approval/completion/offline effects, reconcile delayed offers to current state and recheck current participant/generation. Cancel obsolete ranges before awaiting disconnect persistence. Approval/session and affected legacy file metadata commit together. Unit tests deliberately reverse transition completion; these expose ordering hazards, not a reproduced physical-device stall. |
+| N30 | **In progress** | The extracted engine needed an explicit pending-versus-saved contract: a non-resetting persistence adapter could otherwise treat a duplicate after a failed write as already saved. This is a forced adapter-fault case, not a reproduced Cloudflare outage; Cloudflare already resets objects and discards output on disk-write failure. | Track pending mutation/checkpoint versions, confirm only successful adapter writes, flush dirty metadata on command retry and authenticated snapshots, and keep newer changes pending when an older write finishes. Fault tests fail offer and completion writes, retry identical commands, hold an older save across Stop, and confirm already-saved retries perform no extra write. |
+
+Initial full browser suites passed 30/30 on Node and 30/30 on Cloudflare, with
+9 targeted Firefox cases. After the persistence-checkpoint follow-up, all 97
+unit/protocol cases, 18 Cloudflare relay contracts, 11 targeted Cloudflare browser
+cases and TypeScript/Worker dry-run passed. Build passed before that backend-only
+follow-up; client assets are unchanged. Final speed/live evidence is recorded in
+the integration PR and the validation report.
+
+This is the file-metadata portion of the room engine. Participant command rules,
+room-wide revisions/snapshot ordering and full persistence orchestration remain
+pending. Optional file revisions are compatible metadata, not content hashes or
+client-side stale-snapshot protection. Node still loses room metadata on process
+restart. No per-packet storage work, new transfer scheduler, R2 path, cache
+migration or larger per-file allowance is introduced. Physical phones/campus
+networks remain unverified.
+
+Cloudflare's default [storage input/output gates](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+remain enabled: successful `put()` submission may precede disk flush, while
+outgoing messages wait for confirmation and failed writes reset the object.
+The shared checkpoint tests deliberately model failure without that automatic
+reset. They make the engine's adapter contract explicit; they do not prove the
+deployed runtime previously acknowledged failed disk writes.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

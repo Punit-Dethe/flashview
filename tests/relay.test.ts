@@ -213,6 +213,58 @@ test('room creation is source-limited with Retry-After and Cloudflare quota surv
   } finally { child.kill(); }
 });
 
+test('shared file engine versions completion, reset, Stop and private resume consistently across metadata restoration', { timeout: 35000 }, async () => {
+  let { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const origin = 'http://127.0.0.1:' + port;
+    const room = await (await fetch(origin + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const hostAuth = { role: 'host', roomId: room.roomId, token: room.hostToken };
+    let host = await connect(port, hostAuth); peers.push(host); await host.wait('room.state');
+    let phone = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(phone);
+    const joined = await phone.wait('join.accepted');
+    const offer = { type: 'file.offer', fileId: 'engine-original', name: 'original.bin', size: 4 };
+    phone.send(offer);
+    assert.equal(((await phone.wait('file.state')).file as { revision: number }).revision, 1);
+    await host.wait('file.announced');
+    host.send({ type: 'cache.progress', fileId: offer.fileId, bytes: 4 });
+    assert.equal((await host.wait('cache.progress.receipt')).fileRevision, 2);
+    assert.equal((await phone.wait('cache.progress')).fileRevision, 2);
+    host.send({ type: 'cache.progress', fileId: offer.fileId, bytes: 4 });
+    assert.equal((await host.wait('cache.progress.receipt')).fileRevision, 2, 'Lost receipts retry without a new transition');
+    host.send({ type: 'cache.progress', fileId: offer.fileId, bytes: 0, snapshot: true });
+    const reset = await phone.wait('cache.progress'); assert.equal(reset.bytes, 0); assert.equal(reset.fileRevision, 3);
+    phone.send(offer);
+    assert.equal(((await phone.wait('file.state')).file as { revision: number }).revision, 3);
+    phone.send({ type: 'file.revoke', fileId: offer.fileId });
+    assert.equal(((await host.wait('file.updated')).file as { revision: number }).revision, 4);
+    phone.send({ type: 'file.revoke', fileId: offer.fileId });
+    assert.equal(((await host.wait('file.updated')).file as { revision: number }).revision, 4, 'Duplicate Stop is idempotent');
+    phone.send({ ...offer, fileId: 'engine-live-file' }); await phone.wait('file.state'); await host.wait('file.announced');
+    phone.close(); await host.wait('student.left');
+    if (process.env.FLASHVIEW_BACKEND === 'cloudflare') {
+      const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
+      if (process.platform === 'win32') spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
+      else child.kill();
+      await exited; ({ child } = await startServer(port));
+      host = await connect(port, hostAuth); peers.push(host); await host.wait('room.state');
+    }
+    phone = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: joined.resumeToken }); peers.push(phone);
+    const restored = (await phone.wait('join.resumed')).files as Array<{ fileId: string; revision: number; status: string; revoked?: boolean; cachedBytes?: number }>;
+    const stopped = restored.find(file => file.fileId === offer.fileId)!;
+    assert.equal(stopped.revision, 4); assert.equal(stopped.revoked, true); assert.equal(stopped.cachedBytes, 0);
+    const live = restored.find(file => file.fileId === 'engine-live-file')!;
+    assert.equal(live.revision, 3); assert.equal(live.status, 'approved');
+    host.send({ type: 'range.request', requestId: 'engine-readback', fileId: live.fileId, begin: 0, end: 4 });
+    await phone.wait('range.request');
+    phone.ws.send(encodeRangePacket({ type: 'range.data', requestId: 'engine-readback', fileId: live.fileId, begin: 0 }, Uint8Array.of(2, 7, 1, 8)));
+    const binary = await host.waitBinary();
+    assert.deepEqual([...decodeRangePacket(binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength) as ArrayBuffer).bytes], [2, 7, 1, 8]);
+  } finally { for (const peer of peers) peer.ws.terminate(); child.kill(); }
+});
+
 test('shared file admission bounds retained bytes, rejects conflicts and preserves full-room retries and healthy ranges', { timeout: 35000 }, async () => {
   const { port, child } = await startServer();
   const peers: TestPeer[] = [];

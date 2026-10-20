@@ -41,6 +41,7 @@ Sender browser(s)                       Relay                         Host brows
 | Node relay | [`src/server/index.ts`](../src/server/index.ts) | HTTP, WebSocket upgrades, in-memory rooms and bounded forwarding |
 | Cloudflare relay | [`src/cloudflare/index.ts`](../src/cloudflare/index.ts) | Worker routes, per-room Durable Object, hibernation and room metadata |
 | Shared contracts | [`src/shared/`](../src/shared/) | File manifests, binary encoding, limits, liveness and backpressure |
+| File metadata engine | [`roomFileEngine.ts`](../src/shared/roomFileEngine.ts) | Offers, terminal Stop, approval/reconnect/disconnect, completion/reset, immutable results, file revisions and persistence checkpoints; no byte packets or renderer work |
 
 ## A file's journey
 
@@ -104,6 +105,27 @@ data is deleted to migrate. See [the protocol](./transfer-protocol.md#browser-ca
 and [Security and reliability](./security-and-reliability.md) for limitations.
 
 ## Node versus Cloudflare
+
+Both adapters now use one file metadata engine. It reserves synchronously and
+returns immutable transition results; Cloudflare persists before publishing
+effects, then suppresses obsolete results if another transition superseded them.
+A delayed offer reconciles to the latest file state instead of sending an old
+approval. Duplicate completion still receipts a lost acknowledgment, duplicate
+Stop remains terminal, and replay does not charge admission again. Legacy files
+gain an optional metadata `revision` on their next real transition; room/cache
+identity and the chunk schema are unchanged.
+
+Persistence checkpoints advance only after a successful write. A duplicate
+command after a failed save must still flush unsaved metadata before acknowledgment.
+Approving a participant commits its session approval and affected legacy files
+together. Socket authority, participant admission, range tables and room controls
+still belong partly to adapters; this slice does not finish the whole room engine.
+File revisions do not yet provide client-side room-wide snapshot ordering.
+Cloudflare's default [storage gates](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+remain enabled. A resolved `put()` can mean buffered submission; the runtime
+holds network output until flush and resets the object on write failure. The
+checkpoint marks successful adapter submission and complements those gates; it
+does not add a forced disk synchronization to each metadata command.
 
 Both relay implementations handle compatible messages but differ operationally:
 

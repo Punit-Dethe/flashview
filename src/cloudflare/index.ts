@@ -1,13 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { checkCreationPermit } from './creationPermit';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity';
-import { admitFile, admitSender } from '../shared/roomAdmission';
+import { admitSender } from '../shared/roomAdmission';
+import { RoomFileEngine, persistRoomFiles, type FileTransition } from '../shared/roomFileEngine';
 import { AUTH_TIMEOUT_MS, MAX_PENDING_ROOM, MAX_ROOM_SOCKETS, CREATION_LIMIT, CREATION_WINDOW_MS, JOIN_LIMIT, JOIN_WINDOW_MS,
   consumeWindow, nextRoomAlarm, retryAfterSeconds, JOIN_RATE_MESSAGE, type RateWindow } from '../shared/connectionGuards';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
-import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle';
 import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl';
 import {
   MAX_RANGE_BYTES, ROOM_TTL_MS, RANGE_TIMEOUT_MS,
@@ -52,7 +52,8 @@ function json(value: unknown, status = 200): Response {
 export class ClassroomRoom extends DurableObject<Env> {
   private peers = new Map<WebSocket, Peer>();
   private config: RoomConfig | null = null;
-  private files = new Map<string, PdfManifest>();
+  private fileState = new RoomFileEngine();
+  private get files(): ReadonlyMap<string, PdfManifest> { return this.fileState.files; }
   private sessions = new Map<string, ResumeSession>();
   private joinWindow: RateWindow | null = null;
   private creationWindow: RateWindow | null = null;
@@ -76,7 +77,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     ctx.blockConcurrencyWhile(async () => {
       this.config = await ctx.storage.get<RoomConfig>('config') ?? null;
       const stored = await ctx.storage.get<PdfManifest[]>('files') ?? [];
-      this.files = new Map(stored.map(file => [file.fileId, file]));
+      this.fileState = new RoomFileEngine(stored);
       const sessions = await ctx.storage.get<ResumeSession[]>('sessions') ?? [];
       this.sessions = new Map(sessions.map(session => [session.token, session]));
       this.joinWindow = await ctx.storage.get<RateWindow>('joinWindow') ?? null;
@@ -112,8 +113,23 @@ export class ClassroomRoom extends DurableObject<Env> {
     this.peers.set(ws, peer);
     ws.serializeAttachment(peer);
   }
-  private async persist(): Promise<void> {
-    await this.ctx.storage.put('files', [...this.files.values()]);
+  private async commitFiles(changes: FileTransition[], actor?: WebSocket, includeSessions = false): Promise<void> {
+    const engine = this.fileState, config = this.config;
+    await persistRoomFiles(engine, files => includeSessions
+      ? this.ctx.storage.put({ files, sessions: [...this.sessions.values()], joinWindow: this.joinWindow })
+      : this.ctx.storage.put('files', files), includeSessions);
+    if (this.fileState !== engine || this.config !== config || !config) return;
+    for (const change of changes) for (const effect of engine.effects(change)) {
+      if (effect.to === 'host') this.sendHost(effect.message);
+      else if (effect.to === 'owner') {
+        const owner = this.student(effect.ownerId!);
+        if (owner?.peer.approved) send(owner.ws, effect.message);
+      } else if (actor) {
+        const peer = this.peers.get(actor);
+        if (peer?.role === 'host' ? this.host === actor :
+            peer?.role === 'student' && this.student(peer.id)?.ws === actor) send(actor, effect.message);
+      }
+    }
   }
   private async persistSessions(): Promise<void> {
     await this.ctx.storage.put({ sessions: [...this.sessions.values()], joinWindow: this.joinWindow });
@@ -147,7 +163,7 @@ export class ClassroomRoom extends DurableObject<Env> {
     this.config = null;
     const sockets = [...this.peers.keys()];
     this.peers.clear();
-    this.files.clear();
+    this.fileState.clear();
     this.sessions.clear();
     this.joinWindow = null;
     this.ranges.clear();
@@ -204,6 +220,7 @@ export class ClassroomRoom extends DurableObject<Env> {
         if (!this.expired()) return new Response('Room code in use', { status: 409 });
         if (this.config) await this.terminate();
         const created = Date.now();
+        this.fileState = new RoomFileEngine();
         this.joinWindow = null;
         this.config = {
           code: incoming.code!, hostToken: incoming.hostToken!, joinToken: incoming.joinToken!, created,
@@ -287,6 +304,8 @@ export class ClassroomRoom extends DurableObject<Env> {
       // cannot be delivered to the new socket safely; clear the volatile map
       // so it cannot block retries from the new receiver.
       this.ranges.clear();
+      await this.commitFiles([]);
+      if (this.config !== cfg || this.host !== ws) return;
       send(ws, {
         type: 'room.state', id: cfg.code, code: cfg.code, joinToken: cfg.joinToken,
         roomGeneration: cfg.roomGeneration, leaseToken: cfg.leaseToken,
@@ -325,15 +344,8 @@ export class ClassroomRoom extends DurableObject<Env> {
         this.putPeer(ws, {
           ...peer, id: previous.id, role: 'student', name: previous.name, approved: previous.approved,
         });
-        let changed = false;
-        for (const file of this.files.values()) {
-          if (file.ownerId === previous.id && resumeDisconnectedFile(file, previous.approved)) {
-            this.sendHost({ type: 'file.updated', file });
-            changed = true;
-          }
-        }
-        if (changed) await this.persist();
-        if (this.peers.get(ws)?.id !== previous.id) return;
+        await this.commitFiles(this.fileState.ownerStatus(previous.id, 'resume', previous.approved));
+        if (this.config !== cfg || this.peers.get(ws)?.id !== previous.id) return;
         const ownFiles = [...this.files.values()].filter(file => file.ownerId === previous.id);
         send(ws, {
           type: previous.approved ? 'join.resumed' : 'join.pending',
@@ -446,6 +458,12 @@ export class ClassroomRoom extends DurableObject<Env> {
       if (this.peers.get(ws) !== peer) return;
     }
     if (msg.type === 'heartbeat.ping') return void send(ws, { type: 'heartbeat.pong' });
+    if ((msg.type === 'room.sync' && peer.role === 'host') ||
+        (msg.type === 'file.sync' && peer.role === 'student' && peer.approved)) {
+      const config = this.config;
+      if (this.fileState.needsPersistence) await this.commitFiles([]);
+      if (this.config !== config || this.peers.get(ws) !== peer) return;
+    }
     // The database-backed manifest is authoritative, not best-effort live notifications.
     if (msg.type === 'room.sync' && peer.role === 'host') {
       return void send(ws, {
@@ -466,28 +484,8 @@ export class ClassroomRoom extends DurableObject<Env> {
 
     if (peer.role === 'host') {
       if (msg.type === 'cache.progress') {
-        const file = typeof msg.fileId === 'string' ? this.files.get(msg.fileId) : undefined;
-        const bytes = msg.bytes;
-        // Hot path protection: ignore intermediate progress from older hosts.
-        // Persist exactly once per completed PDF, not per cached chunk.
-        // A zero snapshot can clear stale completed metadata after cache loss.
-        if (file && Number.isSafeInteger(bytes) &&
-            (bytes === file.size || (msg.snapshot === true && bytes === 0))) {
-          const next = Number(bytes);
-          if (file.cachedBytes !== next) {
-            file.cachedBytes = next;
-            await this.persist();
-            const student = this.student(file.ownerId);
-            if (student && student.peer.approved) send(student.ws, {
-              type: 'cache.progress', fileId: file.fileId, bytes: next,
-              size: file.size, complete: next === file.size,
-            });
-          }
-          // This acknowledgment is deliberately returned even if the relay
-          // already held the same cachedBytes. Lost receipts are safe to retry.
-          if (next === file.size)
-            send(ws, { type: 'cache.progress.receipt', fileId: file.fileId, bytes: next });
-        }
+        const change = this.fileState.cacheProgress(msg.fileId, msg.bytes, msg.snapshot);
+        if (change) await this.commitFiles([change], ws);
         return;
       }
       if ((msg.type === 'student.accept' || msg.type === 'student.reject') && typeof msg.studentId === 'string') {
@@ -496,25 +494,19 @@ export class ClassroomRoom extends DurableObject<Env> {
           if (msg.type === 'student.accept') {
             student.peer.approved = true;
             this.putPeer(student.ws, student.peer);
-            // Compatibility with pending documents created before automatic approval.
-            let restored = false;
-            for (const file of this.files.values()) {
-              if (file.ownerId === student.peer.id && file.status === 'pending') {
-                file.status = 'approved';
-                this.sendHost({ type: 'file.updated', file });
-                restored = true;
-              }
-            }
-            if (restored) await this.persist();
+            const changes = this.fileState.ownerStatus(student.peer.id, 'approve');
             const session = [...this.sessions.values()].find(record => record.id === student.peer.id);
-            if (session) {
-              session.approved = true;
-              await this.persistSessions();
-            }
-            send(student.ws, {
+            if (session) session.approved = true;
+            // Reserve approval synchronously and commit session/file metadata together.
+            const config = this.config;
+            await this.commitFiles(changes, undefined, true);
+            const current = this.student(student.peer.id);
+            if (this.config !== config || !current?.peer.approved ||
+                !session || this.sessions.get(session.token) !== session) return;
+            send(current.ws, {
               type: 'join.accepted', roomCode: this.config?.code, resumeToken: session?.token,
             });
-            this.sendHost({ type: 'student.updated', student: { id: student.peer.id, name: student.peer.name, approved: true } });
+            this.sendHost({ type: 'student.updated', student: { id: current.peer.id, name: current.peer.name, approved: true } });
           } else {
             const session = [...this.sessions.values()].find(record => record.id === student.peer.id);
             if (session) this.sessions.delete(session.token);
@@ -577,27 +569,20 @@ export class ClassroomRoom extends DurableObject<Env> {
       return;
     }
     if (msg.type === 'file.offer') {
-      const result = admitFile(this.files, peer, msg);
+      const result = this.fileState.offer(peer, msg);
       if (result.kind === 'rejected') return void send(ws, {
         type: 'file.rejected', fileId: msg.fileId, code: result.code, message: result.message,
       });
-      if (result.kind !== 'replayed') await this.persist();
-      if (result.kind === 'created') {
-        this.sendHost({ type: 'file.announced', file: result.file });
-        send(ws, { type: 'file.approved', fileId: result.file.fileId });
-      } else if (result.kind === 'updated') this.sendHost({ type: 'file.updated', file: result.file });
-      send(ws, { type: 'file.state', file: result.file });
+      await this.commitFiles([result], ws);
     } else if (msg.type === 'file.revoke' && typeof msg.fileId === 'string') {
-      const file = this.files.get(msg.fileId);
-      if (file?.ownerId === peer.id) {
-        revokeFile(file);
+      const change = this.fileState.revoke(peer.id, msg.fileId);
+      if (change) {
         for (const [requestId, range] of this.ranges) {
-          if (range.fileId !== file.fileId) continue;
+          if (range.fileId !== change.file.fileId) continue;
           this.ranges.delete(requestId);
           this.sendHost({ type: 'range.error', requestId, message: 'File sharing stopped' });
         }
-        await this.persist();
-        this.sendHost({ type: 'file.updated', file });
+        await this.commitFiles([change], ws);
       }
     } else if (msg.type === 'range.error' && typeof msg.requestId === 'string') {
       const pending = this.ranges.get(msg.requestId);
@@ -625,19 +610,17 @@ export class ClassroomRoom extends DurableObject<Env> {
           if (student.role === 'student') send(other, { type: 'host.offline' });
       }
     } else if (peer.role === 'student') {
-      for (const file of this.files.values()) {
-        if (file.ownerId === peer.id && file.status === 'approved') {
-          file.status = 'offline';
-          this.sendHost({ type: 'file.updated', file });
-        }
-      }
-      await this.persist();
+      const config = this.config;
+      const changes = this.fileState.ownerStatus(peer.id, 'disconnect');
       for (const [id, req] of this.ranges) {
         if (req.senderId === peer.id) {
           this.ranges.delete(id);
           this.sendHost({ type: 'range.error', requestId: id, message: 'Sender disconnected' });
         }
       }
+      await this.commitFiles(changes);
+      // A returning private identity may already have replaced this disconnect.
+      if (this.config !== config || this.student(peer.id)) return;
       this.sendHost({ type: 'student.left', id: peer.id });
     }
   }

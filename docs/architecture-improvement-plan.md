@@ -52,7 +52,7 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | Lockfile and reproducible installs | Implemented on #35; not ported to this branch |
 | Worker-owned transfer and OPFS receipt | Demonstrated in the isolated R2 pilot; **not integrated into the relay application** |
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
-| Shared room engine | File and participant admission plus terminal stop/control/cache-identity rules shared; full command/revision/persistence orchestration pending |
+| Shared room engine | Shared file metadata engine now owns offers, approval/Stop, reconnect/disconnect and completion/reset, with immutable transitions, file revisions and persistence checkpoints. Participant commands and room-wide snapshot/revision orchestration remain pending |
 | Room admission budgets | 300 retained manifests / 4 GiB originals, 120 retained session identities, 30 concurrent senders; exact retries and existing capabilities preserved |
 | Connection and request guards | Bounded pending/closing sockets and authentication deadlines; durable source creation quotas on Cloudflare, shared new-identity join quotas and retry handling; mixed-version rollout compatibility and release validation tracked in N24–N27 |
 | Lease/end lifecycle | Deployed on the recovery line; PR #40 full CI passed: scoped renewals, generation-safe HTTP closure, retryable cleanup, legacy session upgrade and removal of fixed presenter cutoff; physical-device verification pending |
@@ -99,7 +99,10 @@ the receiver, presenter, previews, export and cleanup; older rooms drain in plac
 without erasing active data. File/participant admission now shares synchronous
 transitions and aggregate budgets across adapters. Connection budgets/deadlines
 and creation/new-identity join quotas are implemented, with private resumes kept
-outside the join quota. Remaining Phase 1 work is full command/revision/persistence
+outside the join quota. File commands/lifecycle now share one metadata engine,
+with versioned immutable results and confirmed persistence checkpoints; adapters
+retain sockets and binary forwarding. Remaining Phase 1 work includes participant
+command transitions, room-wide snapshot ordering and full persistence
 orchestration; broader production abuse controls remain an operational follow-up.
 Physical background/OS suspension
 behavior is still a release verification task. Personal multi-gigabyte transfer

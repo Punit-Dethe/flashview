@@ -31,11 +31,42 @@ UI. Every copy must match SHA-256; hashing is outside the timed interval.
 Run `BENCH_TARGET=public npm run bench:transfer` using your shell's environment
 syntax. Other suites are idle during these measurements.
 
-Baseline cache times: **4730 / 4749 / 4426 ms**, median **4730 ms**. All originals
-matched. WebSocket create/host/first join/private resume times were also sampled
-in three fresh rooms; private resume was **702 / 206 / 782 ms**. These small
-network samples are regression checks, not proof of physical-phone or campus
-performance. Release and after measurements will be recorded below.
+| Public relay | Before samples (ms) | Before median | After samples (ms) | After median |
+| --- | --- | --- | --- | --- |
+| 20 MiB selection → browser cache/UI | 4730 / 4749 / 4426 | 4730 ms | 4227 / 4214 / 4726 | 4227 ms |
+
+All six originals matched SHA-256. Chromium `156.0.8078.4`, Node `v24.11.1`.
+These samples show no material slowdown; the smaller after values do not prove
+a throughput improvement. CPU warm-up, routing and network conditions vary.
+
+WebSocket timings (fresh rooms, before/after separately, milliseconds):
+
+| Operation | Before samples | After samples |
+| --- | --- | --- |
+| Create room | 959 / 946 / 832 | 778 / 814 / 821 |
+| Host authentication | 829 / 920 / 681 | 247 / 742 / 230 |
+| First sender join | 801 / 884 / 908 | 733 / 741 / 768 |
+| Private resume takeover | 702 / 206 / 782 | 778 / 696 / 753 |
+
+An unauthenticated socket timed out in 10206 ms. A fresh login was then admitted
+while the authenticated sender remained open; the creation guard was enforced.
+These small desktop/network samples are regression checks, not proof of
+physical-phone/campus performance, multiple-sender fairness, 200 MiB boundary
+behavior or independence from viewer load.
+
+## Public release verification
+
+Source `6a04b58` was uploaded and deployed at 100% as Worker
+`2635dc65-1792-48b0-8f04-fed6bc4782f7`, retaining existing domain/route triggers.
+A synthetic room prepared on the previous public version resumed after upgrade
+with its private identity and completed-file metadata preserved. The new engine
+assigned room revisions, forwarded exact original bytes and kept Stop terminal
+when an offer was replayed. After measurements above use the deployed version.
+A separate public 20 MiB run passed after loss of the first join acknowledgement,
+two mid-file interruptions and an obsolete asynchronous read failure. Its final
+cached original matched SHA-256. Return to persisted progress was 520 / 552 ms;
+full mid-file recovery was 1126 / 1162 ms on this desktop/network. CI status is
+recorded in [PR #45](https://github.com/Punit-Dethe/flashview/pull/45).
 
 ## Scope and rollout
 

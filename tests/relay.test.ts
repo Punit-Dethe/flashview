@@ -12,6 +12,7 @@ type Message = { type: string; [key: string]: unknown };
 type Event = { binary: false; msg: Message } | { binary: true; data: Buffer };
 
 class TestPeer {
+  revisions: number[] = [];
   events: Event[] = [];
   waiters: Array<{ predicate: (event: Event) => boolean; done: (event: Event) => void }> = [];
   constructor(readonly ws: WebSocket) {
@@ -19,14 +20,15 @@ class TestPeer {
       const event: Event = binary
         ? { binary: true, data: Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer) }
         : { binary: false, msg: JSON.parse(data.toString()) as Message };
+      if (!event.binary && Number.isSafeInteger(event.msg.roomRevision)) this.revisions.push(Number(event.msg.roomRevision));
       const index = this.waiters.findIndex(waiter => waiter.predicate(event));
       if (index >= 0) this.waiters.splice(index, 1)[0].done(event);
       else this.events.push(event);
     });
   }
   send(msg: Record<string, unknown>): void { this.ws.send(JSON.stringify({ v: 1, ...msg })); }
-  async wait(type: string): Promise<Message> {
-    const event = await this.waitFor(e => !e.binary && e.msg.type === type, type);
+  async wait(type: string, label = type): Promise<Message> {
+    const event = await this.waitFor(e => !e.binary && e.msg.type === type, label);
     assert.equal(event.binary, false);
     return event.msg;
   }
@@ -43,7 +45,9 @@ class TestPeer {
       this.waiters.push(waiter);
       const timer = setTimeout(() => {
         this.waiters = this.waiters.filter(item => item !== waiter);
-        reject(new Error('Timeout waiting for server message: ' + label));
+        reject(new Error('Timeout waiting for server message: ' + label + '; received ' +
+          JSON.stringify(this.events.map(event => event.binary ? 'binary' :
+            { type: event.msg.type, code: event.msg.code, message: event.msg.message }))));
       }, 5000);
     });
   }
@@ -168,7 +172,7 @@ test('new-join rate survives host rejections while private sender and host recon
     original.send({ type: 'file.offer', fileId: 'rate-retained-file', name: 'original.bin', size: 4 }); await original.wait('file.state');
     original.close(); await host.wait('student.left');
     for (let i = 1; i < JOIN_LIMIT; i++) {
-      const p = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(p); await p.wait('join.accepted');
+      const p = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(p); await p.wait('join.accepted', 'fresh join ' + i);
       const student = (await host.wait('student.updated')).student as { id: string };
       host.send({ type: 'student.reject', studentId: student.id }); await p.wait('join.rejected'); await host.wait('student.left');
     }
@@ -245,11 +249,14 @@ test('shared file engine versions completion, reset, Stop and private resume con
     phone.send({ ...offer, fileId: 'engine-live-file' }); await phone.wait('file.state'); await host.wait('file.announced');
     phone.close(); await host.wait('student.left');
     if (process.env.FLASHVIEW_BACKEND === 'cloudflare') {
+      const previousRevision = Math.max(...host.revisions);
       const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
       if (process.platform === 'win32') spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
       else child.kill();
       await exited; ({ child } = await startServer(port));
-      host = await connect(port, hostAuth); peers.push(host); await host.wait('room.state');
+      host = await connect(port, hostAuth); peers.push(host);
+      assert.ok(Number((await host.wait('room.state')).roomRevision) > previousRevision,
+        'Room revision must survive restart and advance for the new host');
     }
     phone = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: joined.resumeToken }); peers.push(phone);
     const restored = (await phone.wait('join.resumed')).files as Array<{ fileId: string; revision: number; status: string; revoked?: boolean; cachedBytes?: number }>;
@@ -262,6 +269,43 @@ test('shared file engine versions completion, reset, Stop and private resume con
     phone.ws.send(encodeRangePacket({ type: 'range.data', requestId: 'engine-readback', fileId: live.fileId, begin: 0 }, Uint8Array.of(2, 7, 1, 8)));
     const binary = await host.waitBinary();
     assert.deepEqual([...decodeRangePacket(binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength) as ArrayBuffer).bytes], [2, 7, 1, 8]);
+  } finally { for (const peer of peers) peer.ws.terminate(); child.kill(); }
+});
+
+test('shared room engine keeps pending snapshots private and retires offline capabilities with ordered metadata', { timeout: 25000 }, async () => {
+  const { port, child } = await startServer(); const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string; roomGeneration: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken }); peers.push(host);
+    const initial = await host.wait('room.state'); assert.equal(initial.roomGeneration, room.roomGeneration);
+    const first = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(first);
+    const capability = (await first.wait('join.pending')).resumeToken;
+    const ownerId = ((await host.wait('student.pending')).student as { id: string }).id;
+    host.send({ type: 'student.accept', studentId: ownerId }); await first.wait('join.accepted');
+    const offer = { type: 'file.offer', fileId: 'private-original', name: 'private.bin', size: 4 };
+    first.send(offer); await first.wait('file.state'); await host.wait('file.announced');
+    const pending = await connect(port, { role: 'student', joinToken: room.joinToken }); peers.push(pending); await pending.wait('join.pending');
+    await host.wait('student.pending');
+    pending.send({ type: 'file.sync' }); const snapshot = await pending.wait('file.manifest');
+    assert.equal(snapshot.approved, false); assert.deepEqual(snapshot.files, []);
+    assert.equal(snapshot.roomGeneration, room.roomGeneration); assert.equal(snapshot.hostOnline, true);
+    first.close(); await host.wait('student.left');
+    // Rejection must also retire a capability whose old socket is already gone.
+    host.send({ type: 'student.reject', studentId: ownerId });
+    host.send({ type: 'room.sync' }); await host.wait('room.state');
+    const fresh = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken: capability }); peers.push(fresh);
+    await fresh.wait('join.pending');
+    const newId = ((await host.wait('student.pending')).student as { id: string }).id;
+    assert.notEqual(newId, ownerId, 'A retired capability cannot recover the old identity or files');
+    host.send({ type: 'student.accept', studentId: newId }); await fresh.wait('join.accepted');
+    fresh.send(offer); assert.equal((await fresh.wait('file.rejected')).code, 'FILE_CONFLICT');
+    for (const peer of peers) {
+      assert.ok(peer.revisions.length > 0);
+      assert.ok(peer.revisions.every((revision, i) => i === 0 || revision >= peer.revisions[i - 1]),
+        'Wire metadata versions must never decrease on one connection');
+    }
   } finally { for (const peer of peers) peer.ws.terminate(); child.kill(); }
 });
 

@@ -18,6 +18,8 @@ type RangeCallbacks = {
 export class RoomSocket {
   private ws: WebSocket | null = null;
   private identity: Record<string, unknown> | null = null;
+  private roomGeneration: string | null = null;
+  private latestRoomRevision = -1;
   private pending = new Map<string, RangeCallbacks>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -44,6 +46,8 @@ export class RoomSocket {
     this.stopConnection();
     this.stopped = false;
     this.identity = { ...identity };
+    this.roomGeneration = typeof identity.roomGeneration === 'string' ? identity.roomGeneration : null;
+    this.latestRoomRevision = -1;
     this.immediateResume = new URLSearchParams(window.location.search).get('resumePolicy') !== 'probe';
     if (identity.role === 'student' && typeof identity.resumeToken !== 'string') {
       // Know the resume capability before sending hello, so losing the FIRST
@@ -209,6 +213,15 @@ export class RoomSocket {
       if (typeof event.data === 'string') {
         try {
           const message: ServerMessage = JSON.parse(event.data);
+          // Reject cross-generation terminal notices before they stop reconnects.
+          if (typeof message.roomGeneration === 'string' && this.roomGeneration &&
+              message.roomGeneration !== this.roomGeneration) return;
+          if (typeof message.roomGeneration === 'string' && Number.isSafeInteger(message.roomRevision)) {
+            const revision = Number(message.roomRevision);
+            if ((message.type === 'room.closed' || message.type === 'join.rejected') &&
+                revision < this.latestRoomRevision) return;
+            this.latestRoomRevision = Math.max(this.latestRoomRevision, revision);
+          }
           if (!this.authenticated && message.type === 'error' && message.code === 'JOIN_RATE_LIMIT' &&
               message.retryable === true && typeof message.retryAfterMs === 'number' &&
               Number.isFinite(message.retryAfterMs) && message.retryAfterMs > 0)
@@ -228,6 +241,7 @@ export class RoomSocket {
           }
           if (message.type === 'room.state' || message.type === 'join.pending' ||
               message.type === 'join.accepted' || message.type === 'join.resumed') {
+            if (typeof message.roomGeneration === 'string') this.roomGeneration = message.roomGeneration;
             if (!authenticated && perf.enabled) {
               authenticated = true;
               perf.record('socket_connect_ms', performance.now() - connectStarted);
@@ -437,6 +451,7 @@ export class RoomSocket {
     this.stopped = true;
     this.admissionNotBefore = 0;
     this.identity = null;
+    this.roomGeneration = null;
     this.stopConnection();
     this.onStatus('disconnected');
   }

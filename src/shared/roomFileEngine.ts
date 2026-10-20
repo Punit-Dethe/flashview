@@ -15,13 +15,13 @@ export class RoomFileEngine {
   private savedVersion = 0;
   get needsPersistence(): boolean { return this.mutationVersion !== this.savedVersion; }
   get files(): ReadonlyMap<string, FileManifest> { return this.records; }
-  clear(): void { this.records.clear(); this.mutationVersion++; }
+  clear(): void { this.records.clear(); this.mutationVersion++; this.onMutation(); }
   checkpoint(): { files: FileManifest[]; confirm: () => void } {
     const version = this.mutationVersion;
     return { files: [...this.records.values()].map(file => ({ ...file })),
       confirm: () => { this.savedVersion = Math.max(this.savedVersion, version); } };
   }
-  constructor(stored: FileManifest[] = []) {
+  constructor(stored: FileManifest[] = [], private readonly onMutation: () => void = () => {}) {
     this.records = new Map(stored.map(file => [file.fileId, { ...file }]));
   }
   private change(file: FileManifest, update: Partial<FileManifest>): FileManifest {
@@ -29,6 +29,7 @@ export class RoomFileEngine {
     const next = { ...file, ...update, revision: revision + 1 };
     this.records.set(next.fileId, next);
     this.mutationVersion++;
+    this.onMutation();
     return next;
   }
   offer(owner: Owner, command: { fileId?: unknown; name?: unknown; size?: unknown }):

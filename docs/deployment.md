@@ -98,6 +98,15 @@ tests, not on the public source address used by real users. A frontend rollback
 predating retry-deadline handling may retry throttled joins more often; the relay
 still enforces its own window.
 
+Shared room-engine rollout keeps the same namespace/class and metadata keys.
+`roomRevision` is additive and saved atomically with `files`, `sessions` and
+`joinWindow`; no class migration or cache migration is needed. Existing records
+start at revision zero if absent, retain private resume capabilities and lazily
+advance file revisions. Live sockets restored from hibernation recover active
+authority from trusted attachments and durable session records. Rollback code
+ignores additive fields, so legacy peers continue without new snapshot ordering.
+Do not delete existing metadata or change namespace to deploy this feature.
+
 Worker and Durable Object updates can briefly run different versions. The
 creation guard treats only the previous class's unknown-endpoint `404` as legacy
 mode, allowing the established creation path during that overlap. `429`, other

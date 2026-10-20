@@ -1517,6 +1517,72 @@ test('mobile progress recovers missed events from the relay manifest and pill is
   }
 });
 
+test('room engine: stale snapshots, pending approvals and foreign closure cannot erase a cached original', { timeout: 60000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true });
+  const phone = await browser.newPage();
+  const original = Buffer.alloc(768 * 1024 + 7);
+  for (let i = 0; i < original.length; i++) original[i] = (i * 37 + Math.floor(i / 65536)) % 256;
+  const instrument = `{
+    const Native = window.WebSocket;
+    window.__engineSockets = [];
+    window.WebSocket = class extends Native {
+      constructor(...args) {
+        super(...args); window.__engineSockets.push(this);
+        this.addEventListener('message', event => {
+          if (typeof event.data !== 'string') return;
+          const message = JSON.parse(event.data);
+          if (message.type === 'room.state' && !window.__oldRoom) window.__oldRoom = event.data;
+          if (message.type === 'join.pending' && !window.__oldPending) window.__oldPending = event.data;
+        });
+      }
+    };
+  }`;
+  try {
+    await host.addInitScript(instrument); await phone.addInitScript(instrument);
+    const root = 'http://127.0.0.1:' + port;
+    await host.goto(root); await host.getByLabel('Require approval').check();
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const session = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    await phone.goto(root + '/?join=' + encodeURIComponent(session.joinToken));
+    await phone.getByText('Waiting to join', { exact: true }).waitFor();
+    await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
+    await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    await phone.locator('input[type=file]').setInputFiles({ name: 'engine-protected.bin', mimeType: 'application/octet-stream', buffer: original });
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
+    await phone.locator('.student-status-pill.is-done').waitFor();
+    await phone.evaluate(`{
+      if (!window.__oldPending) throw Error('Pending snapshot not captured');
+      window.__engineSockets.at(-1).dispatchEvent(new MessageEvent('message', { data: window.__oldPending }));
+    }`);
+    await host.evaluate(`{
+      if (!window.__oldRoom) throw Error('Room snapshot not captured');
+      window.__rowVanished = false;
+      new MutationObserver(() => { if (!document.querySelector('.document-row')) window.__rowVanished = true; })
+        .observe(document.querySelector('.premium-app'), { childList: true, subtree: true });
+      const socket = window.__engineSockets.at(-1);
+      socket.dispatchEvent(new MessageEvent('message', { data: window.__oldRoom }));
+      const foreign = { ...JSON.parse(window.__oldRoom), roomGeneration: 'foreign-generation', roomRevision: 999999 };
+      socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(foreign) }));
+      socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ ...foreign, type: 'room.closed' }) }));
+    }`);
+    await delay(150);
+    assert.equal(await phone.getByText('Waiting to join', { exact: true }).count(), 0);
+    assert.equal(await host.evaluate('window.__rowVanished'), false, 'An old full list must never remove the current cached row');
+    assert.equal(await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).cacheId), session.cacheId);
+    const exporting = host.waitForEvent('download');
+    await host.getByRole('button', { name: 'Download engine-protected.bin' }).click();
+    const exported = await exporting;
+    assert.deepEqual(await readFile((await exported.path())!), original);
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await host.locator('.welcome').waitFor();
+  } finally { await browser.close(); child.kill(); }
+});
+
 test('network packet sizes 128/256 KiB preserve exact original PDF bytes in 64 KiB browser cache', { timeout: 110000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });

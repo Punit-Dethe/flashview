@@ -191,3 +191,16 @@ test('the comparison policy preserves the old probe behavior on the same deploym
   t.mock.timers.tick(2500);
   assert.equal(SuspendedSocket.instances.length, 1);
 });
+
+test('stale or foreign terminal metadata cannot disable an active private reconnect', t => {
+  const { socket, first } = setup(t);
+  first.message({ type: 'join.accepted', roomGeneration: 'generation-a', roomRevision: 5 });
+  first.message({ type: 'file.state', roomGeneration: 'generation-a', roomRevision: 9 });
+  first.message({ type: 'room.closed', roomGeneration: 'generation-b', roomRevision: 100 });
+  first.message({ type: 'join.rejected', roomGeneration: 'generation-a', roomRevision: 8 });
+  socket.pauseHeartbeat(); socket.wake();
+  assert.equal(SuspendedSocket.instances.length, 2);
+  const next = SuspendedSocket.instances[1]; next.accept();
+  next.message({ type: 'join.resumed', roomGeneration: 'generation-a', roomRevision: 10 });
+  assert.equal(socket.connected, true);
+});

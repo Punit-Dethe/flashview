@@ -6,10 +6,10 @@ import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { roomExpiresAt } from '../shared/roomLifetime.js';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity.js';
-import { admitSender } from '../shared/roomAdmission.js';
-import { RoomFileEngine, type FileTransition } from '../shared/roomFileEngine.js';
-import { AUTH_TIMEOUT_MS, MAX_PENDING_NODE, MAX_NODE_SOCKETS, CreationBuckets, consumeWindow, JOIN_LIMIT, JOIN_WINDOW_MS,
-  JOIN_RATE_MESSAGE, retryAfterSeconds, type RateWindow } from '../shared/connectionGuards.js';
+import { RoomEngine } from '../shared/roomEngine.js';
+import { versionedMetadata } from '../shared/roomVersion.js';
+import type { RoomFileEngine, FileTransition } from '../shared/roomFileEngine.js';
+import { AUTH_TIMEOUT_MS, MAX_PENDING_NODE, MAX_NODE_SOCKETS, CreationBuckets, retryAfterSeconds } from '../shared/connectionGuards.js';
 import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl.js';
 import {
   decodeRangePacket, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
@@ -18,13 +18,11 @@ import {
 
 type Role = 'host' | 'student';
 type Peer = { ws: WebSocket; id: string; role: Role; room: Room; approved: boolean; name: string };
-type ResumeSession = { id: string; name: string; approved: boolean; token: string };
 type Outstanding = { fileId: string; senderId: string; begin: number; end: number; created: number };
 type Room = {
   id: string; code: string; joinToken: string; hostToken: string; roomGeneration: string; leaseToken: string;
-  autoApprove: boolean; cacheVersion?: 2; joinWindow?: RateWindow;
+  autoApprove: boolean; cacheVersion?: 2; engine: RoomEngine;
   created: number; lastActivityAt: number; host: Peer | null; students: Map<string, Peer>;
-  sessions: Map<string, ResumeSession>;
   files: ReadonlyMap<string, PdfManifest>; fileState: RoomFileEngine; outstanding: Map<string, Outstanding>;
 };
 const rooms = new Map<string, Room>();
@@ -47,7 +45,10 @@ function rejectAuthentication(ws: WebSocket, message: string): void {
   ws.close(1008, 'Authentication failed');
 }
 function send(ws: WebSocket | null | undefined, msg: Record<string, unknown>): void {
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ v: 1, ...msg }));
+  if (ws?.readyState !== WebSocket.OPEN) return;
+  const room = connections.get(ws)?.room;
+  ws.send(JSON.stringify({ v: 1, ...msg, ...(room && versionedMetadata(msg.type)
+    ? { roomGeneration: room.roomGeneration, roomRevision: room.engine.revision } : {}) }));
 }
 function notifyHost(room: Room, msg: Record<string, unknown>): void { send(room.host?.ws, msg); }
 function publishFiles(room: Room, changes: FileTransition[], actor?: WebSocket): void {
@@ -61,7 +62,7 @@ function publishFiles(room: Room, changes: FileTransition[], actor?: WebSocket):
   }
 }
 function students(room: Room): StudentInfo[] {
-  return [...room.students.values()].map(p => ({ id: p.id, name: p.name, approved: p.approved }));
+  return room.engine.students();
 }
 function acceptableText(s: unknown, limit = 100): string {
   return typeof s === 'string' ? s.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, limit) : '';
@@ -84,11 +85,12 @@ function validOrigin(req: IncomingMessage): boolean {
       ['3000', '5173'].includes(url.port);
   } catch { return false; }
 }
-function removeStudent(peer: Peer): void {
+function removeStudent(peer: Peer, rejectedChanges?: FileTransition[]): void {
   const room = peer.room;
   if (room.students.get(peer.id) !== peer) return;
   room.students.delete(peer.id);
-  publishFiles(room, room.fileState.ownerStatus(peer.id, 'disconnect'));
+  const departure = rejectedChanges ?? room.engine.disconnect(peer.id, peer.ws)?.changes ?? [];
+  publishFiles(room, departure);
   for (const [id, pending] of room.outstanding) {
     if (pending.senderId === peer.id) {
       room.outstanding.delete(id);
@@ -98,14 +100,13 @@ function removeStudent(peer: Peer): void {
   notifyHost(room, { type: 'student.left', id: peer.id });
 }
 function closeRoom(room: Room): void {
+  room.engine.clear();
   for (const peer of room.students.values()) {
     send(peer.ws, { type: 'room.closed' });
     peer.ws.close(1000, 'Room ended');
   }
   if (room.host) { send(room.host.ws, { type: 'room.closed' }); room.host.ws.close(1000, 'Room ended'); }
   room.students.clear();
-  room.sessions.clear();
-  room.fileState.clear();
   room.outstanding.clear();
   rooms.delete(room.id);
 }
@@ -129,6 +130,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     }
     const peer: Peer = { ws, id: randomUUID(), role: 'host', room, name: 'Host', approved: true };
     room.host = peer;
+    room.engine.connectHost(ws);
     // Old receiver requests cannot complete into the replacement's callbacks.
     room.outstanding.clear();
     room.lastActivityAt = Date.now();
@@ -152,75 +154,33 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       closeRoom(room);
       return void rejectAuthentication(ws, 'Room not found or expired');
     }
-    const previous = typeof msg.resumeToken === 'string'
-      ? room.sessions.get(msg.resumeToken) : undefined;
-    const admission = admitSender(room.students.size, room.sessions.size, Boolean(previous),
-      Boolean(previous && room.students.has(previous.id)));
-    if (admission.kind === 'rejected') {
+    const joined = room.engine.join({ connection: ws, id: randomUUID(), name: msg.name,
+      resumeToken: msg.resumeToken, newToken: randomToken(32), autoApprove: room.autoApprove,
+      hostOnline: room.host?.ws.readyState === WebSocket.OPEN, now: Date.now() });
+    if (joined.kind === 'rejected') {
       releasePending(ws);
-      send(ws, { type: admission.retryable ? 'error' : 'join.rejected', code: admission.code,
-        message: admission.message, retryable: admission.retryable });
-      ws.close(1008, 'Room admission limit');
-      return;
+      if (joined.code === 'HOST_OFFLINE') { rejectAuthentication(ws, joined.message); return; }
+      send(ws, { type: joined.retryable ? 'error' : 'join.rejected', code: joined.code,
+        message: joined.message, retryable: joined.retryable, retryAfterMs: joined.retryAfterMs });
+      ws.close(1008, 'Room admission limit'); return;
     }
-    if (previous) {
-      const oldPeer = room.students.get(previous.id);
-      if (oldPeer) {
-        connections.delete(oldPeer.ws);
-        oldPeer.ws.close(4000, 'Session resumed on another socket');
-      }
-      const peer: Peer = {
-        ws, id: previous.id, role: 'student', room,
-        name: previous.name, approved: previous.approved,
-      };
-      room.students.set(peer.id, peer);
-      connections.set(ws, peer);
-      releasePending(ws);
-      publishFiles(room, room.fileState.ownerStatus(peer.id, 'resume', previous.approved));
-      const ownFiles = [...room.files.values()].filter(f => f.ownerId === peer.id);
-      send(ws, {
-        type: previous.approved ? 'join.resumed' : 'join.pending',
-        roomCode: room.code, resumeToken: previous.token, files: ownFiles,
-      });
-      if (!room.host || room.host.ws.readyState !== WebSocket.OPEN)
-        send(ws, { type: 'host.offline' });
-      // A suspended socket can still look OPEN at the relay. Its outstanding
-      // requests belong to this same authenticated sender, so deliver them to
-      // the replacement after its manifest, preserving IDs and deadlines.
-      for (const [requestId, range] of room.outstanding) {
-        if (range.senderId === peer.id && room.files.get(range.fileId)?.status === 'approved')
-          send(ws, { type: 'range.request', requestId, fileId: range.fileId, begin: range.begin, end: range.end });
-      }
-      notifyHost(room, { type: 'student.updated', student: { id: peer.id, name: peer.name, approved: peer.approved } });
-      return;
+    if (joined.displaced) {
+      const old = joined.displaced as WebSocket; connections.delete(old); old.close(4000, 'Session resumed on another socket');
     }
-    if (!room.host || room.host.ws.readyState !== WebSocket.OPEN) {
-      return void rejectAuthentication(ws, 'The host is offline');
+    const participant = joined.participant;
+    const peer: Peer = { ws, id: participant.id, role: 'student', room, name: participant.name, approved: participant.approved };
+    room.students.set(peer.id, peer); connections.set(ws, peer); releasePending(ws);
+    publishFiles(room, joined.changes);
+    send(ws, { type: participant.approved ? (joined.resumed ? 'join.resumed' : 'join.accepted') : 'join.pending',
+      roomCode: room.code, resumeToken: participant.token,
+      ...(joined.resumed ? { files: [...room.files.values()].filter(file => file.ownerId === peer.id) } : {}) });
+    if (joined.resumed && room.host?.ws.readyState !== WebSocket.OPEN) send(ws, { type: 'host.offline' });
+    if (joined.resumed) for (const [requestId, range] of room.outstanding) {
+      if (range.senderId === peer.id && room.files.get(range.fileId)?.status === 'approved')
+        send(ws, { type: 'range.request', requestId, fileId: range.fileId, begin: range.begin, end: range.end });
     }
-    const rate = consumeWindow(room.joinWindow, JOIN_LIMIT, JOIN_WINDOW_MS, Date.now());
-    if (!rate.allowed) {
-      releasePending(ws);
-      send(ws, { type: 'error', code: 'JOIN_RATE_LIMIT', retryable: true,
-        retryAfterMs: rate.retryAfterMs, message: JOIN_RATE_MESSAGE });
-      ws.close(1008, 'Join rate limit'); return;
-    }
-    room.joinWindow = rate.window;
-    const approved = room.autoApprove;
-    const peer: Peer = {
-      ws, id: randomUUID(), role: 'student', room,
-      name: acceptableText(msg.name, 32) || 'Student', approved,
-    };
-    const resumeToken = typeof msg.resumeToken === 'string' && /^[a-f0-9]{64}$/.test(msg.resumeToken)
-      ? msg.resumeToken : randomToken(32);
-    room.sessions.set(resumeToken, { id: peer.id, token: resumeToken, name: peer.name, approved });
-    room.students.set(peer.id, peer);
-    connections.set(ws, peer);
-    releasePending(ws);
-    send(ws, { type: approved ? 'join.accepted' : 'join.pending', roomCode: room.code, resumeToken });
-    notifyHost(room, {
-      type: approved ? 'student.updated' : 'student.pending',
-      student: { id: peer.id, name: peer.name, approved },
-    });
+    notifyHost(room, { type: joined.resumed || participant.approved ? 'student.updated' : 'student.pending',
+      student: { id: peer.id, name: peer.name, approved: peer.approved } });
     return;
   }
   rejectAuthentication(ws, 'Invalid role');
@@ -255,9 +215,10 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
       students: students(room), files: [...room.files.values()], autoApprove: room.autoApprove,
     });
   }
-  if (msg.type === 'file.sync' && peer.role === 'student' && peer.approved) {
+  if (msg.type === 'file.sync' && peer.role === 'student') {
     send(ws, {
       type: 'file.manifest', files: [...room.files.values()].filter(file => file.ownerId === peer.id),
+      approved: peer.approved, roomCode: room.code, hostOnline: room.host?.ws.readyState === WebSocket.OPEN,
     });
     return;
   }
@@ -268,26 +229,22 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
       return;
     }
     if (msg.type === 'student.accept' && typeof msg.studentId === 'string') {
+      const result = room.engine.approve(msg.studentId);
       const student = room.students.get(msg.studentId);
-      if (student) {
-        student.approved = true;
-        publishFiles(room, room.fileState.ownerStatus(student.id, 'approve'));
-        const session = [...room.sessions.values()].find(record => record.id === student.id);
-        if (session) session.approved = true;
-        send(student.ws, { type: 'join.accepted', roomCode: room.code, resumeToken: session?.token });
+      if (result && student) {
+        student.approved = result.participant.approved;
+        publishFiles(room, result.changes);
+        send(student.ws, { type: 'join.accepted', roomCode: room.code, resumeToken: result.participant.token });
         notifyHost(room, { type: 'student.updated', student: { id: student.id, name: student.name, approved: true } });
       }
     } else if (msg.type === 'student.reject' && typeof msg.studentId === 'string') {
+      const result = room.engine.reject(msg.studentId);
       const student = room.students.get(msg.studentId);
-      if (student) {
-        for (const [key, record] of room.sessions) if (record.id === student.id) room.sessions.delete(key);
-        // Retire authority and release the place before waiting for a close
-        // handshake. A suspended phone may not acknowledge closure promptly.
-        connections.delete(student.ws);
-        removeStudent(student);
-        send(student.ws, { type: 'join.rejected' });
+      if (result && student) {
+        connections.delete(student.ws); removeStudent(student, result.changes);
+        send(student.ws, { type: 'join.rejected', roomGeneration: room.roomGeneration, roomRevision: room.engine.revision });
         student.ws.close(1008, 'Rejected');
-      }
+      } else if (result) publishFiles(room, result.changes);
     } else if (msg.type === 'range.request') {
       const { requestId, fileId, begin, end } = msg;
       const file = typeof fileId === 'string' ? room.files.get(fileId) : undefined;
@@ -459,12 +416,12 @@ const http = createServer((req, res) => {
     let code: string;
     do { code = String(randomInt(100_000, 1_000_000)); }
     while ([...rooms.values()].some(r => r.code === code));
-    const fileState = new RoomFileEngine();
+    const engine = new RoomEngine(), fileState = engine.fileState;
     const room: Room = {
       id: randomUUID(), roomGeneration: randomUUID(), leaseToken: randomToken(32), code, joinToken: randomToken(20),
       hostToken: randomToken(32), created: now, lastActivityAt: now, autoApprove,
       cacheVersion: url.searchParams.get('cache') === '2' ? 2 : undefined,
-      host: null, students: new Map(), sessions: new Map(), files: fileState.files, fileState, outstanding: new Map(),
+      host: null, students: new Map(), files: fileState.files, fileState, engine, outstanding: new Map(),
     };
     rooms.set(room.id, room);
     res.writeHead(201, {
@@ -530,6 +487,7 @@ wss.on('connection', ws => {
     if (peer.role === 'host') {
       if (peer.room.host === peer) {
         peer.room.host = null;
+        peer.room.engine.disconnectHost(ws);
         for (const student of peer.room.students.values()) send(student.ws, { type: 'host.offline' });
       }
     } else removeStudent(peer);

@@ -278,6 +278,21 @@ completion and explicit zero reset use the shared file engine. Retries preserve
 the revision and budget. Cloudflare confirms the pending metadata checkpoint
 before publishing success; replay after a failed write is not a saved-state
 shortcut. Delayed effects are checked against current immutable state.
-This does not yet add client-side room-wide revision reconciliation.
+The shared room engine additionally stamps metadata effects/full snapshots with
+`roomGeneration` and `roomRevision`. A single transition can have multiple
+effects at the same revision; only lower revisions are stale. Revisions advance
+for file/participant/host metadata, not for byte packets or heartbeats. Cloudflare
+persists the revision with files, sessions and the join window in one checkpoint;
+Node retains its normal process-local state. Old clients ignore additive fields,
+and new clients continue to accept legacy unstamped rooms/servers.
+
+Client list reconciliation rejects older snapshots and requests a fresh
+`room.sync` (host) or private `file.sync` (sender). A sender snapshot includes
+`approved`, `hostOnline`, `roomCode` and only that sender's files, including while
+pending. This repairs a delayed join acknowledgment without exposing others'
+manifests or losing selected Files. Valid explicit zero corrections retract old
+Done progress; stale resets cannot rewind a newer revision. Foreign/older
+terminal notices cannot disable the socket's private recovery. An old list cannot
+replace a newer one, while same-generation host capability negotiation still runs.
 
 Update the shared encoder/types, **both** [Node](../src/server/index.ts) and [Cloudflare](../src/cloudflare/index.ts) handlers, browser sender/receiver, protocol and browser regression tests, then this guide. Make completion changes carefully: false Done acknowledgments are data-integrity bugs. See [Development and testing](./development.md).

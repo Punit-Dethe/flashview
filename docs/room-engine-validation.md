@@ -2,7 +2,8 @@
 
 Baseline source/release: `6a9bdda` / Worker
 `65f9528d-12bf-4648-8ecb-754bc6f485ff`. This slice centralizes file metadata rules;
-participant commands and room-wide snapshot ordering remain pending. It does not
+participant commands and room-wide snapshot ordering were still pending at that
+release; see the active plan/audit for their later integration. That slice did not
 change transfer packets, concurrency, renderers or browser cache storage.
 
 ## Repeatable speed check

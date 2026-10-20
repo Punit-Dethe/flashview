@@ -19,6 +19,7 @@ import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
 import { RoomLease, endRoomAndClear } from './roomControl';
+import { RoomRevisionTracker } from './roomRevision';
 /** A late initial IndexedDB snapshot must never rewind live saved-byte progress. */
 function retainNewestProgress(previous: CacheProgress | undefined, incoming: CacheProgress): CacheProgress {
   // An independent IndexedDB verification can retract a stale 100% cache.
@@ -59,6 +60,7 @@ function normalizedMessage(message: ServerMessage): string {
 
 export function App() {
   const socket = useRef(new RoomSocket()).current;
+  const roomVersions = useRef(new RoomRevisionTracker(initialSession?.roomGeneration)).current;
   const presentation = useRef(new PresentationHost(socket)).current;
   const hostLease = useRef(new RoomLease()).current;
   const hostSessionRef = useRef<HostSession | null>(initialSession);
@@ -476,6 +478,11 @@ export function App() {
     }, 20_000);
     socket.onMessage = message => {
       const type = message.type;
+      const metadata = roomVersions.observe(message);
+      if (metadata.resync && socket.connected)
+        socket.send({ type: modeRef.current === 'host' ? 'room.sync' : 'file.sync' });
+      // Authenticate/upgrade the host session independently of an old list snapshot.
+      if (!metadata.accept && (type !== 'room.state' || !metadata.scopeMatches)) return;
       if (type === 'cache.progress.receipt' && modeRef.current === 'host' &&
           typeof message.fileId === 'string' &&
           typeof message.bytes === 'number') {
@@ -506,14 +513,16 @@ export function App() {
               updated.autoApprove !== session.autoApprove || updated.cacheId !== session.cacheId) rememberHostSession(updated);
           configureHostLease(updated);
         }
-        setStudents(Array.isArray(message.students) ? message.students as StudentInfo[] : []);
-        const files = Array.isArray(message.files) ? message.files as PdfManifest[] : [];
-        setDocuments(files);
-        if (typeof message.autoApprove === 'boolean') {
-          setHostSession(previous => previous ? { ...previous, autoApprove: message.autoApprove as boolean } : previous);
+        if (metadata.accept) {
+          setStudents(Array.isArray(message.students) ? message.students as StudentInfo[] : []);
+          const files = Array.isArray(message.files) ? message.files as PdfManifest[] : [];
+          setDocuments(files);
+          if (typeof message.autoApprove === 'boolean') {
+            setHostSession(previous => previous ? { ...previous, autoApprove: message.autoApprove as boolean } : previous);
+          }
+          hostFilesRef.current = files;
+          for (const file of files) presentation.queue(file);
         }
-        hostFilesRef.current = files;
-        for (const file of files) presentation.queue(file);
         setError('');
       }
       if (type === 'student.pending' || type === 'student.updated') {
@@ -539,6 +548,7 @@ export function App() {
           const update: CacheProgress = {
             fileId: message.fileId, size: local.file.size, bytes: message.bytes,
             complete: message.complete === true && message.bytes === local.file.size,
+            corrected: message.bytes === 0 && Number.isSafeInteger(message.fileRevision),
           };
           setStudentCacheProgress(current => ({
             ...current, [update.fileId]: retainNewestProgress(current[update.fileId], update),
@@ -571,6 +581,9 @@ export function App() {
         else socket.send({ type: 'file.sync' });
       }
       if (type === 'file.manifest' && Array.isArray(message.files)) {
+        if (typeof message.approved === 'boolean') setJoinState(message.approved ? 'accepted' : 'pending');
+        if (typeof message.hostOnline === 'boolean') setHostAvailable(message.hostOnline);
+        if (typeof message.roomCode === 'string') setCurrentRoomCode(message.roomCode);
         reconcileFiles(message.files as PdfManifest[]);
         for (const file of message.files as PdfManifest[]) {
           if (file.status === 'approved') preparePreview(file.fileId);
@@ -690,7 +703,7 @@ export function App() {
         void completeEnd(initialSession);
       } else {
         configureHostLease(initialSession);
-        socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken });
+        socket.connect({ role: 'host', roomId: initialSession.roomId, token: initialSession.hostToken, roomGeneration: initialSession.roomGeneration });
       }
     }
     else if (initialJoin) socket.connect({ role: 'student', name: 'Student',
@@ -747,6 +760,7 @@ export function App() {
         throw new Error(typeof body?.error === 'string' ? body.error : 'Unable to create room (' + response.status + ')');
       }
       const newSession = await response.json() as HostSession;
+      roomVersions.reset(newSession.roomGeneration);
       rememberHostSession(newSession);
       closeRequestedRef.current = false;
       modeRef.current = 'host';
@@ -761,7 +775,7 @@ export function App() {
       transferSamples.current.clear();
       presentation.setRoom(hostCacheIdentity(newSession));
       configureHostLease(newSession);
-      socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });
+      socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken, roomGeneration: newSession.roomGeneration });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Cannot reach server');
     } finally { setBusy(false); }
@@ -769,6 +783,7 @@ export function App() {
 
   function connectStudent(): void {
     if (!joinCode.trim()) return setError('Enter a code or use the QR code link.');
+    roomVersions.reset();
     setError('');
     setJoinState('connecting');
     filesOnPhone.current.clear();
@@ -954,6 +969,7 @@ export function App() {
   }
 
   function returnHome(): void {
+    roomVersions.reset();
     // Prevent stale socket notifications or QR invitations surviving an exit.
     modeRef.current = 'welcome';
     admissionError.current = '';

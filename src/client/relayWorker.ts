@@ -18,7 +18,7 @@ let versions = new RoomRevisionTracker();
 let mailboxBusy = false;
 const mailbox = new Map<string, WorkerEvent>();
 const sources = new Map<string, { file: File; approved: boolean; stopped: boolean; known: boolean; offeredAt: number; sha256?: string; hashing?: boolean }>();
-let integrityRequired: boolean | undefined, hashing = 0;
+let integrityRequired: boolean | undefined;
 const stoppedSources = new Set<string>();
 const reads = new Map<string, { fileId: string; timer: ReturnType<typeof setTimeout> }>();
 function retireReads(fileId?: string): void {
@@ -79,8 +79,10 @@ function offer(fileId: string): void {
   if (!source || source.stopped || source.known || Date.now() - source.offeredAt < 7000) return;
   if (integrityRequired === undefined) return;
   if (integrityRequired && !source.sha256) {
-    if (source.hashing || hashing >= 2) return;
-    source.hashing = true; hashing++;
+    // Retired native reads may resolve late. They cannot occupy the live queue
+    // after Stop or a room/session change and delay an unrelated new source.
+    if (source.hashing || [...sources.values()].filter(candidate => candidate.hashing && !candidate.sha256).length >= 2) return;
+    source.hashing = true;
     const hashStarted = performance.now();
     void hashBlob(source.file, () => sources.get(fileId) === source && !source.stopped).then(hash => {
       if (perf.enabled) perf.record('source_hash_ms', performance.now() - hashStarted, { bytes: source.file.size });
@@ -90,7 +92,7 @@ function offer(fileId: string): void {
       sources.delete(fileId);
       emit('file:' + fileId, { type: 'message', message: { type: 'file.rejected', fileId,
         code: 'SOURCE_READ_FAILED', message: 'Could not read this original. Please select it again.' } });
-    }).finally(() => { hashing--; for (const id of sources.keys()) offer(id); });
+    }).finally(() => { source.hashing = false; for (const id of sources.keys()) offer(id); });
     return;
   }
   if (socket.send({ type: 'file.offer', fileId, name: source.file.name, size: source.file.size,

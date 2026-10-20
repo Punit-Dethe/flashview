@@ -97,6 +97,9 @@ published by the application.
   Manual recovery saves retained bytes without re-requesting them.
 - Stop while full local verification is deliberately held cannot produce early
   completion; releasing the local read finishes the original without source data.
+- Stop retires pending source-hash jobs from the live queue immediately. Two
+  deliberately held original reads cannot delay a newly selected healthy file;
+  releasing the canceled reads cannot publish their old offers.
 
 The quota test exposed an uncommitted-memory edge in the shared cache: a missing
 single block could return its RAM copy without saving it. Background receipt now
@@ -105,12 +108,13 @@ test also held the page-side export read by mistake; the fault is now restricted
 to the transfer worker. Failed harness attempts are not counted as product passes.
 
 Local final validation: build/typecheck, 119 unit/protocol cases, 35 existing
-Chromium browser cases per relay backend, and all six new OPFS cases on each of
+Chromium browser cases per relay backend, and all seven new OPFS cases on each of
 Chromium/Node, Chromium/Cloudflare and Firefox/Node passed. The new viewer case
 renders genuine PDF and PPTX originals after closing the sender. Forced quota
 and missing-capability tests are synthetic; they do not prove physical mobile
 low-storage behavior. CI and public results remain separate from local passes.
 The Cloudflare relay contract suite also passed 19/19, and Worker dry-run passed.
+The existing targeted Firefox regression suite passed 16/16 as well.
 
 ## Performance gate
 
@@ -140,8 +144,10 @@ All timings here are desktop synthetic checks, not campus/iPhone/Android proof.
 
 Pilot: [regular mode](https://warpview-opfs-pilot.outlanderwatr.workers.dev/),
 [OPFS mode](https://warpview-opfs-pilot.outlanderwatr.workers.dev/?storage=opfs).
-Version `8e0c0572-bd3d-491d-aecf-32344405a207` uses its own room namespace;
-production `flashview` was not deployed or rebound for these tests. All six
+Benchmark version `8e0c0572-bd3d-491d-aecf-32344405a207` uses its own room namespace;
+the subsequent canceled-hash queue fix is deployed in pilot version
+`8cfdc776-1394-445c-88ae-784ca24cecac`. Production `flashview` was not deployed or
+rebound for these tests. All six
 synthetic 20 MiB originals below independently matched SHA-256. Runs were
 sequential, three per mode, same deployed assets, no concurrent local suites.
 
@@ -160,6 +166,12 @@ Three follow-up traced OPFS runs took 5202 / 5755 / 5370 ms. Each used 80 ranges
 with no unfinished requests. The slowest observed range per run was 679 / 787 /
 731 ms, with source work of 11 / 14 / 12 ms for those ranges. They did not
 reproduce the tail, so they do not establish its cause or resolve N44/N38.
+Ten additional traced fresh-room runs took 4734 / 5395 / 5423 / 6997 / 6299 /
+5521 / 5815 / 5632 / 4961 / 5762 ms. All matched originals, used 80 ranges and
+had no unfinished requests. This also did not reproduce the 16490 ms ordinary
+sample; tracing and additional successful runs do not erase that sample.
+The final pilot build's single 20 MiB smoke transfer took 4794 ms and matched
+the original. That checks deployment, not a replacement performance baseline.
 
 ## Remaining before default promotion
 

@@ -113,6 +113,34 @@ test('OPFS quota recovery persists retained bytes without re-requesting or block
   } finally { await browser.close(); child.kill(); }
 });
 
+test('OPFS canceled source hashes cannot delay a healthy file or publish late offers', { timeout: 30000 }, async () => {
+  const { root, child } = await backend(), browser = await engine.launch();
+  const host = await browser.newPage(), phone = await browser.newPage();
+  try {
+    await transferInit(phone, `{
+      const native=File.prototype.slice;window.__heldHashes=[];
+      File.prototype.slice=function(...args){const part=native.apply(this,args);
+        if(typeof document==='undefined'&&this.name.startsWith('held-')){const read=part.arrayBuffer.bind(part);
+          part.arrayBuffer=()=>new Promise(resolve=>window.__heldHashes.push(()=>resolve(read())))}return part;};
+    }`);
+    await host.goto(root + '/?storage=opfs'); await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const room = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    await phone.goto(root + '/?join=' + encodeURIComponent(room.joinToken)); await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    await phone.locator('input[type=file]').setInputFiles(['held-one.bin', 'held-two.bin'].map(name => ({ name, mimeType: 'application/octet-stream', buffer: Buffer.alloc(1024, 5) })));
+    await transferWait(phone, () => (globalThis as any).__heldHashes?.length === 2);
+    for (const name of ['held-one.bin', 'held-two.bin'])
+      await phone.locator('.student-file-card').filter({ hasText: name }).getByRole('button', { name: 'Stop sharing', exact: true }).click();
+    await phone.locator('input[type=file]').setInputFiles({ name: 'healthy-after-stop.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(1024, 9) });
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor({ timeout: 8000 });
+    await transferEval(phone, 'window.__heldHashes.splice(0).forEach(release=>release())');
+    await delay(150);
+    assert.equal(await host.locator('.document-row').count(), 1);
+    await host.getByRole('button', { name: 'End room', exact: true }).click(); await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click(); await host.locator('.welcome').waitFor();
+  } finally { await browser.close(); child.kill(); }
+});
+
 test('OPFS verification finishes locally after Stop when all original bytes are already persisted', { timeout: 45000 }, async () => {
   const { root, child } = await backend(), browser = await engine.launch();
   const host = await browser.newPage({ acceptDownloads: true }), phone = await browser.newPage();

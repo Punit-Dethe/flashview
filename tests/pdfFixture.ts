@@ -1,4 +1,4 @@
-/** Construct a valid single-page PDF with a realistic (200 KB) byte-range surface. */
+/** Construct a valid ten-page PDF with a configurable byte-range surface. */
 export function makePdf(fillerLines = 1400): Buffer {
   const pageCount = 10;
   const fontId = pageCount * 2 + 3;
@@ -30,4 +30,3 @@ export function makePdf(fillerLines = 1400): Buffer {
   pdf += 'startxref\n' + xref + '\n%%EOF\n';
   return Buffer.from(pdf);
 }
-

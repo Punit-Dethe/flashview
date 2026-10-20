@@ -90,8 +90,8 @@ this mailbox, so diagnostic sample counts are not wire-packet counts.
 Passive cache operations have at most 128 pending RPCs and bounded deadlines.
 Read buffers transfer ownership back to the page; they are separate from
 original-byte scheduling. This is a transitional bridge for the existing
-progressive PDF viewer; completed-only viewers and OPFS/integrity remain later
-work. A worker cannot outlive a terminated parent page or guarantee that an OS
+progressive PDF viewer. OPFS/integrity is now opt-in; completed-only viewers and
+default storage promotion remain later work. A worker cannot outlive a terminated parent page or guarantee that an OS
 will keep it running in the background. See [MDN's worker lifecycle and API
 description](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers).
 

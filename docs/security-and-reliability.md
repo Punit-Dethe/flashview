@@ -1,8 +1,8 @@
 # Security, storage and reliability
 
-The worker description below is the integration branch design. Its public
-promotion is held by the N38 speed outlier; the previous room-engine release is
-live. See [worker validation](./relay-worker-validation.md) for exact versions.
+The worker described below is live for user-authorized reproduction of the N38
+speed outlier. The outlier remains unexplained; deployment does not resolve it.
+See [worker validation](./relay-worker-validation.md) for versions and rollback.
 
 Relay transfer now runs in one dedicated worker per sender/host page. Workers
 own socket authentication, File reads, scheduling and cache writes; original

@@ -1,10 +1,17 @@
 # Relay transfer worker validation — 20 October 2026
 
-**Promotion held.** The tested worker source is `4a1c306`, uploaded as Worker
-`e3939396-6867-43ee-899a-86765f28eb53`. After public trials, production was restored
-to the previous room-engine Worker `2635dc65-1792-48b0-8f04-fed6bc4782f7`
-(source `6a04b58`). One unexplained 15.4-second transfer sample prevents claiming
-predictable speed or completing this phase's release gate. See N38 below.
+**User-authorized live trial.** On 20 October, the user explicitly authorized
+merging and deploying the worker so they could reproduce N38 on the hosted app.
+Worker `e3939396-6867-43ee-899a-86765f28eb53` (runtime source `4a1c306`, full CI
+passed) was promoted at 100%. Domain/route triggers were preserved. The prior
+room-engine Worker `2635dc65-1792-48b0-8f04-fed6bc4782f7` (source `6a04b58`)
+remains the rollback version. Deployment does not resolve the unexplained
+15.4-second sample or establish predictable speed. N37–N39 remain open or
+unconfirmed; the phase is not complete. During the merges, a later untagged
+deployment (`863caf70`, 15:26 UTC) replaced this promotion with older application
+behavior, including no HTTP End endpoint. Its publishing source is unconfirmed
+(N40). Validate the active assets and control endpoints after the final merge;
+a successful deploy command alone cannot establish which code remains live.
 
 One worker owns each page's socket, source File reads, metadata-driven receipt
 queue, IndexedDB writes, progress correction and completion receipts. React gets
@@ -54,6 +61,14 @@ After the warm-up follow-up, targeted cache-upgrade/UI-stall/worker-crash/picker
 checks passed 4/4 on Node and 4/4 on local Cloudflare, plus 3/3 Firefox worker and
 picker checks. The warm-up only overlaps worker-script loading with room setup;
 it does not open an idle WebSocket or change the transfer worker.
+
+Runtime commit `4a1c306` passed full GitHub CI. The later diagnostics-only commit
+`3416923` failed its Firefox stress case: receipt arrived 927 ms after the blocks,
+but the observer timestamp was still zero at the single early inspection. The
+test asserted a five-second recovery budget without waiting through that budget.
+It now polls only the Firefox observations until the existing deadline and still
+asserts their recorded timestamps. Chromium's stricter inside-block criterion is
+unchanged. The corrected targeted Firefox case passed locally with exact export.
 
 The final review found an offline Stop edge: checking page-side connection state
 before retiring the worker's source could leave its File alive for reconnect.
@@ -125,7 +140,7 @@ binary responses and exact subsequent export. A separate public 20 MiB run
 passed lost-first-acknowledgement and repeated-interruption/obsolete-read tests;
 return to persisted progress was 1220/684 ms, with final SHA-256 matched.
 
-## Final public measurements and open release gate (N38)
+## Final public measurements and open performance investigation (N38)
 
 | Batch | Cache samples (ms) | Median |
 | --- | --- | --- |
@@ -147,7 +162,8 @@ Ordinary final room-ready samples were 1415/1940/2421 ms versus baseline
 public samples do not prove setup latency is unchanged. Isolate selection,
 network, retry and cache stages in another slow occurrence, compare against the
 previous owner under matched conditions, and then repeat release validation.
-OPFS migration should not conceal or silently reclassify this unresolved gate.
+The user authorized live reproduction before this investigation is complete.
+OPFS migration should not conceal or silently reclassify the unresolved issue.
 
 These small desktop/network samples are regression checks, not campus/phone
 proof, 200 MiB behavior or multiple-sender fairness. Optional worker performance

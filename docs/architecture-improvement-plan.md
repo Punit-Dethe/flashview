@@ -50,7 +50,7 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | Reconnection and socket handover | Immediate foreground recovery on #37; 20 October follow-up retires obsolete authority, clears receiver requests and preserves sender resume during host absence |
 | All-file benchmark and bounded original-byte readback | Implemented on #35; not ported to this branch |
 | Lockfile and reproducible installs | Implemented on #35; not ported to this branch |
-| Worker-owned relay transfer | Implemented/tested on the phase branch: one socket, source reads, automatic receipt/cache and completion receipts, bounded bridge, cancellation and crash recovery. Public promotion held by unexplained speed outlier N38; previous room-engine release remains live. N37/N39 and phone preview removal remain |
+| Worker-owned relay transfer | Implemented/tested and deployed for user-authorized live reproduction: one socket, source reads, automatic receipt/cache and completion receipts, bounded bridge, cancellation and crash recovery. N38's speed outlier remains unexplained; N37/N39 and phone preview removal remain |
 | OPFS receipt and content verification | Demonstrated in the isolated R2 pilot; not integrated into the relay application |
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | Shared metadata engine owns file transitions, participant admission/approval/rejection, private takeover and host presence; serialized atomic checkpoints, room revisions and client stale-snapshot handling implemented. Integration/release evidence tracked in N31–N33 |
@@ -151,9 +151,10 @@ Audit N37 remains open: the tested Firefox build still deferred native file/WS
 delivery under a long parent-page JS task despite worker timers running. Keep
 renderer work bounded/isolated and verify browsers explicitly; the Chromium
 stress result is not a cross-browser guarantee.
-Promotion is held by N38: one ordinary public 20 MiB copy took 15.4 s, while
-other copies and traced reruns took roughly 4–5 s. The cause is unconfirmed;
-restore/retain the previous release until matched diagnostics explain the stall.
+N38 remains open: one ordinary public 20 MiB copy took 15.4 s, while other copies
+and traced reruns took roughly 4–5 s. The cause is unconfirmed. The user authorized
+merging and deploying this worker for live reproduction; retain the prior version
+for rollback and continue matched diagnostics rather than claiming it fixed.
 N39 also records a near-deployment reload timeout with an unconfirmed cause.
 
 **Touch:** room socket ownership, range transport, scheduler, progress and

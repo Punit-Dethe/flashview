@@ -1655,15 +1655,25 @@ test('transfer worker: UI stalls preserve exact originals; Chromium receipt rema
     await delay(11000);
     const blocks = await Promise.all([host, phone].map(page => page.evaluate(() =>
       (window as typeof window & { __blockInterval: { start: number; end: number } }).__blockInterval)));
-    const observedAt = Number(await observerWorker.evaluate('globalThis.__observedAt'));
-    const receiptAt = Number(await transferEval(phone, 'window.__completedFromRelay'));
+    let observedAt = Number(await observerWorker.evaluate('globalThis.__observedAt'));
+    let receiptAt = Number(await transferEval(phone, 'window.__completedFromRelay'));
     const first = Math.max(...blocks.map(block => block.start)), last = Math.min(...blocks.map(block => block.end));
+    const recoveredBy = Math.max(...blocks.map(block => block.end)) + 5000;
+    if (process.env.FLASHVIEW_BROWSER === 'firefox') {
+      // The first snapshot is only about one second after the busy interval.
+      // Wait through the existing recovery deadline before judging timestamps;
+      // the independent observer may still be scanning after receipt completes.
+      while ((!observedAt || !receiptAt) && Date.now() < recoveredBy) {
+        await delay(50);
+        observedAt = Number(await observerWorker.evaluate('globalThis.__observedAt'));
+        receiptAt = Number(await transferEval(phone, 'window.__completedFromRelay'));
+      }
+    }
     t.diagnostic(JSON.stringify({ browser:browser.version(), blocks, observedAt, receiptAt, source: await transferEval(phone, '({releasedAt:window.__releasedAt,firstReadAt:window.__firstReadAt,firstSendAt:window.__firstSendAt})'), host:await transferEval(host,'({firstBinaryAt:window.__firstBinaryAt,completionCommands:window.__completionCommands})') }));
     if (process.env.FLASHVIEW_BROWSER === 'firefox') {
       // N37: this Firefox build's native File/WS delivery still waits for the
       // parent main thread. Keep an explicit bounded-recovery/integrity check;
       // do not silently count it as passing Chromium's independence criterion.
-      const recoveredBy = Math.max(...blocks.map(block => block.end)) + 5000;
       assert.ok(observedAt > first && observedAt < recoveredBy, 'Firefox must preserve and finish receipt promptly after its native delivery resumes');
       assert.ok(receiptAt > first && receiptAt < recoveredBy, 'Firefox completion must recover without reselection/reapproval');
       t.diagnostic('N37: Firefox native delivery coupling is a known limitation; this case checks bounded recovery, not complete UI independence.');

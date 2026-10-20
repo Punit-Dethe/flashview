@@ -81,6 +81,8 @@ published by the application.
 
 - Short writes loop until complete; a changed cached block is rejected, only its
   checkpoint is removed, and restoring that block restores exact completion.
+- Even internally valid block checkpoints cannot seal an original with the wrong
+  pinned whole-file root; all its checkpoints are invalidated and export refused.
 - Bytes flushed immediately before an abort/absent checkpoint remain incomplete.
 - Cleanup waits for a reader lease, and closed generations reject recreation.
 - Worker restart reuses committed originals without asking the source again.
@@ -108,6 +110,7 @@ Chromium/Node, Chromium/Cloudflare and Firefox/Node passed. The new viewer case
 renders genuine PDF and PPTX originals after closing the sender. Forced quota
 and missing-capability tests are synthetic; they do not prove physical mobile
 low-storage behavior. CI and public results remain separate from local passes.
+The Cloudflare relay contract suite also passed 19/19, and Worker dry-run passed.
 
 ## Performance gate
 

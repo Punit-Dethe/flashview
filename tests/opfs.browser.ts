@@ -213,6 +213,15 @@ test('OPFS store: short writes, crash checkpoints, corruption repair, leases and
       try { await store.saveOriginalBlock(partialRoom, file.fileId, 0, bytes.slice(0, 65536), abort.signal); } catch { cancelled = true; }
       handlePrototype.createSyncAccessHandle = native;
       const afterCrash = [...await store.originalIndices(partialRoom, file.fileId)];
+      // Valid per-block checkpoints cannot substitute for the pinned whole-file root.
+      const wrongRootRoom = 'opfs:' + crypto.randomUUID(), wrongRoot = { ...file, sha256: '0'.repeat(64) };
+      await store.prepareOriginal(wrongRootRoom, wrongRoot);
+      await Promise.all(Array.from({ length: 5 }, (_, index) => store.saveOriginalBlock(wrongRootRoom, file.fileId, index,
+        bytes.slice(index * 65536, Math.min(bytes.length, (index + 1) * 65536)))));
+      const rootRefused = !await store.sealOriginal(wrongRootRoom, wrongRoot, () => true) &&
+        (await store.originalIndices(wrongRootRoom, file.fileId)).size === 0 &&
+        await new store.CompletedFileStore().acquire(wrongRootRoom, wrongRoot) === null;
+      await store.deleteOriginalRoom(wrongRootRoom);
       lease = await new store.CompletedFileStore().acquire(room, file); if (!lease) throw Error('Repaired original missing');
       let deleted = false; const deleting = store.deleteOriginalRoom(room).then(() => { deleted = true; });
       await new Promise(resolve => setTimeout(resolve, 100)); const waitedForReader = !deleted;
@@ -220,11 +229,12 @@ test('OPFS store: short writes, crash checkpoints, corruption repair, leases and
       let fenced = false;
       try { await store.prepareOriginal(room, file); } catch { fenced = true; }
       await store.deleteOriginalRoom(partialRoom);
-      return { committed, sealed, exact, repaired, refused, resealed, cancelled, afterCrash, waitedForReader, fenced };
+      return { committed, sealed, exact, repaired, refused, resealed, cancelled, afterCrash, rootRefused, waitedForReader, fenced };
     });
     assert.equal(result.committed.length, 5); assert.ok(result.sealed && result.exact);
     assert.equal(result.repaired.length, 4); assert.ok(!result.repaired.includes(1));
     assert.ok(result.refused && result.resealed); assert.ok(result.cancelled); assert.equal(result.afterCrash.length, 0);
+    assert.ok(result.rootRefused);
     assert.ok(result.waitedForReader && result.fenced);
     t.diagnostic(JSON.stringify({ browser: browser.version(), ...result }));
   } finally { await browser.close(); child.kill(); }

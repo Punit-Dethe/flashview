@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assignParticipantColors, PARTICIPANT_SWATCHES, tintParticipantColor } from '../src/client/participantColors';
 
-test('first five people match the exact reference HTML colors',()=>{
+test('first five people retain their hues with amber replacing pink',()=>{
   const ids=['student-a','student-b','student-c','student-d','student-e'];
   const colors=assignParticipantColors({},ids);
   assert.deepEqual(ids.map(id=>colors[id]), [
-    '#ec4e8a','#2f7de1','#e5741a','#8a5cf0','#17956a',
+    '#b45309','#2f7de1','#e5741a','#8a5cf0','#17956a',
   ]);
 });
 

@@ -89,6 +89,10 @@ export function App() {
   const [joinState, setJoinState] = useState<'idle' | 'connecting' | 'pending' | 'accepted' | 'rejected'>(initialJoin ? 'connecting' : 'idle');
   const [students, setStudents] = useState<StudentInfo[]>([]);
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
+  // Shared-file ownership outlives live sockets, including stopped originals.
+  const contributors = [...new Map(documents
+    .filter(file => file.status === 'approved' || file.status === 'offline' || file.revoked)
+    .map(file => [file.ownerId, { id: file.ownerId, name: file.ownerName }])).values()];
   const [participantColors, setParticipantColors] = useState<Record<string,string>>({});
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
@@ -1038,7 +1042,7 @@ export function App() {
           <div className="workspace premium-workspace reference-room">
             <div className="workspace-split">
               <aside className={'workspace-left'+(mobileHostConfigOpen?' mobile-config-expanded':'')}
-                aria-label="Room invitation and participants">
+                aria-label="Room invitation and people who shared files">
                 <div className="mobile-host-toolbar">
                   <div className="mobile-host-identity">
                     <strong className="mobile-host-code">{hostSession.code}</strong>
@@ -1073,14 +1077,9 @@ export function App() {
                     </div>
                   </div>
                 </section>
-                <div className="room-admission-status">
-                  <div><strong>Approve each person</strong>
-                    <small>{hostSession.autoApprove?'Anyone with the code can join':'Each person waits for your OK'}</small></div>
-                  <span className={'reference-switch visual-only'+(!hostSession.autoApprove?' is-on':'')} aria-hidden="true"/>
-                </div>
-                <section className="sidebar-participants" aria-label="Participants">
+                <section className="sidebar-participants" aria-label="People who shared files">
                   <div className="sidebar-participants-heading">
-                    <h2>In the room · {students.filter(s=>s.approved).length}</h2>
+                    <h2>Shared by</h2>
                     <span className={'connection reference-room-connection '+socketStatus}
                       aria-label={'Room '+statusText(socketStatus)} title={statusText(socketStatus)}>
                       <span className="status-dot" aria-hidden="true"/>
@@ -1088,7 +1087,7 @@ export function App() {
                   </div>
                   <div className="sidebar-participants-scroll">
                     {students.some(s=>!s.approved)&&<span className="mobile-host-request-label">Requests to join</span>}
-                    {students.length===0&&<p className="sidebar-participants-empty">No one has joined yet.</p>}
+                    {contributors.length===0&&<p className="sidebar-participants-empty">No files shared yet.</p>}
                     {students.filter(s=>!s.approved).map(s=>(
                       <div className="approval sidebar-approval" data-participant-id={s.id} key={s.id}>
                         <span className="participant-avatar" aria-hidden="true"
@@ -1101,11 +1100,11 @@ export function App() {
                         </div>
                       </div>
                     ))}
-                    {students.filter(s=>s.approved).map(s=>(
+                    {contributors.map(s=>(
                       <div className="participant-row" data-participant-id={s.id} key={s.id}>
                         <span className="participant-avatar" aria-hidden="true"
                           style={participantColors[s.id]?{'--participant-color':participantColors[s.id]} as CSSProperties:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
-                        <span className="participant-info"><strong>{s.name}</strong><small>Connected</small></span>
+                        <span className="participant-info"><strong>{s.name}</strong></span>
                       </div>
                     ))}
                   </div>

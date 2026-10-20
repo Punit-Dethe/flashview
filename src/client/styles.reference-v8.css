@@ -105,9 +105,9 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   display:flex; align-items:center; justify-content:space-between; gap:16px;
   background:#f5f7fb; cursor:pointer;
 }
-.premium-app .reference-toggle strong,.premium-app .room-admission-status strong {
+.premium-app .reference-toggle strong {
   display:block; color:#0b1230; font-size:15px; font-weight:700; }
-.premium-app .reference-toggle small,.premium-app .room-admission-status small {
+.premium-app .reference-toggle small {
   display:block; color:#5d6685; font-size:13px; }
 .premium-app .reference-toggle input { position:absolute; opacity:0; width:1px; height:1px; }
 .premium-app .reference-toggle:has(input:focus-visible) { outline:3px solid #15161c; }
@@ -119,7 +119,6 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   background:#15161c; }
 .premium-app .reference-toggle input:checked+.reference-switch::after,.premium-app .reference-switch.is-on::after {
   left:21px; }
-.premium-app .reference-switch.visual-only { opacity:.85; }
 .premium-app .reference-pane .reference-pill { width:100%; margin-top:auto; }
 .premium-app .reference-join-form { display:flex; flex-direction:column; gap:0; margin-top:auto; }
 .premium-app .reference-join-form .reference-digits { display:grid; grid-template-columns:repeat(6,minmax(0,1fr));
@@ -209,10 +208,6 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   background:#fff; border-radius:99px; white-space:nowrap; }
 .premium-app .reference-room .invite-actions .end-room-button {
   background:#fff; border-color:#0b1230; color:#0b1230; }
-.premium-app .reference-room .room-admission-status {
-  display:flex; justify-content:space-between; align-items:center; gap:16px;
-  margin:0; padding:12px 16px; border:0; border-radius:14px; text-align:left;
-  background:#f5f7fb; color:#0b1230; font-size:15px; }
 .premium-app .reference-room .sidebar-participants {
   display:flex; flex:1 1 auto; min-height:0; flex-direction:column; padding:0;
   margin:8px 0 0; border:0; background:transparent; }
@@ -509,7 +504,6 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
  .premium-app .reference-room .qr-plate { width:min(100%,232px); max-width:232px; margin:auto; padding:12px; }
  .premium-app .reference-room .room-code-label { margin:10px 0 3px; font-size:12px; }
  .premium-app .reference-room .room-code { font-size:48px; margin:0 0 12px; }
- .premium-app .reference-room .room-admission-status { padding:8px 12px; }
  .premium-app .reference-room .sidebar-participants { margin:0; }
  .premium-app .reference-room .sidebar-participants-scroll { flex:1 1 auto; min-height:60px; }
 }
@@ -575,12 +569,6 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   }
   .premium-app .reference-room .mobile-host-config-panel .sidebar-participants-scroll {
     max-height:none; overflow:visible;
-  }
-  /* Show the count, not an endless list of connected participants. Keep
-     pending requests actionable when approval is enabled. */
-  .premium-app .reference-room .mobile-host-config-panel .participant-row,
-  .premium-app .reference-room .mobile-host-config-panel .sidebar-participants-empty {
-    display:none;
   }
   .premium-app .reference-room .mobile-host-request-label {
     display:block; margin:6px 0; color:#5d6685;

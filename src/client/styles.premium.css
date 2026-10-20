@@ -1158,10 +1158,6 @@ html, body { background: #F8FAFD; }
 .premium-app .workspace-left { background: #303742; border-right: 1px solid #404852; }
 .premium-app .workspace-left .outline-button { background: #292b33; border-color: #444753; color: #f1f2f8; }
 .premium-app .workspace-left .primary-button { background: #ecedf5; color: #202433; border-color: #ecedf5; }
-.premium-app .room-admission-status {
-  display: block; margin: 0 0 9px; text-align: center;
-  color: #a4a8b8; font-size: 11px; line-height: 1.5;
-}
 .premium-app .workspace-right {
   background: #F8FAFD; color: #283243;
 }

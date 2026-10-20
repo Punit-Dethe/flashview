@@ -512,7 +512,7 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.equal(await first.locator('.site-header').count(), 0, 'Room workspace must have no header');
     assert.equal(await first.locator('.workspace-topline').count(), 0, 'Room breadcrumbs and room-active strip are removed');
     assert.equal(await first.locator('.workspace-invite-heading').count(), 0, 'Sidebar must not have an introductory hero');
-    assert.equal(await first.getByRole('heading', { name: /In the room/ }).count(), 1);
+    assert.equal(await first.getByRole('heading', { name: 'Shared by', exact: true }).count(), 1);
     const firstCode = (await first.locator('.room-code').textContent())?.trim();
     assert.match(firstCode ?? '', /^\d{6}$/);
     assert.equal(await first.locator('.qr-plate svg').count(), 1);
@@ -1781,9 +1781,13 @@ test('transfer worker: offline Stop retires source bytes and is replayed after p
   const { port, child } = remote ? { port: 0, child: null } : await runningServer();
   const browser = await browserEngine.launch({ headless: true });
   const host = await browser.newPage({ acceptDownloads: true }); const phone = await browser.newPage();
-  let revoked = false, stopped = false, binaryAfterStop = 0;
+  let revoked = false, stopped = false, binaryAfterStop = 0, senderLeft = false;
   host.on('websocket', socket => socket.on('framereceived', ({ payload }) => {
-    if (typeof payload === 'string') { const message = JSON.parse(payload); if (message.type === 'file.updated' && message.file.name === 'offline-stop.bin' && message.file.revoked) revoked = true; }
+    if (typeof payload === 'string') {
+      const message = JSON.parse(payload);
+      if (message.type === 'student.left') senderLeft = true;
+      if (message.type === 'file.updated' && message.file.name === 'offline-stop.bin' && message.file.revoked) revoked = true;
+    }
   }));
   phone.on('websocket', socket => socket.on('framesent', ({ payload }) => { if (stopped && typeof payload !== 'string') binaryAfterStop++; }));
   try {
@@ -1802,7 +1806,10 @@ test('transfer worker: offline Stop retires source bytes and is replayed after p
     await transferWait(phone, 'window.__offlineReads.length > 0');
     await phone.context().setOffline(true);
     await transferEval(phone, 'window.__offlineSockets.at(-1).close(4100,"Synthetic offline Stop")');
-    await host.waitForFunction(() => document.querySelectorAll('.participant-row').length === 0);
+    for (let attempt = 0; attempt < 150 && !senderLeft; attempt++) await delay(50);
+    assert.equal(senderLeft, true, 'Relay must observe departure before the offline Stop');
+    assert.equal(await host.locator('.participant-row').count(), 1,
+      'A disconnected sender remains listed through their shared file');
     await phone.getByRole('button', { name: 'Stop sharing' }).click(); await phone.getByText('Sharing stopped', { exact: true }).waitFor();
     stopped = true;
     await transferEval(phone, 'window.__offlineReads.splice(0).forEach(release=>release())');
@@ -2049,7 +2056,10 @@ test('reference UI assigns one color per real participant, including two student
       await page.getByRole('button',{name:/Join room/}).click();
       await page.locator('.student-add-fab:not([disabled])').waitFor();
     }
-    await host.locator('.participant-row').nth(1).waitFor();
+    assert.equal(await host.locator('.participant-row').count(), 0,
+      'Joining alone must not add a name to Shared by');
+    assert.equal(await host.locator('.room-admission-status').count(), 0);
+    assert.equal(await host.getByLabel('Require approval').count(), 0);
     await first.locator('input[type=file]').setInputFiles([
       {name:'slides-one.pptx',mimeType:'application/octet-stream',buffer:Buffer.alloc(12_288,1)},
       {name:'archive-one.zip',mimeType:'application/octet-stream',buffer:Buffer.alloc(13_000,2)},
@@ -2102,6 +2112,20 @@ test('reference UI assigns one color per real participant, including two student
     assert.equal(a.gradient,b.gradient,'Every icon from one student has an identical gradient');
     assert.notEqual(a.ownerId,c.ownerId);
     assert.notEqual(a.gradient,c.gradient,'Different students get different icon gradients');
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').nth(2).waitFor();
+    await first.close();
+    // Ask for an authoritative snapshot after the sender has left. Its name
+    // belongs to retained originals, rather than the current socket roster.
+    await host.reload();
+    await host.locator('.connection.connected').waitFor();
+    await host.locator('.participant-row').nth(1).waitFor();
+    assert.equal(await host.locator('.participant-info small').count(), 0,
+      'Contributors must not be labelled Connected');
+    assert.equal(await host.locator('.participant-row').count(), 2);
+    await host.waitForFunction(() => [...document.querySelectorAll('.participant-row,.document-row')]
+      .every(element => Number(getComputedStyle(element).opacity) > 0.99));
+    await mkdir('test-artifacts/ui', { recursive: true });
+    await host.screenshot({ path: 'test-artifacts/ui/shared-by-desktop.png', fullPage: true });
     await host.getByRole('button',{name:/End room/}).click();
     await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
@@ -2238,21 +2262,21 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
     assert.equal(await host.locator('.qr-plate').isVisible(),true);
     assert.equal(await host.getByRole('button',{name:'Copy link'}).isVisible(),true);
     assert.equal(await host.getByRole('button',{name:'End room'}).isVisible(),true);
-    assert.equal(await host.getByText('Approve each person').isVisible(),true);
-    assert.equal(await host.getByRole('heading',{name:'In the room · 0'}).isVisible(),true);
+    assert.equal(await host.getByText('Approve each person').count(),0);
+    assert.equal(await host.getByLabel('Require approval').count(),0);
+    assert.equal(await host.getByRole('heading',{name:'Shared by',exact:true}).isVisible(),true);
 
     await student.goto(root);
     await student.locator('#code').fill(code);
     await student.getByRole('button',{name:/Join room/}).click();
     const request=host.locator('.sidebar-approval');
     await request.waitFor({timeout:20000});
-    assert.equal(await host.getByRole('heading',{name:'In the room · 0'}).isVisible(),true,
-      'Pending approvals do not count as connected people');
+    assert.equal(await host.locator('.participant-row').count(),0,
+      'Pending requests are actionable without becoming contributors');
     await request.getByRole('button',{name:'Allow'}).click();
     await student.locator('.student-add-fab:not([disabled])').waitFor();
-    await host.getByRole('heading',{name:'In the room · 1'}).waitFor();
-    assert.equal(await host.locator('.participant-row').isVisible(),false,
-      'Approved participants are shown as a count, not as a mobile list');
+    assert.equal(await host.locator('.participant-row').count(),0,
+      'Approval alone does not add a contributor');
 
     await student.locator('input[type=file]').setInputFiles({
       name:'mobile-host-demo.txt',mimeType:'text/plain',buffer:Buffer.from('Hello from the student'),
@@ -2260,6 +2284,13 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
     const card=host.locator('.document-row').filter({hasText:'mobile-host-demo.txt'});
     await card.waitFor({timeout:25000});
     assert.equal(await card.isVisible(),true,'Received files remain available on mobile');
+    await host.locator('.participant-row').waitFor();
+    assert.equal(await host.locator('.participant-row').isVisible(),true,
+      'People who share files are visible in the expanded mobile sidebar');
+    await host.waitForFunction(() => [...document.querySelectorAll('.participant-row,.document-row')]
+      .every(element => Number(getComputedStyle(element).opacity) > 0.99));
+    await mkdir('test-artifacts/ui', { recursive: true });
+    await host.screenshot({ path: 'test-artifacts/ui/shared-by-mobile.png', fullPage: true });
     await configure.click();
     assert.equal(await host.locator('.qr-plate').isVisible(),false);
     assert.equal(await card.isVisible(),true,'Collapsing Configure must not hide files');

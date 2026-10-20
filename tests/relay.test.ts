@@ -89,6 +89,91 @@ async function startServer(): Promise<{ port: number; child: ChildProcessWithout
   throw new Error('Server never started: ' + output);
 }
 
+test('retry before the first join acknowledgement preserves one pending student and approval', { timeout: 20000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken });
+    peers.push(host);
+    await host.wait('room.state');
+    const resumeToken = 'ab'.repeat(32);
+    const phone = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken });
+    peers.push(phone);
+    // Intentionally don't use any capability from the first acknowledgement.
+    const pending = await host.wait('student.pending');
+    const replacement = await connect(port, { role: 'student', joinToken: room.joinToken, resumeToken });
+    peers.push(replacement);
+    assert.equal((await replacement.wait('join.pending')).resumeToken, resumeToken);
+    host.send({ type: 'room.sync' });
+    const state = await host.wait('room.state');
+    const students = state.students as Array<{ id: string; approved: boolean }>;
+    assert.equal(students.length, 1);
+    assert.equal(students[0].approved, false);
+    assert.equal(students[0].id, (pending.student as { id: string }).id);
+    host.send({ type: 'student.accept', studentId: students[0].id });
+    await replacement.wait('join.accepted');
+  } finally {
+    for (const peer of peers) peer.close();
+    child.kill('SIGTERM');
+  }
+});
+
+test('phone takeover replays only its outstanding uncancelled byte requests after restoring its manifest', { timeout: 20000 }, async () => {
+  const { port, child } = await startServer();
+  const peers: TestPeer[] = [];
+  try {
+    const room = await (await fetch('http://127.0.0.1:' + port + '/api/rooms?autoApprove=1', { method: 'POST' })).json() as {
+      roomId: string; hostToken: string; joinToken: string;
+    };
+    const host = await connect(port, { role: 'host', roomId: room.roomId, token: room.hostToken });
+    peers.push(host);
+    await host.wait('room.state');
+    const phone = await connect(port, { role: 'student', joinToken: room.joinToken });
+    peers.push(phone);
+    const joined = await phone.wait('join.accepted');
+    phone.send({ type: 'file.offer', fileId: 'takeover-file', name: 'original.bin', size: 4 });
+    await phone.wait('file.approved');
+    await host.wait('file.announced');
+    for (const requestId of ['keep-request', 'cancel-request']) {
+      host.send({ type: 'range.request', requestId, fileId: 'takeover-file', begin: 0, end: 4 });
+      assert.equal((await phone.wait('range.request')).requestId, requestId);
+    }
+    host.send({ type: 'range.cancel', requestId: 'cancel-request' });
+    host.send({ type: 'room.sync' });
+    await host.wait('room.state'); // Cancellation is processed before takeover.
+    const other = await connect(port, { role: 'student', joinToken: room.joinToken, name: 'Other sender' });
+    peers.push(other);
+    await other.wait('join.accepted');
+    other.send({ type: 'file.offer', fileId: 'other-sender-file', name: 'other.bin', size: 4 });
+    await other.wait('file.approved');
+    await host.wait('file.announced');
+    host.send({ type: 'range.request', requestId: 'other-request', fileId: 'other-sender-file', begin: 0, end: 4 });
+    await other.wait('range.request');
+    const replacement = await connect(port, {
+      role: 'student', joinToken: room.joinToken, resumeToken: joined.resumeToken,
+    });
+    peers.push(replacement);
+    const manifest = await replacement.wait('join.resumed');
+    assert.equal((manifest.files as Array<{ status: string }>)[0].status, 'approved');
+    const replayed = await replacement.wait('range.request');
+    assert.equal(replayed.requestId, 'keep-request');
+    const bytes = Uint8Array.of(41, 3, 87, 255);
+    replacement.ws.send(encodeRangePacket({ type: 'range.data', requestId: 'keep-request', fileId: 'takeover-file', begin: 0 }, bytes.buffer));
+    const received = await host.waitBinary();
+    const packet = decodeRangePacket(received.buffer.slice(received.byteOffset, received.byteOffset + received.byteLength) as ArrayBuffer);
+    assert.deepEqual(packet.bytes, bytes);
+    await delay(100);
+    assert.equal(replacement.events.some(e => !e.binary && e.msg.type === 'range.request'), false,
+      'Cancelled requests and other senders\' requests must not be replayed');
+  } finally {
+    for (const peer of peers) peer.close();
+    child.kill('SIGTERM');
+  }
+});
+
 test('different devices exchange metadata, approvals and byte-range PDF data via relay', { timeout: 20000 }, async () => {
   const { port, child } = await startServer();
   const peers: TestPeer[] = [];

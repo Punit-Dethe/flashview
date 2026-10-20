@@ -423,10 +423,24 @@ export function App() {
     };
     // focus is essential on mobile: an OS file picker doesn't always trigger
     // visibilitychange, and browsers may suspend the heartbeat while browsing.
-    const online = () => wake();
+    const online = () => {
+      if (document.visibilityState !== 'visible') {
+        socket.pauseHeartbeat(true);
+        return;
+      }
+      socket.wake('online');
+      wake();
+    };
+    const freeze = () => socket.pauseHeartbeat(true);
+    const pagehide = (event: PageTransitionEvent) => {
+      if (event.persisted) freeze();
+    };
     document.addEventListener('visibilitychange', visibility);
+    document.addEventListener('freeze', freeze);
+    document.addEventListener('resume', wake);
     window.addEventListener('focus', wake);
-    window.addEventListener('pageshow', online);
+    window.addEventListener('pageshow', wake);
+    window.addEventListener('pagehide', pagehide);
     window.addEventListener('online', online);
     // Repair missed WebSocket notifications while the page is actually in use.
     // This is lightweight metadata, NOT a full PDF transfer.
@@ -511,7 +525,8 @@ export function App() {
         if (typeof message.roomCode === 'string') setCurrentRoomCode(message.roomCode);
         setJoinState('accepted');
         setHostAvailable(true);
-        setError('');
+        // Joining can finish after a quick file selection. Preserve local
+        // validation errors (for example an eleventh file) across that reply.
         socket.send({ type: 'file.sync' });
         if (Array.isArray(message.files)) reconcileFiles(message.files as PdfManifest[]);
         else socket.send({ type: 'file.sync' });
@@ -622,8 +637,11 @@ export function App() {
     });
     return () => {
       document.removeEventListener('visibilitychange', visibility);
+      document.removeEventListener('freeze', freeze);
+      document.removeEventListener('resume', wake);
       window.removeEventListener('focus', wake);
-      window.removeEventListener('pageshow', online);
+      window.removeEventListener('pageshow', wake);
+      window.removeEventListener('pagehide', pagehide);
       window.removeEventListener('online', online);
       clearInterval(syncTimer);
       presentation.dispose();

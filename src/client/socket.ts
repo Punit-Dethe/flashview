@@ -30,6 +30,12 @@ export class RoomSocket {
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private openingSince = 0;
   private heartbeatPaused = false;
+  private reconnectOnWake = false;
+  private foregroundAttempt: WebSocket | null = null;
+  // Reversible same-deployment A/B control, like the existing packet/window
+  // experiments. No UI setting, identity change, or file-content logging.
+  private immediateResume = true;
+  private wakeTimeout: ReturnType<typeof setTimeout> | null = null;
   onMessage: (message: ServerMessage) => void = () => {};
   onStatus: (status: SocketStatus) => void = () => {};
 
@@ -37,8 +43,17 @@ export class RoomSocket {
     this.stopConnection();
     this.stopped = false;
     this.identity = { ...identity };
+    this.immediateResume = new URLSearchParams(window.location.search).get('resumePolicy') !== 'probe';
+    if (identity.role === 'student' && typeof identity.resumeToken !== 'string') {
+      // Know the resume capability before sending hello, so losing the FIRST
+      // acknowledgement cannot turn an immediate retry into a second student.
+      this.identity.resumeToken = Array.from(crypto.getRandomValues(new Uint8Array(32)),
+        byte => byte.toString(16).padStart(2, '0')).join('');
+    }
     this.retryCount = 0;
     this.heartbeatPaused = false;
+    this.reconnectOnWake = false;
+    this.foregroundAttempt = null;
     this.open();
   }
 
@@ -48,10 +63,15 @@ export class RoomSocket {
     this.pingTimer = null;
     this.pingTimeout = null;
     this.pingSentAt = null;
+    if (this.wakeTimeout !== null) clearTimeout(this.wakeTimeout);
+    this.wakeTimeout = null;
   }
 
   /** The system file picker may suspend a mobile webview without a visibility event. */
-  pauseHeartbeat(): void {
+  pauseHeartbeat(frozen = false): void {
+    // A phone picker/background interval can invalidate an apparently OPEN
+    // socket. Receiver tab switches alone must not interrupt healthy transfers.
+    this.reconnectOnWake ||= frozen || this.identity?.role === 'student';
     this.heartbeatPaused = true;
     this.stopHeartbeat();
   }
@@ -62,7 +82,7 @@ export class RoomSocket {
     this.pingTimer = setInterval(() => this.ping(), 25_000);
   }
 
-  private ping(): void {
+  private ping(timeoutMs = 12_000): void {
     if (!this.connected || this.pingTimeout !== null || this.heartbeatPaused ||
         (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
     if (!this.send({ type: 'heartbeat.ping' })) return;
@@ -73,41 +93,65 @@ export class RoomSocket {
           (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
       if (this.ws?.readyState === WebSocket.OPEN) {
         // A half-open TCP connection can appear OPEN until a packet is attempted.
-        this.ws.close(4001, 'Heartbeat timeout');
+        // Retire it locally: close() can itself wait for a dead network for
+        // tens of seconds before onclose fires.
+        this.restartStalledTransfer();
       }
-    }, 12_000);
+    }, timeoutMs);
   }
 
   /** Call when returning from another tab or when internet access resumes. */
-  wake(): void {
+  wake(reason: 'focus' | 'online' = 'focus'): void {
     if (this.stopped || !this.identity) return;
+    const suspended = this.reconnectOnWake;
+    this.reconnectOnWake = false;
     this.heartbeatPaused = false;
-    // Discard an old deadline from a suspended file picker or background tab.
-    if (this.pingTimeout !== null) clearTimeout(this.pingTimeout);
-    this.pingTimeout = null;
+    if (this.immediateResume && (suspended || reason === 'online')) {
+      // One new attempt for the return, without a serial old-socket probe.
+      // Coalesce online/focus/pageshow/change events against that attempt.
+      if (!suspended && this.foregroundAttempt && this.ws === this.foregroundAttempt && !this.authenticated) return;
+      this.restartStalledTransfer();
+      this.foregroundAttempt = this.ws;
+      return;
+    }
+    if (this.foregroundAttempt && this.ws === this.foregroundAttempt && !this.authenticated) return;
+    // pauseHeartbeat already discarded any suspended deadline. Repeated focus,
+    // pageshow and file-change events must not postpone the new probe forever.
     this.startHeartbeat();
     if (this.connected) {
       // Re-validate an apparently open connection immediately on foreground return.
-      this.ping();
+      this.ping(2_000);
       return;
     }
     if (this.ws?.readyState === WebSocket.CONNECTING) {
       // Some mobile OS resumes leave the original handshake stuck forever.
-      if (Date.now() - this.openingSince > 9_000) this.ws.close();
+      if (Date.now() - this.openingSince > 9_000) this.restartStalledTransfer();
+      else this.checkResumedHandshake();
       return;
     }
     if (this.ws?.readyState === WebSocket.OPEN) {
       // OPEN isn't the same as authenticated, but a normal handshake needs
       // a brief chance to finish before foreground focus triggers a restart.
       if (Date.now() - this.openingSince > 9_000)
-        this.ws.close(4002, 'Authentication stalled');
+        this.restartStalledTransfer();
+      else this.checkResumedHandshake();
       return;
     }
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    // CLOSING is not reusable, even if its close event never arrives.
+    this.stopConnection();
+    this.retryCount = 0;
     this.open();
+  }
+
+  private checkResumedHandshake(): void {
+    if (this.wakeTimeout !== null) return;
+    const ws = this.ws;
+    // A file may be selected before the original join finishes. Give a healthy
+    // handshake time to finish, but don't wait its full background deadline.
+    this.wakeTimeout = setTimeout(() => {
+      this.wakeTimeout = null;
+      if (this.ws === ws && !this.authenticated) this.restartStalledTransfer();
+    }, 2_000);
   }
 
   /** Recover a transfer whose first byte never arrived despite retries.
@@ -138,7 +182,7 @@ export class RoomSocket {
     this.openingSince = Date.now();
     this.connectTimer = setTimeout(() => {
       if (this.ws === ws && ws.readyState === WebSocket.CONNECTING)
-        ws.close();
+        this.retryConnection();
     }, 10_000);
     this.onStatus('connecting');
     ws.onopen = () => {
@@ -152,7 +196,7 @@ export class RoomSocket {
       // handshake. Do not leave the interface connecting forever.
       this.handshakeTimer = setTimeout(() => {
         if (this.ws === ws && !this.authenticated && ws.readyState === WebSocket.OPEN)
-          ws.close(4002, 'Room handshake timeout');
+          this.retryConnection();
       }, 10_000);
     };
     ws.onmessage = event => {
@@ -179,11 +223,14 @@ export class RoomSocket {
               authenticated = true;
               perf.record('socket_connect_ms', performance.now() - connectStarted);
             }
+            const wasAuthenticated = this.authenticated;
             this.retryCount = 0;
             this.authenticated = true;
+            if (this.wakeTimeout !== null) clearTimeout(this.wakeTimeout);
+            this.wakeTimeout = null;
             if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
             this.handshakeTimer = null;
-            this.onStatus('connected');
+            if (!wasAuthenticated) this.onStatus('connected');
           }
           if (message.type === 'room.closed' || message.type === 'join.rejected') {
             // Do not endlessly reconnect to a session that has been closed or rejected.
@@ -242,14 +289,25 @@ export class RoomSocket {
     }, delayMs);
   }
 
+  private retryConnection(): void {
+    this.stopConnection();
+    this.onStatus('disconnected');
+    if (!this.stopped) this.scheduleReconnect();
+  }
+
   get connected(): boolean {
     return this.authenticated && this.ws?.readyState === WebSocket.OPEN;
   }
 
   send(message: Record<string, unknown>): boolean {
     if (!this.connected) return false;
-    this.ws!.send(JSON.stringify({ v: 1, ...message }));
-    return true;
+    try {
+      this.ws!.send(JSON.stringify({ v: 1, ...message }));
+      return true;
+    } catch {
+      this.retryConnection();
+      return false;
+    }
   }
 
   /**
@@ -307,8 +365,7 @@ export class RoomSocket {
     this.pending.set(requestId, { fileId, begin, timer, resolve: successful, reject: unsuccessful });
     if (!this.send({ type: 'range.request', requestId, fileId, begin, end })) {
       clearTimeout(timer);
-      this.pending.delete(requestId);
-      unsuccessful('Not connected');
+      if (this.pending.delete(requestId)) unsuccessful('Not connected');
     }
     return () => {
       const pending = this.pending.get(requestId);
@@ -341,8 +398,10 @@ export class RoomSocket {
     const old = this.ws;
     this.ws = null;
     if (old?.readyState === WebSocket.CONNECTING) {
-      // Avoid InvalidStateError if a user leaves while handshake is in progress.
-      old.addEventListener('open', () => old.close(), { once: true });
+      // Abort an obsolete handshake now rather than leaving another live
+      // connection attempt behind every timeout. Tolerate unusual webviews.
+      try { old.close(); }
+      catch { old.addEventListener('open', () => old.close(), { once: true }); }
     } else if (old && old.readyState === WebSocket.OPEN) old.close();
   }
 

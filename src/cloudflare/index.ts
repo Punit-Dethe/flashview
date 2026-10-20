@@ -208,6 +208,12 @@ export class ClassroomRoom extends DurableObject<Env> {
           type: previous.approved ? 'join.resumed' : 'join.pending',
           roomCode: cfg.code, resumeToken: previous.token, files: ownFiles,
         });
+        // Recover requests sent into the previous half-open phone socket.
+        // Keep IDs/deadlines: duplicate or late responses remain harmless.
+        for (const [requestId, range] of this.ranges) {
+          if (range.senderId === previous.id && this.files.get(range.fileId)?.status === 'approved')
+            send(ws, { type: 'range.request', requestId, fileId: range.fileId, begin: range.begin, end: range.end });
+        }
         this.sendHost({
           type: 'student.updated',
           student: { id: previous.id, name: previous.name, approved: previous.approved },
@@ -217,7 +223,9 @@ export class ClassroomRoom extends DurableObject<Env> {
       if (this.students().length >= MAX_STUDENTS) return void send(ws, { type: 'error', message: 'Room is full' });
       const approved = cfg.autoApprove === true;
       const newSession: ResumeSession = {
-        id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved, token: token(32),
+        id: peer.id, name: cleanText(msg.name, 32) || 'Student', approved,
+        token: typeof msg.resumeToken === 'string' && /^[a-f0-9]{64}$/.test(msg.resumeToken)
+          ? msg.resumeToken : token(32),
       };
       this.sessions.set(newSession.token, newSession);
       await this.persistSessions();

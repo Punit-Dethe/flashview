@@ -1,0 +1,148 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { RoomSocket } from '../src/client/socket';
+
+// A suspended phone can retain OPEN/CLOSING indefinitely without a close event.
+class SuspendedSocket {
+  static OPEN = 1;
+  static CONNECTING = 0;
+  static instances: SuspendedSocket[] = [];
+  readyState = 0;
+  binaryType = '';
+  sent: string[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(_url: string) { SuspendedSocket.instances.push(this); }
+  send(data: string) { this.sent.push(data); }
+  close() { this.readyState = 2; } // No close acknowledgement from the dead network.
+  addEventListener() {}
+  accept() { this.readyState = 1; this.onopen?.(); }
+  message(message: object) { this.onmessage?.({ data: JSON.stringify(message) }); }
+}
+
+function setup(t: import('node:test').TestContext, role: 'student' | 'host' = 'student', policy = 'immediate') {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const previous = ['WebSocket', 'window', 'document'].map(key =>
+    [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: SuspendedSocket });
+  Object.defineProperty(globalThis, 'window', { configurable: true,
+    value: { location: { protocol: 'https:', host: 'flashview.test', search: '?resumePolicy=' + policy } } });
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: { visibilityState: 'visible' } });
+  SuspendedSocket.instances = [];
+  const socket = new RoomSocket();
+  socket.connect({ role, code: '123456' });
+  const first = SuspendedSocket.instances[0];
+  first.accept();
+  first.message({ type: 'join.accepted', resumeToken: 'preserved-resume-token' });
+  t.after(() => {
+    socket.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+  return { socket, first };
+}
+
+test('file-picker return replaces a half-open socket promptly without waiting for close acknowledgement', t => {
+  const { socket, first } = setup(t);
+  let rejected = 0;
+  socket.requestRange('file123456', 0, 4, () => {}, () => rejected++);
+  socket.pauseHeartbeat();
+  socket.wake();
+  assert.equal(SuspendedSocket.instances.length, 2, 'Reconnect starts in the return handler without a timer');
+  // Real browsers can send focus, visibilitychange, change, and pageshow together.
+  for (let i = 0; i < 5; i++) { t.mock.timers.tick(500); socket.wake(); }
+  t.mock.timers.tick(1000);
+  assert.equal(SuspendedSocket.instances.length, 2, 'Trailing return events must reuse the new handshake');
+  assert.equal(rejected, 1, 'Old requests must release scheduler slots immediately');
+  const replacement = SuspendedSocket.instances[1];
+  replacement.accept();
+  assert.equal(JSON.parse(replacement.sent[0]).resumeToken, 'preserved-resume-token');
+  replacement.message({ type: 'join.resumed' });
+  first.onclose?.();
+  first.message({ type: 'join.rejected' });
+  assert.equal(socket.connected, true, 'Late callbacks from the replaced socket cannot disconnect its replacement');
+});
+
+test('foreground probes preserve healthy sockets and do not postpone a missing pong deadline', t => {
+  const { socket, first } = setup(t);
+  socket.wake();
+  t.mock.timers.tick(500);
+  socket.wake();
+  first.message({ type: 'heartbeat.pong' });
+  t.mock.timers.tick(3500);
+  assert.equal(SuspendedSocket.instances.length, 1);
+  assert.equal(socket.connected, true);
+});
+
+test('stalled room authentication retires its socket even when close never completes', t => {
+  const { socket } = setup(t);
+  socket.restartStalledTransfer();
+  SuspendedSocket.instances[1].accept();
+  t.mock.timers.tick(10_000);
+  t.mock.timers.tick(1_500);
+  assert.equal(SuspendedSocket.instances.length, 3, 'A handshake timeout must schedule a new connection');
+});
+
+test('file selection during an unfinished join bounds the resumed handshake wait', t => {
+  const { socket } = setup(t);
+  socket.restartStalledTransfer();
+  socket.pauseHeartbeat();
+  socket.wake();
+  assert.equal(SuspendedSocket.instances.length, 3, 'A picker-suspended handshake is replaced immediately');
+  t.mock.timers.tick(1000);
+  socket.wake();
+  t.mock.timers.tick(1100);
+  assert.equal(SuspendedSocket.instances.length, 3, 'A picker-suspended handshake must retry within 2.1 seconds');
+});
+
+test('receiver tab focus preserves a healthy transfer; a real freeze replaces its socket immediately', t => {
+  const { socket, first } = setup(t, 'host');
+  socket.pauseHeartbeat();
+  socket.wake();
+  first.message({ type: 'heartbeat.pong' });
+  assert.equal(SuspendedSocket.instances.length, 1);
+  socket.pauseHeartbeat(true);
+  socket.wake();
+  assert.equal(SuspendedSocket.instances.length, 2);
+});
+
+test('network restoration bypasses backoff once and coalesces trailing foreground signals', t => {
+  const { socket } = setup(t);
+  socket.wake('online');
+  socket.wake('online');
+  socket.wake();
+  t.mock.timers.tick(3000);
+  assert.equal(SuspendedSocket.instances.length, 2, 'Do not abort a fresh foreground handshake at the probe deadline');
+});
+
+test('return after a fully closed socket bypasses its scheduled backoff immediately', t => {
+  const { socket, first } = setup(t);
+  first.readyState = 3;
+  first.onclose?.();
+  socket.wake();
+  assert.equal(SuspendedSocket.instances.length, 2);
+});
+
+test('the initial hello already carries a private high-entropy resume capability', t => {
+  const { socket, first } = setup(t);
+  const initial = JSON.parse(first.sent[0]).resumeToken;
+  assert.match(initial, /^[a-f0-9]{64}$/);
+  socket.connect({ role: 'student', code: '654321' });
+  const next = SuspendedSocket.instances.at(-1)!;
+  next.accept();
+  assert.notEqual(JSON.parse(next.sent[0]).resumeToken, initial, 'A deliberately new join gets a new identity');
+});
+
+test('the comparison policy preserves the old probe behavior on the same deployment', t => {
+  const { socket, first } = setup(t, 'student', 'probe');
+  socket.pauseHeartbeat();
+  socket.wake();
+  assert.equal(SuspendedSocket.instances.length, 1);
+  first.message({ type: 'heartbeat.pong' });
+  t.mock.timers.tick(2500);
+  assert.equal(SuspendedSocket.instances.length, 1);
+});

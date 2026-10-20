@@ -1905,12 +1905,13 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
     await student.evaluate(() => {
       const read = Blob.prototype.arrayBuffer;
       const waiting: Array<() => void> = [];
+      let released = false;
       Blob.prototype.arrayBuffer = async function (...args) {
-        await new Promise<void>(resolve => waiting.push(resolve));
+        if (!released) await new Promise<void>(resolve => waiting.push(resolve));
         return read.apply(this, args);
       };
       (window as typeof window & { __releaseCacheRepair?: () => void }).__releaseCacheRepair =
-        () => { for (const resolve of waiting.splice(0)) resolve(); };
+        () => { released = true; for (const resolve of waiting.splice(0)) resolve(); };
     });
     const removed = await host.evaluate(room => new Promise<number>((resolve, reject) => {
       const request = indexedDB.open('flashview-room-cache');

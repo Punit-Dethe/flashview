@@ -37,6 +37,29 @@ Control messages are UTF-8 JSON over WebSocket and include `{ "v": 1, "type": ".
 
 The relay's role is message validation and **routing**, not processing or retaining the original document.
 
+On a recorded sender file-picker/background return, or a browser freeze or
+network-restoration signal, the client starts one replacement connection
+immediately. It does not first wait for an old-socket probe or close acknowledgement.
+Trailing focus/pageshow/change events reuse that fresh connection attempt.
+Ordinary focus preserves an authenticated connection and uses a two-second
+liveness probe; switching a healthy receiver between dashboard and presentation
+does not force reconnection. Document freeze/resume and persisted pagehide/pageshow
+are handled alongside visibility and file-picker events. Repeated failed attempts
+still use bounded exponential backoff; immediate initiation does not guarantee
+instant authentication or data delivery on the network.
+
+After sender resume, the relay sends the restored file manifest **before**
+replaying that sender's still-outstanding `range.request` messages. Request IDs,
+offsets and original deadlines stay unchanged, cancelled requests stay cancelled,
+and duplicate/late binary replies cannot satisfy a different request. Receivers
+retain committed chunks and release old network retry delays after authentication.
+
+New senders generate their private 256-bit resume capability before the first
+hello. Relays adopt a valid initial 64-character hexadecimal capability, making
+the initial join retryable even when its acknowledgement is lost. This secret
+must never be derived from a room code or shared with the host. Clients that
+omit it still receive a server-generated capability as before.
+
 ## Binary file data
 
 Byte payloads use a compact frame built by `encodeRangePacket`:

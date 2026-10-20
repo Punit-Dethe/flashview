@@ -13,7 +13,7 @@
     "build": "tsc --noEmit && vite build",
     "start": "node --import tsx src/server/index.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:browser": "node --import tsx --test tests/browser.smoke.ts",
+    "test:browser": "node --import tsx --test tests/browser.smoke.ts tests/transferRecovery.browser.ts",
     "dev:cloudflare": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "check:cloudflare": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
@@ -21,7 +21,8 @@
     "prepare:pdf": "node scripts/copy-pdf-assets.mjs",
     "prebuild": "npm run prepare:pdf",
     "predev:client": "npm run prepare:pdf",
-    "bench:baseline": "node --import tsx tests/benchmark.baseline.ts"
+    "bench:baseline": "node --import tsx tests/benchmark.baseline.ts",
+    "bench:resume": "node --import tsx tests/resumeThroughput.ts"
   },
   "dependencies": {
     "@zip.js/zip.js": "^2.8.15",

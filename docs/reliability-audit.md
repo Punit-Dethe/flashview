@@ -70,6 +70,52 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 4. **M2 — IndexedDB write amplification.** Evaluate the existing opt-in batching experiment on real devices with explicit throughput, fairness, and atomicity checks. M1 was addressed in [#31](https://github.com/Punit-Dethe/flashview/pull/31).
 5. **M4–M14 and L1–L6.** Recover the original 17 missing descriptions from the 18 October 2026 read-only audit, or re-audit the current code and **explicitly assign new descriptions** (do not present guesses as original findings).
 
+## 19 October transfer regression follow-up (in progress)
+
+The user reported unpredictable 0%/mid-file stalls and slow recovery after the
+phone file picker in the **main application**. This predates the isolated room
+lifecycle preview. H3 remains **Partial**; the original 9/3/18 counts are unchanged.
+The earlier passing tests did not cover a socket that remains OPEN while both
+traffic and its close acknowledgement disappear. This report is evidence that
+real-device validation is still needed, not grounds to mark those scenarios fixed.
+
+| New ID | Status | Reproduced failure | Targeted correction |
+| --- | --- | --- | --- |
+| N7 | **In progress** | Repeated foreground events reset the 12-second probe; heartbeat/authentication timeouts then depend on an eventual WebSocket close event. | Retire obsolete sockets locally. Follow-up removes the probe wait after recorded sender suspension, freeze or network restoration; duplicate signals reuse one attempt. Ordinary focus and healthy receiver tab switches keep their connection. |
+| N8 | **In progress** | When a replacement phone socket authenticates before the old socket closes, outstanding byte requests remain stranded on the old connection. | Both relays replay that sender's outstanding, uncancelled requests after its restored manifest, retaining request IDs and deadlines. The receiver clears old network backoff on authenticated reconnection. |
+| N9 | **In progress** | A delayed join acknowledgement erases a file-selection validation error, including the ten-file limit warning. | Keep local validation errors when a join/resume response arrives after selection. |
+| N10 | **In progress** | Losing the first join acknowledgement can make a replacement socket join as a second participant. | Generate the private resume capability before first hello; both relays adopt it. Verify pending approval, one participant and cached bytes across first-acknowledgement loss. |
+
+`tests/socketRecovery.test.ts` reproduces N7 with a socket that never acknowledges
+closure. `tests/transferRecovery.browser.ts` reproduces N8 with a blackholed phone
+socket during a 20 MiB transfer, twice, and checks the SHA-256 of browser-cached
+bytes. It also covers a file selected before the dead socket recovers. Run it
+against Node, Cloudflare emulation, Firefox, and optionally an isolated deployment
+using `RECOVERY_ORIGIN`. These simulations cannot establish phone/network timing
+or prove the cause of every reported large-file stall. Keep transfer tuning and
+the unmerged architecture changes separate while this recovery fix is validated.
+
+Validation of recovery commit `b30c32c`: 48 unit/protocol tests passed; complete
+Chromium browser suites passed on Node (22/22) and Cloudflare (22/22); Firefox
+passed the interrupted-transfer scenario. On the isolated live Worker, two
+mid-file interruptions reached renewed cache progress in 3.815 and 3.865 seconds with matching cached
+SHA-256; the existing main deployment failed the same simulated picker-return
+check before promotion. Three alternating live 20 MiB binary transfers per
+deployment gave median cache completion of 4.249 seconds before and 4.198 seconds
+with the patch, all hash-verified. This small same-PC comparison shows comparable
+ordinary throughput; it does not measure physical phone/Wi-Fi reliability. The
+cache-repair test also now releases future reads when ending its artificial
+pause, removing a race in the test harness itself.
+
+Timing clarification: those interruption-to-progress figures include a 600 ms
+injected pre-return outage, as well as the probe and reconnect work. They are not
+isolated foreground-to-reconnect measurements. See the separate
+[foreground reconnect decision](./reconnection-design-proposal.md) and its
+[two-policy evaluation](./reconnection-evaluation.md). The selected implementation
+initiates replacement immediately after recorded sender suspension, freeze or
+network restoration, coalesces return events, and preserves healthy receiver
+focus. Researching twelve alternatives did not mean trialling all twelve.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

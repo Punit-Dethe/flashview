@@ -9,3 +9,7 @@ coverage/
 
 .wrangler/
 .dev.vars
+test-artifacts/
+public/pdf-assets/
+benchmarks/r2/public/index.html
+benchmarks/r2/public/assets/

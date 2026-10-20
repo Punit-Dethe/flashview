@@ -793,6 +793,14 @@ export class RoomPdfCache {
     void this.work();
   }
 
+  connectionRestored(): void {
+    // Network failures from the old socket no longer justify waiting another
+    // 4.5 seconds after successful authentication. Storage-blocked files stay
+    // paused by their independent storage recovery state.
+    this.cooldown.clear();
+    this.resume();
+  }
+
   private tuner(fileId: string): AdaptiveTransferWindow {
     let value = this.adaptive.get(fileId);
     if (!value) {

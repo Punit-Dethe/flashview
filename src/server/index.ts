@@ -138,6 +138,13 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
         type: previous.approved ? 'join.resumed' : 'join.pending',
         roomCode: room.code, resumeToken: previous.token, files: ownFiles,
       });
+      // A suspended socket can still look OPEN at the relay. Its outstanding
+      // requests belong to this same authenticated sender, so deliver them to
+      // the replacement after its manifest, preserving IDs and deadlines.
+      for (const [requestId, range] of room.outstanding) {
+        if (range.senderId === peer.id && room.files.get(range.fileId)?.status === 'approved')
+          send(ws, { type: 'range.request', requestId, fileId: range.fileId, begin: range.begin, end: range.end });
+      }
       notifyHost(room, { type: 'student.updated', student: { id: peer.id, name: peer.name, approved: peer.approved } });
       return;
     }
@@ -147,7 +154,8 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
       ws, id: randomUUID(), role: 'student', room,
       name: acceptableText(msg.name, 32) || 'Student', approved,
     };
-    const resumeToken = randomToken(32);
+    const resumeToken = typeof msg.resumeToken === 'string' && /^[a-f0-9]{64}$/.test(msg.resumeToken)
+      ? msg.resumeToken : randomToken(32);
     room.sessions.set(resumeToken, { id: peer.id, token: resumeToken, name: peer.name, approved });
     room.students.set(peer.id, peer);
     connections.set(ws, peer);

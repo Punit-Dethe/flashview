@@ -10,6 +10,26 @@
 - A host authenticates with `roomId` and `hostToken`; a sender joins with `code` or `joinToken` and can later resume with a `resumeToken`. A room code is not equivalent to the host secret.
 - Relay enforces role, sender ownership, approval and range bounds. A sender can only serve its own files; other students do not receive the host's file list.
 
+### Invitation entry
+
+New QR/copied invitations use `/join/<code>#invite=<joinToken>`. The entry screen
+asks for an optional name; neither rendering nor typing authenticates a sender.
+Join submits the trimmed name, while Skip discards any typed text and uses the
+existing `Student` fallback. Both paths retain the normal approval policy.
+
+The browser replaces the URL with `/join/<code>` and retains the invitation in
+that tab's history state. New invitation fragments are not part of HTTP paths,
+queries or referrers. Legacy `?join=` links remain readable and are cleaned
+after loading; their initial request still contains the old query. Plain clean
+links use the existing six-digit-code admission. Both opaque Node tokens and
+code-prefixed Cloudflare tokens remain supported.
+
+After an explicit choice, history also retains the private resume identity and
+chosen name. Refresh resumes without another prompt or a new participant.
+Leave/end clears that entry. A new scan starts a fresh choice, and a supplied
+invalid token never silently falls back to code admission. This adds no room
+lookup request or change to original-byte transfer scheduling.
+
 ### Browser cache identity
 
 The current client creates rooms with `POST /api/rooms?cache=2&autoApprove=1|0`.

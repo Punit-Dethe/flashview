@@ -16,7 +16,13 @@ assert.ok(['node', 'cloudflare', 'public'].includes(target), 'BENCH_TARGET must 
 assert.ok(Number.isInteger(mib) && mib >= 1 && mib <= 45, 'BENCH_MIB must be 1–45 (in-memory automation fixture limit)');
 assert.ok(Number.isInteger(repeats) && repeats >= 1 && repeats <= 10, 'BENCH_RUNS must be 1–10');
 let child;
-let origin = 'https://flashview.outlanderwatr.workers.dev';
+let origin = process.env.BENCH_ORIGIN ?? 'https://flashview.outlanderwatr.workers.dev';
+if (target === 'public') {
+  const address = new URL(origin);
+  assert.ok(address.protocol === 'https:' && !address.username && !address.password &&
+    address.pathname === '/' && !address.search && !address.hash, 'BENCH_ORIGIN must be a plain HTTPS origin');
+  origin = address.origin;
+}
 const browser = await chromium.launch({ headless: true });
 const bytes = randomBytes(mib * 1024 * 1024);
 const expected = createHash('sha256').update(bytes).digest('hex');
@@ -65,6 +71,7 @@ try {
       room = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')));
       const roomReadyMs = Math.round(performance.now() - start);
       await phone.goto(origin + '/?join=' + encodeURIComponent(room.joinToken) + (diagnostic ? '&perf=1' : ''));
+      await phone.getByRole('button', { name: 'Skip for now', exact: true }).click();
       await phone.locator('.student-add-fab:not([disabled])').waitFor();
       began = performance.now();
       await phone.locator('input[type=file]').setInputFiles({ name: 'speed-original.bin', mimeType: 'application/octet-stream', buffer: bytes });

@@ -59,7 +59,7 @@ match; avatar/file colours share the same assignment, without pink swatches.
 The host's connection indicator still reports its own relay status.
 
 1. `POST /api/rooms` creates a room, code and secret tokens. Host connects over WebSocket, authenticates as `host`, and displays the QR/join link.
-2. Sender authenticates using a six-digit code or opaque join token. If `autoApprove` is disabled, the host must admit the sender. Joining another room does not make a sender a host.
+2. A scanned invitation opens the hero-style optional-name card first. Join submits the name; Skip uses `Student`. Only then does the sender authenticate with the existing code/token protocol. Clean `/join/<code>` URLs retain credentials privately in tab history and resume the same identity on refresh. Approval policy is unchanged; joining another room does not make a sender a host.
 3. Sender validates selected file size (and PDF signature for `.pdf`), creates a file ID, then announces metadata with `file.offer`. The host can display it before any full-file transfer.
 4. The host's `RoomPdfCache` automatically queues approved files and requests missing ranges; the relay authorizes and routes them to the correct sender. Sender replies with binary data.
 5. Each verified range is split into the canonical **65,536-byte IndexedDB chunks**. The host updates the saved-byte count only after persistence succeeds. Completion is checked against stored keys before declaring **100%**.

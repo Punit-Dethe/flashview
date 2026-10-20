@@ -385,6 +385,21 @@ suite/release/performance results. OPFS, production content hashes, phone PDF
 preview removal, completed-only viewers and physical-device/campus proof remain
 pending. This slice does not complete the entire roadmap.
 
+## QR name entry — independent product change (21 October)
+
+Scanned invitations now wait for the optional-name/Skip choice before student
+authentication. New links use clean join paths, keep the invite in the fragment
+until browser history takes over, and preserve the private sender identity on
+refresh. Leave clears it. Existing code and opaque/prefixed-token admission and
+room approval behavior remain unchanged. This is a feature, not resolution of
+an original audit finding; the 9/3/18 counts remain unchanged.
+
+The new `QR welcome:` browser case checks named and anonymous file owners,
+explicit Skip after typing, no pre-choice authentication, clean/legacy links,
+private refresh and Leave cleanup on Node/Cloudflare and Firefox. Unit tests
+cover token formats, history scope and invalid-token downgrade prevention.
+See [the invitation contract](./transfer-protocol.md#invitation-entry).
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

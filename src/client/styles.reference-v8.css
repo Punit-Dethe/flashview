@@ -130,27 +130,17 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
     radial-gradient(30% 80% at 40% 108%,#fff 45%,transparent 72%),
     radial-gradient(26% 70% at 68% 105%,#fff 40%,transparent 72%),
     radial-gradient(30% 75% at 95% 100%,#fff 40%,transparent 72%); }
-.premium-app .reference-welcome>.reference-sky { display:grid; place-items:center; padding:64px 24px 112px; }
+.premium-app .reference-welcome>.reference-sky { display:block; padding:0 24px 112px; }
 .premium-app .reference-hero {
-  position:relative; z-index:2; width:100%; max-width:1400px; margin:auto;
-  display:flex; flex-direction:column; align-items:center; gap:48px; text-align:center;
+  --hero-title-space:clamp(260px,36svh,380px);
+  position:relative; z-index:2; width:100%; max-width:1400px; margin:0 auto;
+  display:grid; grid-template-rows:var(--hero-title-space) auto;
+  justify-items:center; align-items:center; text-align:center;
 }
 .premium-app .reference-hero .home-wordmark {
   position:relative; z-index:1; margin:0; color:#fff;
   font-size:clamp(64px,calc(16vw + 8px),188px); font-weight:700;
   line-height:1; letter-spacing:-.04em; white-space:nowrap;
-}
-.premium-app .home-wordmark span { display:inline-block; }
-@media (prefers-reduced-motion:no-preference) {
-  .premium-app .home-wordmark span {
-    animation:wordmark-wave 3.2s ease-in-out infinite;
-    animation-delay:calc(var(--letter) * -.18s); animation-play-state:paused;
-  }
-  .premium-app .home-wordmark.is-animating span { animation-play-state:running; }
-}
-@keyframes wordmark-wave {
-  0%,100% { transform:translateY(2px); }
-  50% { transform:translateY(-3px); }
 }
 .premium-app .hero-room-stage { position:relative; width:100%; }
 .premium-app .hero-accents { position:absolute; inset:0; pointer-events:none; }
@@ -160,7 +150,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .hero-accent-speed { top:18%; left:12px; transform:rotate(-12deg); }
 .premium-app .hero-accent-account { top:55%; right:16px; transform:rotate(10deg); }
 @media(max-width:1199px) {
-  .premium-app .reference-hero { gap:88px; }
+  .premium-app .reference-hero { --hero-title-space:clamp(300px,40svh,380px); }
   .premium-app .hero-accent { width:72px; top:-82px; }
   .premium-app .hero-accent-speed { left:8%; }
   .premium-app .hero-accent-account { right:8%; }
@@ -540,16 +530,14 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 }
 @media(max-width:760px) {
  .premium-app .site-header.reference-nav { padding:16px 24px 12px; }
+ .premium-app .reference-hero { --hero-title-space:clamp(144px,22svh,184px); }
+ .premium-app .hero-accents { display:none; }
 }
 @media(max-width:600px) {
  .premium-app .reference-nav .brand { font-size:17px; }
  .premium-app .reference-nav .reference-logo-mark,.premium-app .reference-nav .reference-logo-mark svg { width:22px; height:22px; }
  .premium-app .reference-sky { margin:8px; border-radius:25px; padding:16px 11px 120px; min-height:calc(100vh - 16px); }
- .premium-app .reference-welcome>.reference-sky { padding:36px 11px 96px; }
- .premium-app .reference-hero { gap:72px; }
- .premium-app .hero-accent { top:-66px; width:58px; }
- .premium-app .hero-accent-speed { left:7%; }
- .premium-app .hero-accent-account { right:7%; }
+ .premium-app .reference-welcome>.reference-sky { padding:0 11px 96px; }
  .premium-app .reference-actions { border-radius:23px; gap:5px; padding:7px; }
  .premium-app .reference-pane { padding:22px 19px; border-radius:18px; }
  .premium-app .reference-pane h2.reference-serif { font-size:33px; }

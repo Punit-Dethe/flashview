@@ -533,35 +533,32 @@ test('home branding and end-room dialog: no header, responsive warning and direc
     assert.equal(await page.getByRole('heading', { name: 'WarpView', exact: true, level: 1 }).count(), 1);
     assert.equal(await page.getByText('From your phone, onto the big screen.', { exact: true }).count(), 0);
     assert.equal(await page.locator('.home-wordmark').innerText(), 'warpview');
-    assert.equal(await page.locator('.home-wordmark span').first().evaluate(el => getComputedStyle(el).animationName), 'none');
+    assert.equal(await page.locator('.home-wordmark').evaluate(el => el.getAnimations({ subtree: true }).length), 0);
     for (const width of [1440, 1280, 1024, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 844 });
       const geometry = await page.evaluate(() => {
         const brand = document.querySelector('.home-wordmark')!.getBoundingClientRect();
         const card = document.querySelector('.reference-actions')!.getBoundingClientRect();
+        const sky = document.querySelector('.reference-welcome>.reference-sky')!.getBoundingClientRect();
         const accents = [...document.querySelectorAll('.hero-accent')].map(el => el.getBoundingClientRect());
         return { center: brand.x + brand.width / 2, cardCenter: card.x + card.width / 2, gap: card.top - brand.bottom,
+          verticalCenterError: Math.abs(brand.y + brand.height / 2 - (sky.top + card.top) / 2),
+          accentsVisible: accents.some(icon => icon.width > 0 && icon.height > 0),
           font: parseFloat(getComputedStyle(document.querySelector('.home-wordmark')!).fontSize),
           overlapping: accents.some(icon => icon.left < card.right && icon.right > card.left && icon.top < card.bottom && icon.bottom > card.top),
           overflow: document.documentElement.scrollWidth > innerWidth };
       });
       assert.ok(Math.abs(geometry.center - width / 2) < 2, 'Brand stays centered');
       assert.ok(Math.abs(geometry.cardCenter - width / 2) < 2, 'Room controls stay centered');
-      assert.ok(geometry.gap >= 47 && geometry.font >= 64, 'Large brand sits clearly above the room card');
+      assert.ok(geometry.gap >= 32 && geometry.font >= 64, 'Large brand sits clearly above the room card');
+      assert.ok(geometry.verticalCenterError < 2, 'Brand is vertically centered between the sky top and room card at width ' + width);
+      assert.equal(geometry.accentsVisible, width > 760, 'Phone layouts hide illustrations');
       assert.equal(geometry.overlapping, false, 'Illustrations never cover the room controls at width ' + width);
       assert.equal(geometry.overflow, false);
     }
     assert.equal(await page.locator('.home-wordmark').evaluate(el => getComputedStyle(el).color), 'rgb(255, 255, 255)');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.waitForFunction(() => {
-      const style = getComputedStyle(document.querySelector('.home-wordmark span')!);
-      return style.animationIterationCount === 'infinite' && style.animationPlayState === 'running';
-    });
-    await page.locator('.reference-footer').scrollIntoViewIfNeeded();
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('.home-wordmark span')!).animationPlayState === 'paused');
-    await page.locator('.home-wordmark').scrollIntoViewIfNeeded();
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('.home-wordmark span')!).animationPlayState === 'running');
-    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal(await page.locator('.home-wordmark').evaluate(el => el.getAnimations({ subtree: true }).length), 0);
     await page.setViewportSize({ width: 1280, height: 844 });
     await page.getByRole('button', { name: /Create a room/ }).click();
     await page.locator('.connection.connected').waitFor();

@@ -605,7 +605,8 @@ test('open rooms auto-admit guests, show only their own PDFs, and expose a light
       'Rooms must be open to link holders by default');
     await host.getByRole('button', { name: /Create a room/ }).click();
     await host.locator('.connection.connected').waitFor();
-    await host.getByText('Anyone with the code can join').waitFor();
+    assert.equal(await host.locator('.room-admission-status').count(), 0,
+      'Admission settings are shown only before room creation');
     const code = (await host.locator('.room-code').innerText()).trim();
     for (const [page, username] of [[first,'Alice'],[second,'Bob']] as const) {
       await page.goto(root);

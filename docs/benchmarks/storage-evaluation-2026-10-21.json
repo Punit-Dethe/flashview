@@ -1,0 +1,1408 @@
+{
+  "recordedOn": "2026-10-21 Asia/Kolkata",
+  "runtimeBaseline": "6599eca6df852778dc6e4a95248e92cbdc0e5727",
+  "platform": "Windows desktop",
+  "caveats": [
+    "All first-batch Firefox 200 MiB timings excluded from conclusions: browser installation/typechecking overlapped this batch; exact-file results remain valid. Use the separately isolated pair only as a smoke, not a three-run median.",
+    "WebKit OPFS unsupported on this Windows test backend; no physical Safari/iOS conclusion.",
+    "Storage reference IDB drivers add integrity absent in production; they are not production fallback implementations.",
+    "Persistent-profile saturated storage and fresh-context public relay runs are separate workloads. No total-memory or physical-device claim."
+  ],
+  "reports": {
+    "chromium": {
+      "browser": "chromium",
+      "version": "156.0.8078.4",
+      "profile": "persistent",
+      "sizes": [
+        20,
+        200
+      ],
+      "repeats": 3,
+      "results": [
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 81.89999999850988,
+          "persistedMs": 255.40000000596046,
+          "verifyMs": 198.89999999850988,
+          "readyMs": 454.30000000447035,
+          "resumeMs": 66.29999999701977,
+          "completedReadMs": 135.10000000149012,
+          "cleanupMs": 2.3000000044703484,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 78.5,
+          "persistedMs": 222.19999999552965,
+          "verifyMs": 197.10000000149012,
+          "readyMs": 419.29999999701977,
+          "resumeMs": 73.89999999850988,
+          "completedReadMs": 134.5,
+          "cleanupMs": 2.600000001490116,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "opfs",
+          "bytes": 20971513,
+          "sourceHashMs": 77.39999999850988,
+          "persistedMs": 325.70000000298023,
+          "verifyMs": 152.39999999850988,
+          "readyMs": 478.1000000014901,
+          "resumeMs": 64.10000000149012,
+          "completedReadMs": 114.19999999552965,
+          "cleanupMs": 18.599999994039536,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 1,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 78.10000000149012,
+          "persistedMs": 228.39999999850988,
+          "verifyMs": 212.19999999552965,
+          "readyMs": 440.59999999403954,
+          "resumeMs": 75,
+          "completedReadMs": 142.30000000447035,
+          "cleanupMs": 10,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 1,
+          "mode": "opfs",
+          "bytes": 20971513,
+          "sourceHashMs": 90.69999999552965,
+          "persistedMs": 353.80000000447035,
+          "verifyMs": 158,
+          "readyMs": 511.80000000447035,
+          "resumeMs": 65.39999999850988,
+          "completedReadMs": 123.70000000298023,
+          "cleanupMs": 20.400000005960464,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 1,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 80.89999999850988,
+          "persistedMs": 264.29999999701977,
+          "verifyMs": 214.39999999850988,
+          "readyMs": 478.69999999552965,
+          "resumeMs": 67,
+          "completedReadMs": 133.60000000149012,
+          "cleanupMs": 2.899999998509884,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 2,
+          "mode": "opfs",
+          "bytes": 20971513,
+          "sourceHashMs": 78.29999999701977,
+          "persistedMs": 360.5,
+          "verifyMs": 156,
+          "readyMs": 516.5,
+          "resumeMs": 73.20000000298023,
+          "completedReadMs": 125.29999999701977,
+          "cleanupMs": 20.899999998509884,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 2,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 80.80000000447035,
+          "persistedMs": 272.8999999985099,
+          "verifyMs": 226.79999999701977,
+          "readyMs": 499.69999999552965,
+          "resumeMs": 67.39999999850988,
+          "completedReadMs": 140.30000000447035,
+          "cleanupMs": 1.1999999955296516,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 2,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 80.39999999850988,
+          "persistedMs": 251.70000000298023,
+          "verifyMs": 214.19999999552965,
+          "readyMs": 465.8999999985099,
+          "resumeMs": 81,
+          "completedReadMs": 141.20000000298023,
+          "cleanupMs": 1.9000000059604645,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 0,
+          "mode": "idb-current",
+          "bytes": 209715193,
+          "sourceHashMs": 817.8000000044703,
+          "persistedMs": 2786.2999999970198,
+          "verifyMs": 2094.89999999851,
+          "readyMs": 4881.19999999553,
+          "resumeMs": 717,
+          "completedReadMs": 1508.7000000029802,
+          "cleanupMs": 1.5,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 0,
+          "mode": "idb-batched",
+          "bytes": 209715193,
+          "sourceHashMs": 784.8999999985099,
+          "persistedMs": 2308.3000000044703,
+          "verifyMs": 2185.8000000044703,
+          "readyMs": 4494.100000008941,
+          "resumeMs": 752.8999999985099,
+          "completedReadMs": 1402.2999999970198,
+          "cleanupMs": 1.8999999985098839,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 0,
+          "mode": "opfs",
+          "bytes": 209715193,
+          "sourceHashMs": 782.6999999955297,
+          "persistedMs": 3398,
+          "verifyMs": 2145.39999999851,
+          "readyMs": 5543.39999999851,
+          "resumeMs": 1368,
+          "completedReadMs": 1185.4000000059605,
+          "cleanupMs": 206.89999999850988,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 1,
+          "mode": "idb-batched",
+          "bytes": 209715193,
+          "sourceHashMs": 823.7000000029802,
+          "persistedMs": 2432.7000000029802,
+          "verifyMs": 2215.39999999851,
+          "readyMs": 4648.10000000149,
+          "resumeMs": 743.5,
+          "completedReadMs": 1426.6999999955297,
+          "cleanupMs": 2.2000000029802322,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 1,
+          "mode": "opfs",
+          "bytes": 209715193,
+          "sourceHashMs": 798.8000000044703,
+          "persistedMs": 3621.5,
+          "verifyMs": 2086.0999999940395,
+          "readyMs": 5707.5999999940395,
+          "resumeMs": 1400.5,
+          "completedReadMs": 1230.4000000059605,
+          "cleanupMs": 213.5,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 1,
+          "mode": "idb-current",
+          "bytes": 209715193,
+          "sourceHashMs": 814.7999999970198,
+          "persistedMs": 2804.7999999970198,
+          "verifyMs": 2239.2000000029802,
+          "readyMs": 5044,
+          "resumeMs": 702.3999999985099,
+          "completedReadMs": 1473.6000000014901,
+          "cleanupMs": 2,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 2,
+          "mode": "opfs",
+          "bytes": 209715193,
+          "sourceHashMs": 802.5,
+          "persistedMs": 3529.39999999851,
+          "verifyMs": 2224.5,
+          "readyMs": 5753.89999999851,
+          "resumeMs": 1293.6000000014901,
+          "completedReadMs": 1276.6999999955297,
+          "cleanupMs": 210.39999999850988,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 2,
+          "mode": "idb-current",
+          "bytes": 209715193,
+          "sourceHashMs": 818.6999999955297,
+          "persistedMs": 2688,
+          "verifyMs": 2084,
+          "readyMs": 4772,
+          "resumeMs": 727.1000000014901,
+          "completedReadMs": 1479.1000000014901,
+          "cleanupMs": 2.6999999955296516,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 2,
+          "mode": "idb-batched",
+          "bytes": 209715193,
+          "sourceHashMs": 802.5,
+          "persistedMs": 2491.60000000149,
+          "verifyMs": 2137.2999999970198,
+          "readyMs": 4628.89999999851,
+          "resumeMs": 725.3999999985099,
+          "completedReadMs": 1473.8000000044703,
+          "cleanupMs": 1.9000000059604645,
+          "exact": true
+        }
+      ],
+      "note": "Saturated local storage comparison, <=1 MiB windows, bounded source reads and identical source/range/block/root integrity checks. No network/viewers. IDB reference drivers are not production fallback implementations; idb-current adds integrity absent from current production. idb-batched uses strict durability. Not physical mobile evidence or total-memory measurement."
+    },
+    "firefox": {
+      "browser": "firefox",
+      "version": "157.0",
+      "profile": "persistent",
+      "sizes": [
+        20,
+        200
+      ],
+      "repeats": 3,
+      "results": [
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 79,
+          "persistedMs": 287,
+          "verifyMs": 183,
+          "readyMs": 470,
+          "resumeMs": 84,
+          "completedReadMs": 98,
+          "cleanupMs": 24,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 77,
+          "persistedMs": 239,
+          "verifyMs": 174,
+          "readyMs": 413,
+          "resumeMs": 87,
+          "completedReadMs": 92,
+          "cleanupMs": 8,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "opfs",
+          "bytes": 20971513,
+          "sourceHashMs": 77,
+          "persistedMs": 7135,
+          "verifyMs": 159,
+          "readyMs": 7294,
+          "resumeMs": 77,
+          "completedReadMs": 459,
+          "cleanupMs": 23,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 1,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 75,
+          "persistedMs": 244,
+          "verifyMs": 182,
+          "readyMs": 426,
+          "resumeMs": 83,
+          "completedReadMs": 94,
+          "cleanupMs": 17,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 1,
+          "mode": "opfs",
+          "bytes": 20971513,
+          "sourceHashMs": 75,
+          "persistedMs": 6821,
+          "verifyMs": 160,
+          "readyMs": 6981,
+          "resumeMs": 77,
+          "completedReadMs": 451,
+          "cleanupMs": 24,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 1,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 75,
+          "persistedMs": 276,
+          "verifyMs": 185,
+          "readyMs": 461,
+          "resumeMs": 83,
+          "completedReadMs": 95,
+          "cleanupMs": 19,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 2,
+          "mode": "opfs",
+          "bytes": 20971513,
+          "sourceHashMs": 76,
+          "persistedMs": 7242,
+          "verifyMs": 159,
+          "readyMs": 7401,
+          "resumeMs": 78,
+          "completedReadMs": 477,
+          "cleanupMs": 26,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 2,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 79,
+          "persistedMs": 286,
+          "verifyMs": 178,
+          "readyMs": 464,
+          "resumeMs": 83,
+          "completedReadMs": 95,
+          "cleanupMs": 25,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 2,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 76,
+          "persistedMs": 239,
+          "verifyMs": 179,
+          "readyMs": 418,
+          "resumeMs": 85,
+          "completedReadMs": 91,
+          "cleanupMs": 18,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 0,
+          "mode": "idb-current",
+          "bytes": 209715193,
+          "sourceHashMs": 746,
+          "persistedMs": 2803,
+          "verifyMs": 2006,
+          "readyMs": 4809,
+          "resumeMs": 904,
+          "completedReadMs": 1063,
+          "cleanupMs": 14,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 0,
+          "mode": "idb-batched",
+          "bytes": 209715193,
+          "sourceHashMs": 751,
+          "persistedMs": 2315,
+          "verifyMs": 1941,
+          "readyMs": 4256,
+          "resumeMs": 908,
+          "completedReadMs": 1012,
+          "cleanupMs": 12,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 0,
+          "mode": "opfs",
+          "bytes": 209715193,
+          "sourceHashMs": 759,
+          "persistedMs": 58156,
+          "verifyMs": 1655,
+          "readyMs": 59811,
+          "resumeMs": 902,
+          "completedReadMs": 1369,
+          "cleanupMs": 160,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 1,
+          "mode": "idb-batched",
+          "bytes": 209715193,
+          "sourceHashMs": 809,
+          "persistedMs": 2408,
+          "verifyMs": 1916,
+          "readyMs": 4324,
+          "resumeMs": 916,
+          "completedReadMs": 982,
+          "cleanupMs": 19,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 1,
+          "mode": "opfs",
+          "bytes": 209715193,
+          "sourceHashMs": 758,
+          "persistedMs": 58147,
+          "verifyMs": 1870,
+          "readyMs": 60017,
+          "resumeMs": 889,
+          "completedReadMs": 1325,
+          "cleanupMs": 165,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 1,
+          "mode": "idb-current",
+          "bytes": 209715193,
+          "sourceHashMs": 775,
+          "persistedMs": 2823,
+          "verifyMs": 2112,
+          "readyMs": 4935,
+          "resumeMs": 938,
+          "completedReadMs": 1004,
+          "cleanupMs": 24,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 2,
+          "mode": "opfs",
+          "bytes": 209715193,
+          "sourceHashMs": 769,
+          "persistedMs": 55027,
+          "verifyMs": 1870,
+          "readyMs": 56897,
+          "resumeMs": 922,
+          "completedReadMs": 1333,
+          "cleanupMs": 182,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 2,
+          "mode": "idb-current",
+          "bytes": 209715193,
+          "sourceHashMs": 772,
+          "persistedMs": 2828,
+          "verifyMs": 1941,
+          "readyMs": 4769,
+          "resumeMs": 927,
+          "completedReadMs": 1018,
+          "cleanupMs": 23,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 2,
+          "mode": "idb-batched",
+          "bytes": 209715193,
+          "sourceHashMs": 761,
+          "persistedMs": 2346,
+          "verifyMs": 1934,
+          "readyMs": 4280,
+          "resumeMs": 903,
+          "completedReadMs": 1006,
+          "cleanupMs": 22,
+          "exact": true
+        }
+      ],
+      "note": "Saturated local storage comparison, <=1 MiB windows, bounded source reads and identical source/range/block/root integrity checks. No network/viewers. IDB reference drivers are not production fallback implementations; idb-current adds integrity absent from current production. idb-batched uses strict durability. Not physical mobile evidence or total-memory measurement."
+    },
+    "firefoxNative": {
+      "browser": "firefox",
+      "version": "157.0",
+      "profile": "persistent",
+      "sizes": [
+        20
+      ],
+      "repeats": 1,
+      "results": [
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "opfs",
+          "bytes": 20971513,
+          "sourceHashMs": 77,
+          "persistedMs": 6900,
+          "verifyMs": 164,
+          "readyMs": 7064,
+          "resumeMs": 81,
+          "completedReadMs": 442,
+          "cleanupMs": 23,
+          "exact": true,
+          "native": {
+            "open": {
+              "count": 22,
+              "totalMs": 54,
+              "maxMs": 5
+            },
+            "write": {
+              "count": 320,
+              "totalMs": 31,
+              "maxMs": 2
+            },
+            "flush": {
+              "count": 20,
+              "totalMs": 10,
+              "maxMs": 1
+            },
+            "close": {
+              "count": 22,
+              "totalMs": 6506,
+              "maxMs": 367
+            },
+            "getSize": {
+              "count": 2,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "read": {
+              "count": 640,
+              "totalMs": 19,
+              "maxMs": 3
+            }
+          }
+        }
+      ],
+      "note": "Saturated local storage comparison, <=1 MiB windows, bounded source reads and identical source/range/block/root integrity checks. No network/viewers. IDB reference drivers are not production fallback implementations; idb-current adds integrity absent from current production. idb-batched uses strict durability. Not physical mobile evidence or total-memory measurement."
+    },
+    "firefoxIsolated200": {
+      "browser": "firefox",
+      "version": "157.0",
+      "profile": "persistent",
+      "sizes": [
+        200
+      ],
+      "modes": [
+        "idb-batched",
+        "opfs"
+      ],
+      "nativeTrace": false,
+      "repeats": 1,
+      "results": [
+        {
+          "mib": 200,
+          "round": 0,
+          "startedAt": "2026-10-20T20:08:15.442Z",
+          "completedAt": "2026-10-20T20:08:22.926Z",
+          "mode": "idb-batched",
+          "bytes": 209715193,
+          "sourceHashMs": 744,
+          "persistedMs": 2307,
+          "verifyMs": 1939,
+          "readyMs": 4246,
+          "resumeMs": 907,
+          "completedReadMs": 1003,
+          "cleanupMs": 16,
+          "exact": true
+        },
+        {
+          "mib": 200,
+          "round": 0,
+          "startedAt": "2026-10-20T20:08:22.926Z",
+          "completedAt": "2026-10-20T20:09:22.748Z",
+          "mode": "opfs",
+          "bytes": 209715193,
+          "sourceHashMs": 758,
+          "persistedMs": 54274,
+          "verifyMs": 1667,
+          "readyMs": 55941,
+          "resumeMs": 922,
+          "completedReadMs": 1336,
+          "cleanupMs": 165,
+          "exact": true
+        }
+      ],
+      "note": "Saturated local storage comparison, <=1 MiB windows, bounded source reads and identical source/range/block/root integrity checks. No network/viewers. IDB reference drivers are not production fallback implementations; idb-current adds integrity absent from current production. idb-batched uses strict durability. Not physical mobile evidence or total-memory measurement."
+    },
+    "webkit": {
+      "browser": "webkit",
+      "version": "27.2",
+      "profile": "persistent",
+      "sizes": [
+        20
+      ],
+      "modes": [
+        "idb-current",
+        "idb-batched",
+        "opfs"
+      ],
+      "nativeTrace": false,
+      "repeats": 3,
+      "results": [
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 101,
+          "persistedMs": 573,
+          "verifyMs": 251,
+          "readyMs": 824,
+          "resumeMs": 97,
+          "completedReadMs": 152,
+          "cleanupMs": 13,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 95,
+          "persistedMs": 375,
+          "verifyMs": 252,
+          "readyMs": 627,
+          "resumeMs": 97,
+          "completedReadMs": 155,
+          "cleanupMs": 8,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 0,
+          "mode": "opfs",
+          "unsupported": true,
+          "reason": "NotSupportedError from this browser backend; not a Safari/iOS conclusion"
+        },
+        {
+          "mib": 20,
+          "round": 1,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 96,
+          "persistedMs": 414,
+          "verifyMs": 261,
+          "readyMs": 675,
+          "resumeMs": 101,
+          "completedReadMs": 161,
+          "cleanupMs": 8,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 1,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 102,
+          "persistedMs": 609,
+          "verifyMs": 265,
+          "readyMs": 874,
+          "resumeMs": 103,
+          "completedReadMs": 159,
+          "cleanupMs": 10,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 2,
+          "mode": "idb-current",
+          "bytes": 20971513,
+          "sourceHashMs": 106,
+          "persistedMs": 665,
+          "verifyMs": 265,
+          "readyMs": 930,
+          "resumeMs": 102,
+          "completedReadMs": 160,
+          "cleanupMs": 11,
+          "exact": true
+        },
+        {
+          "mib": 20,
+          "round": 2,
+          "mode": "idb-batched",
+          "bytes": 20971513,
+          "sourceHashMs": 99,
+          "persistedMs": 397,
+          "verifyMs": 259,
+          "readyMs": 656,
+          "resumeMs": 101,
+          "completedReadMs": 163,
+          "cleanupMs": 11,
+          "exact": true
+        }
+      ],
+      "note": "Saturated local storage comparison, <=1 MiB windows, bounded source reads and identical source/range/block/root integrity checks. No network/viewers. IDB reference drivers are not production fallback implementations; idb-current adds integrity absent from current production. idb-batched uses strict durability. Not physical mobile evidence or total-memory measurement."
+    },
+    "publicIdb": {
+      "target": "public",
+      "storage": "idb",
+      "bytes": 20971520,
+      "runs": [
+        {
+          "roomReadyMs": 1900,
+          "selectionMs": 1552,
+          "cachedMs": 4396,
+          "mibPerSecond": 4.55,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 4148,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -110
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1550
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1607
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 4151
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 4214
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 564,
+                "sourceMs": 5,
+                "downlinkMs": 490
+              },
+              {
+                "totalMs": 521,
+                "sourceMs": 5,
+                "downlinkMs": 447
+              },
+              {
+                "totalMs": 518,
+                "sourceMs": 4,
+                "downlinkMs": 445
+              }
+            ]
+          }
+        },
+        {
+          "roomReadyMs": 1928,
+          "selectionMs": 1629,
+          "cachedMs": 4976,
+          "mibPerSecond": 4.02,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 4816,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -77
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1627
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1707
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 4819
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 4909
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 570,
+                "sourceMs": 1,
+                "downlinkMs": 474
+              },
+              {
+                "totalMs": 562,
+                "sourceMs": 2,
+                "downlinkMs": 480
+              },
+              {
+                "totalMs": 561,
+                "sourceMs": 3,
+                "downlinkMs": 480
+              }
+            ]
+          }
+        },
+        {
+          "roomReadyMs": 2481,
+          "selectionMs": 1609,
+          "cachedMs": 5472,
+          "mibPerSecond": 3.65,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 5254,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -77
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1605
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1681
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 5258
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 5324
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 646,
+                "sourceMs": 8,
+                "downlinkMs": 560
+              },
+              {
+                "totalMs": 633,
+                "sourceMs": 7,
+                "downlinkMs": 549
+              },
+              {
+                "totalMs": 620,
+                "sourceMs": 2,
+                "downlinkMs": 550
+              }
+            ]
+          }
+        },
+        {
+          "roomReadyMs": 1911,
+          "selectionMs": 1554,
+          "cachedMs": 5436,
+          "mibPerSecond": 3.68,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 4939,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -120
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1552
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1639
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 4942
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 5010
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 704,
+                "sourceMs": 5,
+                "downlinkMs": 596
+              },
+              {
+                "totalMs": 691,
+                "sourceMs": 4,
+                "downlinkMs": 584
+              },
+              {
+                "totalMs": 681,
+                "sourceMs": 4,
+                "downlinkMs": 574
+              }
+            ]
+          }
+        },
+        {
+          "roomReadyMs": 2430,
+          "selectionMs": 1450,
+          "cachedMs": 3765,
+          "mibPerSecond": 5.31,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 3615,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -119
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1446
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1508
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 3620
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 3687
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 440,
+                "sourceMs": 6,
+                "downlinkMs": 359
+              },
+              {
+                "totalMs": 430,
+                "sourceMs": 5,
+                "downlinkMs": 350
+              },
+              {
+                "totalMs": 410,
+                "sourceMs": 4,
+                "downlinkMs": 331
+              }
+            ]
+          }
+        }
+      ],
+      "medianMs": 4976,
+      "browserVersion": "156.0.8078.4",
+      "nodeVersion": "v24.11.1",
+      "note": "Synthetic desktop Chromium; selection/transfer/cache/UI timing includes production OPFS integrity work when selected. Independent post-transfer hash excluded. Not a physical-phone, campus or pure network throughput benchmark."
+    },
+    "publicOpfs": {
+      "target": "public",
+      "storage": "opfs",
+      "bytes": 20971520,
+      "runs": [
+        {
+          "roomReadyMs": 2463,
+          "selectionMs": 1604,
+          "cachedMs": 4955,
+          "mibPerSecond": 4.04,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 4562,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -425
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1688
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1752
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 4762
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 4835
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 619,
+                "sourceMs": 9,
+                "downlinkMs": 540
+              },
+              {
+                "totalMs": 610,
+                "sourceMs": 8,
+                "downlinkMs": 532
+              },
+              {
+                "totalMs": 596,
+                "sourceMs": 7,
+                "downlinkMs": 520
+              }
+            ]
+          }
+        },
+        {
+          "roomReadyMs": 1431,
+          "selectionMs": 1578,
+          "cachedMs": 5917,
+          "mibPerSecond": 3.38,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 5495,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -158
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1661
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1723
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 5721
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 5779
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 611,
+                "sourceMs": 9,
+                "downlinkMs": 530
+              },
+              {
+                "totalMs": 591,
+                "sourceMs": 8,
+                "downlinkMs": 512
+              },
+              {
+                "totalMs": 575,
+                "sourceMs": 7,
+                "downlinkMs": 497
+              }
+            ]
+          }
+        },
+        {
+          "roomReadyMs": 2430,
+          "selectionMs": 1583,
+          "cachedMs": 4926,
+          "mibPerSecond": 4.06,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 4644,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -475
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1667
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1746
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 4857
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 4925
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 692,
+                "sourceMs": 10,
+                "downlinkMs": 611
+              },
+              {
+                "totalMs": 679,
+                "sourceMs": 9,
+                "downlinkMs": 600
+              },
+              {
+                "totalMs": 668,
+                "sourceMs": 8,
+                "downlinkMs": 590
+              }
+            ]
+          }
+        },
+        {
+          "roomReadyMs": 1926,
+          "selectionMs": 1571,
+          "cachedMs": 5414,
+          "mibPerSecond": 3.69,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 4963,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -101
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1653
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1750
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 5166
+              },
+              {
+                "type": "cache.progress",
+                "sent": false,
+                "bytes": 20971520,
+                "side": "source",
+                "ms": 5240
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 783,
+                "sourceMs": 9,
+                "downlinkMs": 696
+              },
+              {
+                "totalMs": 781,
+                "sourceMs": 8,
+                "downlinkMs": 695
+              },
+              {
+                "totalMs": 730,
+                "sourceMs": 7,
+                "downlinkMs": 646
+              }
+            ]
+          }
+        },
+        {
+          "roomReadyMs": 2434,
+          "selectionMs": 1604,
+          "cachedMs": 4937,
+          "mibPerSecond": 4.05,
+          "sha256Matched": true,
+          "workerTrace": {
+            "requestCount": 80,
+            "unfinished": 0,
+            "lastByteMs": 4682,
+            "events": [
+              {
+                "type": "join.accepted",
+                "sent": false,
+                "side": "source",
+                "ms": -418
+              },
+              {
+                "type": "file.offer",
+                "sent": true,
+                "side": "source",
+                "ms": 1691
+              },
+              {
+                "type": "file.announced",
+                "sent": false,
+                "side": "host",
+                "ms": 1777
+              },
+              {
+                "type": "cache.progress",
+                "sent": true,
+                "bytes": 20971520,
+                "side": "host",
+                "ms": 4902
+              }
+            ],
+            "slowest": [
+              {
+                "totalMs": 627,
+                "sourceMs": 9,
+                "downlinkMs": 530
+              },
+              {
+                "totalMs": 620,
+                "sourceMs": 7,
+                "downlinkMs": 525
+              },
+              {
+                "totalMs": 607,
+                "sourceMs": 6,
+                "downlinkMs": 513
+              }
+            ]
+          }
+        }
+      ],
+      "medianMs": 4955,
+      "browserVersion": "156.0.8078.4",
+      "nodeVersion": "v24.11.1",
+      "note": "Synthetic desktop Chromium; selection/transfer/cache/UI timing includes production OPFS integrity work when selected. Independent post-transfer hash excluded. Not a physical-phone, campus or pure network throughput benchmark."
+    }
+  },
+  "publicPilot": {
+    "version": "8cfdc776-1394-445c-88ae-784ca24cecac",
+    "origin": "https://warpview-opfs-pilot.outlanderwatr.workers.dev"
+  }
+}

@@ -6,6 +6,12 @@ current classrooms. Cache version 3 is fixed at creation. Its identity is
 `opfs:<room-generation>`; version 2 and legacy code-based caches drain in place.
 R2 and the personal large-file mode remain deferred; the cap is still 200 MiB.
 
+**Evaluation decision:** [matched persistent-profile comparisons](./storage-evaluation.md)
+do not justify promoting this OPFS design. Keep the integrity boundary and
+evaluate bounded batched IDB as the production candidate. Full integration CI
+passed at `6599eca`; this contract is retained as an experiment, not a faster
+default.
+
 Rollback must retain version 3 readers/relay metadata while any version 3 rooms
 are active. Restoring a pre-OPFS bundle is not a format-compatible rollback for
 those rooms. A safe rollback disables new OPFS creation while keeping existing

@@ -117,6 +117,22 @@ the existing `FLASHVIEW_BACKEND=cloudflare` and `FLASHVIEW_BROWSER=firefox` flag
 `OPFS_TEST_MIB=200` generates a path-based synthetic fixture just below the cap,
 uses bounded source reads and hashes its explicit test export as a stream.
 
+`npm run bench:storage` compares three verified storage designs in a persistent
+desktop profile, with no relay or viewers. `STORAGE_BROWSER=chromium|firefox|webkit`,
+`STORAGE_MIB=20,200`, `STORAGE_RUNS=1..5`, `STORAGE_MODES=idb-current,idb-batched,opfs`
+and `STORAGE_RESULT` select cases/output. `STORAGE_NATIVE_TRACE=1` profiles native
+OPFS methods separately. Every completed original must match; unsupported OPFS
+is recorded explicitly, never counted as a passed case. Profile folders are
+created under ignored `.wrangler/storage-profiles/` and removed after browser
+closure; generated source fixtures are removed too. Run modes serially without other builds/tests/downloads. Do not use
+these saturated storage results as whole-app network or memory benchmarks.
+
+For lighter live attribution, run `node --import tsx scripts/benchmark-transfer.mjs`
+with `BENCH_WORKER_TRACE=1`. This instruments the actual transfer worker through
+the existing test harness, without `?perf=1` or binary payload copies to the
+runner. Use a separate report from `BENCH_DIAGNOSTICS=1` and ordinary runs.
+See [storage evaluation](./storage-evaluation.md) for measurements and exclusions.
+
 ## Documentation and review expectations
 
 `transfer worker:` browser cases block both UI threads while independently

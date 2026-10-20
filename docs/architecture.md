@@ -2,6 +2,10 @@
 
 **Status:** Worker ownership and the contributor sidebar are merged/live through PR #47. This branch adds opt-in OPFS rooms; normal rooms remain IndexedDB. See [OPFS validation](./opfs-cache-validation.md), [Transfer protocol](./transfer-protocol.md) and [Audit tracker](./reliability-audit.md) for release status and remaining work.
 
+Matched evaluation does not justify promoting this OPFS design. The next cache
+candidate is bounded batched IDB with the verified-original contract; its driver
+is currently benchmark-only. See [the storage decision](./storage-evaluation.md).
+
 ## Overview and ownership
 
 ```text

@@ -6,12 +6,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { chromium } from 'playwright';
 // Synthetic original bytes only; public mode creates and ends temporary rooms.
-// Includes automated file selection + transfer + cache/UI completion. Hashing is
-// measured separately from that interval and must succeed on every repetition.
+// Includes automated selection + transfer + cache/UI completion and selected
+// production integrity work. Independent post-completion hashing is excluded.
 const target = process.env.BENCH_TARGET ?? 'node';
 const mib = Number(process.env.BENCH_MIB ?? 20);
 const repeats = Number(process.env.BENCH_RUNS ?? 3);
 const diagnostic = process.env.BENCH_DIAGNOSTICS === '1';
+// Run with node --import tsx when enabling the test-only worker trace.
+const workerTrace = process.env.BENCH_WORKER_TRACE === '1' ? await import('../tests/transferTrace.ts') : null;
 const storage = process.env.BENCH_STORAGE ?? 'idb';
 assert.ok(['idb', 'opfs'].includes(storage), 'BENCH_STORAGE must be idb or opfs');
 assert.ok(['node', 'cloudflare', 'public'].includes(target), 'BENCH_TARGET must be node, cloudflare or public');
@@ -43,7 +45,8 @@ try {
   for (let i = 0; i < repeats; i++) {
     const context = await browser.newContext();
     const host = await context.newPage(); const phone = await context.newPage();
-    let began;
+    let began, beganEpoch;
+    if (workerTrace) { await workerTrace.installTrace(host); await workerTrace.installTrace(phone); }
     const ranges = new Map(), events = [];
     if (diagnostic) for (const [side, page] of [['host', host], ['phone', phone]]) page.on('websocket', socket => {
       for (const direction of ['framesent', 'framereceived']) socket.on(direction, ({ payload }) => {
@@ -78,7 +81,7 @@ try {
       const roomReadyMs = Math.round(performance.now() - start);
       await phone.goto(origin + '/?join=' + encodeURIComponent(room.joinToken) + (diagnostic ? '&perf=1' : ''));
       await phone.locator('.student-add-fab:not([disabled])').waitFor();
-      began = performance.now();
+      began = performance.now(); beganEpoch = Date.now();
       await phone.locator('input[type=file]').setInputFiles({ name: 'speed-original.bin', mimeType: 'application/octet-stream', buffer: bytes });
       const selectionMs = Math.round(performance.now() - began);
       await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor({ timeout: 60000 });
@@ -116,7 +119,10 @@ try {
         diagnostics = { events, requestCount: ranges.size, unfinishedRequests: timing.filter(range => range.receivedAt === undefined).length,
           slowestRanges: timing.filter(range => Number.isFinite(range.totalMs)).sort((a,b) => b.totalMs-a.totalMs).slice(0, 3), hostMetrics: metrics[0], sourceMetrics: metrics[1] };
       }
-      runs.push({ roomReadyMs, selectionMs, cachedMs, mibPerSecond: +(mib / (cachedMs / 1000)).toFixed(2), sha256Matched: true, ...(diagnostics ? { diagnostics } : {}) });
+      const trace = workerTrace ? await workerTrace.readTrace(host, phone, beganEpoch) : undefined;
+      if (trace) assert.ok(trace.requestCount > 0, 'Worker trace must observe the actual transfer owner');
+      runs.push({ roomReadyMs, selectionMs, cachedMs, mibPerSecond: +(mib / (cachedMs / 1000)).toFixed(2), sha256Matched: true,
+        ...(diagnostics ? { diagnostics } : {}), ...(trace ? { workerTrace: trace } : {}) });
     } finally {
       if (room) { const ended = await fetch(origin + '/api/rooms/' + room.roomId + '/end', { method: 'POST', headers: { Authorization: 'Bearer ' + room.hostToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ roomGeneration: room.roomGeneration }) }); assert.ok(ended.ok); }
       await context.close();

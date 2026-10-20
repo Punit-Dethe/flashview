@@ -18,9 +18,10 @@ transfer, cache persistence and the completion UI, not just network throughput.
 | --- | --- | --- | --- | --- |
 | Local Node | 2435 / 1808 / 1735 | 1808 ms | 1580 / 1571 / 1571 | 1571 ms |
 | Local Cloudflare | 2176 / 2146 / 2143 | 2146 ms | 2082 / 2088 / 2077 | 2082 ms |
-| Public relay | 4751 / 4748 / 4747 | 4748 ms | Post-deployment verification pending | Pending |
+| Public relay | 4751 / 4748 / 4747 | 4748 ms | 4676 / 4660 / 5147 | 4676 ms |
 
-All listed copies matched exactly. These local samples show no slowdown; the
+All 18 before/after copies matched exactly. These samples show no material
+slowdown in this limited check; the
 smaller after values are not proof of a throughput improvement. CPU clocks,
 browser/runtime warm-up and network placement can vary. Local emulation is not
 the deployed network. The test does not establish physical-phone/campus behavior,
@@ -50,8 +51,16 @@ After samples: Chromium `156.0.8078.4`, Node `v24.11.1`.
 
 ## Release verification
 
-One synthetic room was prepared on the previous public version, with a private
-resume identity and completion metadata, to verify upgrade without losing them.
-Post-deployment public speed, old-room upgrade, interruption integrity, version
-and CI status are added after the release checks. All synthetic rooms are ended
-after their checks; original file bytes remain browser-cached, never cloud stored.
+Source `30feb75` was deployed as Worker
+`b04f8a7e-54ac-4f3d-93b4-105c4d0f2b17` at 100%, retaining existing domain/route
+triggers. A synthetic room prepared on the previous public version preserved
+its private identity, completion metadata and exact original bytes after upgrade.
+The new engine resumed it, assigned file revisions and preserved terminal Stop
+under replay. Public post-update speed samples are in the table above.
+The separate public 20 MiB scenario also passed after two interruptions and
+rejected obsolete asynchronous reads; its final cached SHA-256 matched. Return
+to persisted progress was 607/497 ms on this desktop/network. Latest CI status is
+recorded in [PR #44](https://github.com/Punit-Dethe/flashview/pull/44).
+All synthetic rooms are ended after checks; original bytes stay in browser cache,
+and the relay persists only metadata. This does not migrate to OPFS/R2 or increase
+the 200 MiB cap.

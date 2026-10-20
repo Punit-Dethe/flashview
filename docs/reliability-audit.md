@@ -302,7 +302,11 @@ Initial full browser suites passed 30/30 on Node and 30/30 on Cloudflare, with
 unit/protocol cases, 18 Cloudflare relay contracts, 11 targeted Cloudflare browser
 cases and TypeScript/Worker dry-run passed. Build passed before that backend-only
 follow-up; client assets are unchanged. Final speed/live evidence is recorded in
-the integration PR and the validation report.
+the [integration PR](https://github.com/Punit-Dethe/flashview/pull/44) and
+[validation report](./room-engine-validation.md). The public 20 MiB median was
+4748 ms before and 4676 ms after (three samples each, all exact cached hashes),
+and a room prepared before deployment retained private resume, completion
+metadata, exact original bytes and terminal Stop afterward.
 
 This is the file-metadata portion of the room engine. Participant command rules,
 room-wide revisions/snapshot ordering and full persistence orchestration remain

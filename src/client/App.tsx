@@ -4,6 +4,7 @@ import { PixelIcon } from './PixelIcon';
 import { SiteHeader } from './SiteHeader';
 import { assignParticipantColors } from './participantColors';
 import { MAX_FILE_BYTES, MAX_STUDENT_FILES, type PdfManifest, type StudentInfo } from '../shared/protocol';
+import { hostCacheIdentity } from '../shared/roomCacheIdentity';
 import { isPdfName, isPowerPointName, safeDownloadName } from '../shared/fileTypes';
 import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
 import { formatBytes } from './pdf/Viewer';
@@ -28,7 +29,7 @@ function retainNewestProgress(previous: CacheProgress | undefined, incoming: Cac
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string; autoApprove?: boolean;
-  roomGeneration?: string; leaseToken?: string; closeRequested?: boolean; serverClosed?: boolean };
+  roomGeneration?: string; leaseToken?: string; cacheId?: string; closeRequested?: boolean; serverClosed?: boolean };
 type ShareStatus = 'announcing' | 'pending' | 'approved' | 'rejected' | 'offline';
 type SharedFile = { file: File; status: ShareStatus };
 
@@ -37,6 +38,7 @@ function savedSession(): HostSession | null {
     const stored = sessionStorage.getItem('flashview-host');
     if (!stored) return null;
     const candidate = JSON.parse(stored) as Partial<HostSession>;
+    if (candidate.code) hostCacheIdentity(candidate as HostSession);
     return candidate.roomId && candidate.hostToken && candidate.code && candidate.joinToken
       ? candidate as HostSession : null;
   } catch { return null; }
@@ -110,7 +112,8 @@ export function App() {
   };
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
   const previewLookups = useRef(new Set<string>());
-  const previewRoom = useRef(initialSession?.code ?? '');
+  const activeCacheId = hostSession ? hostCacheIdentity(hostSession) : '';
+  const previewRoom = useRef(initialSession ? hostCacheIdentity(initialSession) : '');
   // PPTX thumbnails are host-only, complete-file-only cosmetic work.
   // Serialize idle jobs and never run alongside a background file transfer.
   const pptxThumbAttempts = useRef(new Map<string, number>());
@@ -160,7 +163,7 @@ export function App() {
   useEffect(() => {
     // Abandoned rooms expire automatically; delete their old browser-stored PDFs
     // on the next visit even if no new room is created.
-    void cleanExpiredRoomCaches(initialSession?.code);
+    void cleanExpiredRoomCaches(initialSession ? hostCacheIdentity(initialSession) : undefined);
   }, []);
 
   useEffect(() => {
@@ -178,12 +181,12 @@ export function App() {
         }
       }).catch(() => {});
     }
-  }, [hostSession?.code, documents, presentation, socket]);
+  }, [activeCacheId, documents, presentation, socket]);
 
   // The host already stores each phone-produced first-page JPEG for the presenter.
   // Reload thumbnails from that cache when a room recovers, with no new transfer.
   useEffect(() => {
-    const roomCode = hostSession?.code ?? '';
+    const roomCode = activeCacheId;
     if (previewRoom.current !== roomCode) {
       previewRoom.current = roomCode;
       previewLookups.current.clear();
@@ -198,14 +201,14 @@ export function App() {
         setDocumentPreviews(current => current[file.fileId] ? current : { ...current, [file.fileId]: url });
       }).catch(() => {});
     }
-  }, [hostSession?.code, documents, presentation]);
+  }, [activeCacheId, documents, presentation]);
 
   // Do not burden mobile senders with PowerPoint parsing or add preview
   // packets to the relay. Once ALL approved files are fully cached on the
   // host, make small first-slide JPEG thumbnails using the existing OOXML
   // engine. This occurs at idle priority; downloads always come first.
   useEffect(() => {
-    const room = hostSession?.code;
+    const room = activeCacheId;
     if (!room || mode !== 'host') return;
     if (thumbnailTransferBusy.current) return;
     for (const file of documents) {
@@ -249,7 +252,7 @@ export function App() {
         }
       });
     }
-  }, [hostSession?.code, mode, documents, cacheProgress, documentPreviews, presentation, pptxThumbnailRetryTick]);
+  }, [activeCacheId, mode, documents, cacheProgress, documentPreviews, presentation, pptxThumbnailRetryTick]);
 
   function offerLocalFile(id: string, entry: SharedFile): void {
     if (entry.status === 'rejected' || entry.status === 'offline') return;
@@ -486,9 +489,20 @@ export function App() {
         if (session && typeof message.roomGeneration === 'string' && typeof message.leaseToken === 'string' &&
             !closeRequestedRef.current) {
           const updated = { ...session, roomGeneration: message.roomGeneration, leaseToken: message.leaseToken,
+            ...(typeof message.cacheId === 'string' ? { cacheId: message.cacheId } : {}),
             ...(typeof message.autoApprove === 'boolean' ? { autoApprove: message.autoApprove } : {}) };
+          if (hostCacheIdentity(updated) !== hostCacheIdentity(session)) {
+            // Recovery from a saved session that lost its namespace metadata.
+            // A new generation must never inherit another room's completion.
+            presentation.setRoom(hostCacheIdentity(updated));
+            setCacheProgress({});
+            setDownloadSpeed({});
+            completionAcks.current.clear();
+            completionLastSent.current.clear();
+            transferSamples.current.clear();
+          }
           if (updated.roomGeneration !== session.roomGeneration || updated.leaseToken !== session.leaseToken ||
-              updated.autoApprove !== session.autoApprove) rememberHostSession(updated);
+              updated.autoApprove !== session.autoApprove || updated.cacheId !== session.cacheId) rememberHostSession(updated);
           configureHostLease(updated);
         }
         setStudents(Array.isArray(message.students) ? message.students as StudentInfo[] : []);
@@ -648,7 +662,7 @@ export function App() {
     };
 
     if (initialSession) {
-      presentation.setRoom(initialSession.code);
+      presentation.setRoom(hostCacheIdentity(initialSession));
       if (initialSession.closeRequested) {
         setEndConfirm(true); setEndAcknowledged(true);
         void completeEnd(initialSession);
@@ -705,7 +719,7 @@ export function App() {
     setBlockedStorageFiles([]);
     setRetryingBlockedStorage(false);
     try {
-      const response = await fetch('/api/rooms?autoApprove=' + (autoApprove ? '1' : '0'), { method: 'POST' });
+      const response = await fetch('/api/rooms?cache=2&autoApprove=' + (autoApprove ? '1' : '0'), { method: 'POST' });
       if (!response.ok) throw new Error('Unable to create room (' + response.status + ')');
       const newSession = await response.json() as HostSession;
       rememberHostSession(newSession);
@@ -720,7 +734,7 @@ export function App() {
       completionAcks.current.clear();
       completionLastSent.current.clear();
       transferSamples.current.clear();
-      presentation.setRoom(newSession.code);
+      presentation.setRoom(hostCacheIdentity(newSession));
       configureHostLease(newSession);
       socket.connect({ role: 'host', roomId: newSession.roomId, token: newSession.hostToken });
     } catch (e) {
@@ -837,7 +851,7 @@ export function App() {
       // share the SAME already-committed 64 KiB browser cache.
       // Downloading only needs immutable browser-native Blob bytes, unlike
       // the presenter which needs a full JavaScript buffer for rendering.
-      const blob = await readCompletedBlob(hostSession.code, file);
+      const blob = await readCompletedBlob(hostCacheIdentity(hostSession), file);
       if (!blob) throw Error('File is not fully cached yet. Retry once received.');
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');

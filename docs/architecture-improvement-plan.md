@@ -53,7 +53,8 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | Worker-owned transfer and OPFS receipt | Demonstrated in the isolated R2 pilot; **not integrated into the relay application** |
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | Only terminal stop helpers shared so far; full extraction pending |
-| Lease/end lifecycle | Reconciled onto the current recovery line: scoped renewals, generation-safe HTTP closure, retryable cleanup, legacy session upgrade and removal of fixed presenter cutoff; release validation in progress |
+| Lease/end lifecycle | Deployed on the recovery line; PR #40 full CI passed: scoped renewals, generation-safe HTTP closure, retryable cleanup, legacy session upgrade and removal of fixed presenter cutoff; physical-device verification pending |
+| Local cache identity | Generation-based namespaces implemented for newly negotiated rooms; legacy rooms drain in place. Regression/release evidence tracked under N20 |
 | R2 | Deferred; prototype retained for reference |
 
 [PR #35](https://github.com/Punit-Dethe/flashview/pull/35) passed its full CI run
@@ -91,9 +92,12 @@ subsequent changes. No R2 result is a prerequisite for continuing.
 renewal are implemented in both adapters. Close intent survives refresh; server
 confirmation precedes cache deletion; failed cleanup retains its handle. Presenter
 tabs no longer inherit host session storage and the fixed bridge cutoff is gone.
-Remaining Phase 1 work includes full room-engine extraction, aggregate admission
-limits and immutable local-cache identity migration. Physical background/OS
-suspension behavior is still a release verification task.
+Generation-based cache identities are now negotiated at creation and shared by
+the receiver, presenter, previews, export and cleanup; older rooms drain in place
+without erasing active data. Remaining Phase 1 work includes full room-engine
+extraction and aggregate admission limits. Physical background/OS suspension
+behavior is still a release verification task. Personal multi-gigabyte transfer
+mode is deferred at the user's request; the current 200 MiB cap stays unchanged.
 
 **Touch:** both relay adapters, shared contracts/domain code, room lifetime,
 client command handling and the reliability tracker.

@@ -88,14 +88,21 @@ async function seedLifecycleCache(page: import('playwright').Page): Promise<void
     opened.onsuccess = () => {
       const db = opened.result;
       const tx = db.transaction(['chunks', 'rooms'], 'readwrite');
-      const document = session.code + '/lifecycle-fixture';
-      tx.objectStore('chunks').put({ key: document + '/0', room: session.code, document,
+      const room = session.cacheId ?? session.code;
+      const document = room + '/lifecycle-fixture';
+      tx.objectStore('chunks').put({ key: document + '/0', room, document,
         index: 0, data: Uint8Array.of(1, 2, 3).buffer });
-      tx.objectStore('rooms').put({ id: session.code, expires: Date.now() + 7_200_000 });
+      tx.objectStore('rooms').put({ id: room, expires: Date.now() + 7_200_000 });
       tx.oncomplete = () => { db.close(); resolve(); };
       tx.onerror = () => { db.close(); reject(tx.error); };
     };
   }));
+}
+async function cacheIdentity(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const session = JSON.parse(sessionStorage.getItem('flashview-host')!);
+    return session.cacheId ?? session.code;
+  });
 }
 async function lifecycleCacheCount(page: import('playwright').Page, room: string): Promise<number> {
   return page.evaluate(code => new Promise<number>((resolve, reject) => {
@@ -112,6 +119,155 @@ async function lifecycleCacheCount(page: import('playwright').Page, room: string
   }), room);
 }
 
+test('room cache identity: reused code cannot inherit bytes or previews and cleanup stays scoped', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true });
+  const student = await browser.newPage();
+  const fileId = '12345678123442348234123456789abc';
+  const original = Buffer.alloc(512 * 1024 + 7);
+  for (let i = 0; i < original.length; i++) original[i] = (i * 37 + Math.floor(i / 65536)) % 256;
+  try {
+    const root = 'http://127.0.0.1:' + port;
+    await host.addInitScript(() => {
+      const reads: string[] = [];
+      (window as typeof window & { __previewKeys?: string[] }).__previewKeys = reads;
+      const get = IDBObjectStore.prototype.get;
+      IDBObjectStore.prototype.get = function (key) {
+        if (this.name === 'previews') reads.push(String(key));
+        return get.call(this, key);
+      };
+    });
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const session = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    assert.equal(session.cacheId, 'generation:' + session.roomGeneration);
+    const foreignCache = 'generation:87654321-4321-4321-8321-cba987654321';
+    // A previous room used exactly this code and file ID. Every old chunk has
+    // the expected length: key/length checks alone would falsely say complete.
+    await host.evaluate(async ({ rooms, fileId, size }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('flashview-room-cache');
+        request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(['chunks', 'rooms', 'previews'], 'readwrite');
+        for (const room of rooms) {
+          const document = room + '/' + fileId;
+          for (let index = 0; index < Math.ceil(size / 65536); index++) {
+            const data = new Uint8Array(Math.min(65536, size - index * 65536)).fill(238).buffer;
+            tx.objectStore('chunks').put({ key: document + '/' + index, room, document, index, data });
+          }
+          tx.objectStore('previews').put({ key: document, room, dataUrl: 'old-room-preview' });
+          tx.objectStore('rooms').put({ id: room, expires: Date.now() + 7_200_000 });
+        }
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error);
+      });
+      db.close();
+    }, { rooms: [session.code, foreignCache], fileId, size: original.length });
+    await student.addInitScript(() => {
+      crypto.randomUUID = () => '12345678-1234-4234-8234-123456789abc';
+    });
+    await student.goto(root + '/?join=' + encodeURIComponent(session.joinToken));
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    await student.locator('input[type=file]').setInputFiles({ name: 'isolated.bin', mimeType: 'application/octet-stream', buffer: original });
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
+    assert.equal(await lifecycleCacheCount(host, session.cacheId), Math.ceil(original.length / 65536));
+    await student.close();
+    // Restore without a source. Both export and the presenter broker must use
+    // the namespace advertised by the server, rather than the visible code.
+    await host.evaluate(() => {
+      const saved = JSON.parse(sessionStorage.getItem('flashview-host')!);
+      delete saved.cacheId;
+      sessionStorage.setItem('flashview-host', JSON.stringify(saved));
+    });
+    await host.reload();
+    await host.locator('.connection.connected').waitFor();
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
+    assert.equal(await cacheIdentity(host), session.cacheId);
+    const previewKey = session.cacheId + '/' + fileId;
+    await host.waitForFunction(key => (window as typeof window & { __previewKeys?: string[] })
+      .__previewKeys?.includes(key), previewKey);
+    const previewReads = await host.evaluate(() =>
+      (window as typeof window & { __previewKeys?: string[] }).__previewKeys ?? []);
+    assert.ok(previewReads.every(key => key === previewKey), 'Preview lookup cannot fall back to a reused code');
+    const downloading = host.waitForEvent('download');
+    await host.getByRole('button', { name: 'Download isolated.bin' }).click();
+    const saved = await downloading;
+    assert.equal(createHash('sha256').update(await readFile((await saved.path())!)).digest('hex'),
+      createHash('sha256').update(original).digest('hex'));
+    assert.equal(await host.locator('.document-thumb-image[src="old-room-preview"]').count(), 0);
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await host.locator('.welcome').waitFor();
+    assert.equal(await lifecycleCacheCount(host, session.cacheId), 0);
+    for (const room of [session.code, foreignCache]) {
+      assert.equal(await lifecycleCacheCount(host, room), Math.ceil(original.length / 65536),
+        'Cleanup preserves other generations and legacy bytes');
+      const preview = await host.evaluate(room => new Promise<unknown>((resolve, reject) => {
+        const request = indexedDB.open('flashview-room-cache');
+        request.onsuccess = () => {
+          const db = request.result;
+          const get = db.transaction('previews', 'readonly').objectStore('previews').index('room').get(room);
+          get.onsuccess = () => { resolve(get.result?.dataUrl); db.close(); }; get.onerror = () => reject(get.error);
+        };
+        request.onerror = () => reject(request.error);
+      }), room);
+      assert.equal(preview, 'old-room-preview');
+    }
+  } finally { await browser.close(); child.kill(); }
+});
+
+test('room cache identity: legacy rooms keep original bytes when lease metadata is upgraded', { timeout: 50000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true });
+  const student = await browser.newPage();
+  try {
+    const root = 'http://127.0.0.1:' + port;
+    // Simulate creation by the previous client. The real backend must pin this
+    // room's old cache format even after a new client adopts lease credentials.
+    await host.route('**/api/rooms?*', async route => {
+      const url = new URL(route.request().url()); url.searchParams.delete('cache');
+      await route.fulfill({ response: await route.fetch({ url: url.href }) });
+    });
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const saved = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    assert.equal(saved.cacheId, saved.code);
+    const original = Buffer.from('Legacy original bytes must stay readable after upgrading room leases.');
+    await student.goto(root + '/?join=' + encodeURIComponent(saved.joinToken));
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    await student.locator('input[type=file]').setInputFiles({ name: 'legacy.bin', mimeType: 'application/octet-stream', buffer: original });
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
+    await student.close();
+    await host.evaluate(() => {
+      const session = JSON.parse(sessionStorage.getItem('flashview-host')!);
+      delete session.cacheId; delete session.roomGeneration; delete session.leaseToken;
+      sessionStorage.setItem('flashview-host', JSON.stringify(session));
+    });
+    await host.reload();
+    await host.locator('.connection.connected').waitFor();
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
+    const restored = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    assert.equal(restored.cacheId, saved.code);
+    assert.equal(restored.roomGeneration, saved.roomGeneration);
+    const downloading = host.waitForEvent('download');
+    await host.getByRole('button', { name: 'Download legacy.bin' }).click();
+    const download = await downloading;
+    assert.deepEqual(await readFile((await download.path())!), original);
+    assert.equal(await lifecycleCacheCount(host, saved.code), 1);
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await host.locator('.welcome').waitFor();
+    assert.equal(await lifecycleCacheCount(host, saved.code), 0);
+  } finally { await browser.close(); child.kill(); }
+});
+
 test('room lifecycle: failed/lost end responses preserve cache and resume intent across refresh', { timeout: 50000 }, async t => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
@@ -124,7 +280,7 @@ test('room lifecycle: failed/lost end responses preserve cache and resume intent
     await host.locator('.connection.connected').waitFor();
     await seedLifecycleCache(host);
     const room = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!) as {
-      code: string; roomId: string; roomGeneration: string; leaseToken: string;
+      code: string; cacheId: string; roomId: string; roomGeneration: string; leaseToken: string;
     });
     stage = 'failed initial close';
     await host.route('**/api/rooms/**/end', route => route.abort());
@@ -133,14 +289,14 @@ test('room lifecycle: failed/lost end responses preserve cache and resume intent
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).waitFor();
     await host.getByText(/Could not confirm classroom closure/).waitFor();
-    assert.equal(await lifecycleCacheCount(host, room.code), 1);
+    assert.equal(await lifecycleCacheCount(host, room.cacheId), 1);
     const intent = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
     assert.equal(intent.closeRequested, true);
     assert.notEqual(intent.serverClosed, true);
     stage = 'restore failed close after refresh';
     await host.reload();
     await host.getByText(/Could not confirm classroom closure/).waitFor();
-    assert.equal(await lifecycleCacheCount(host, room.code), 1, 'Refresh retains the uncertain-close cache');
+    assert.equal(await lifecycleCacheCount(host, room.cacheId), 1, 'Refresh retains the uncertain-close cache');
     await host.unroute('**/api/rooms/**/end');
     stage = 'commit close but drop response';
     await host.route('**/api/rooms/**/end', async route => {
@@ -149,7 +305,7 @@ test('room lifecycle: failed/lost end responses preserve cache and resume intent
     });
     await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).click();
     await host.getByText(/Could not confirm classroom closure/).waitFor();
-    assert.equal(await lifecycleCacheCount(host, room.code), 1, 'Even a lost successful receipt cannot erase cache early');
+    assert.equal(await lifecycleCacheCount(host, room.cacheId), 1, 'Even a lost successful receipt cannot erase cache early');
     const state = await (await fetch(root + '/api/rooms/' + room.roomId + '/lease', { method: 'POST',
       headers: { Authorization: 'Bearer ' + room.leaseToken, 'Content-Type': 'application/json' },
       body: JSON.stringify({ roomGeneration: room.roomGeneration }) })).json() as { state: string };
@@ -158,7 +314,7 @@ test('room lifecycle: failed/lost end responses preserve cache and resume intent
     await host.unroute('**/api/rooms/**/end');
     await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).click();
     await host.locator('.welcome').waitFor();
-    assert.equal(await lifecycleCacheCount(host, room.code), 0);
+    assert.equal(await lifecycleCacheCount(host, room.cacheId), 0);
     assert.equal(await host.evaluate(() => sessionStorage.getItem('flashview-host')), null);
   } catch (error) {
     t.diagnostic('Lifecycle stage: ' + stage);
@@ -182,6 +338,7 @@ test('room lifecycle: failed cache deletion retains its handle and confirmed clo
     await host.locator('.connection.connected').waitFor();
     await seedLifecycleCache(host);
     const code = (await host.locator('.room-code').innerText()).trim();
+    const cacheId = await cacheIdentity(host);
     await host.evaluate(() => {
       const original = IDBObjectStore.prototype.delete;
       let fail = true;
@@ -198,12 +355,12 @@ test('room lifecycle: failed cache deletion retains its handle and confirmed clo
     await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.getByText(/classroom is closed.*cache could not be cleared/).waitFor();
-    assert.equal(await lifecycleCacheCount(host, code), 1);
+    assert.equal(await lifecycleCacheCount(host, cacheId), 1);
     assert.equal(await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).serverClosed), true);
     assert.equal(await host.getByRole('button', { name: 'Keep room open', exact: true }).isDisabled(), true);
     await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).click();
     await host.locator('.welcome').waitFor();
-    assert.equal(await lifecycleCacheCount(host, code), 0, 'Retry really deletes the original room cache');
+    assert.equal(await lifecycleCacheCount(host, cacheId), 0, 'Retry really deletes the original room cache');
     assert.equal(await host.evaluate(() => sessionStorage.getItem('flashview-host')), null);
   } finally { await browser.close(); child.kill(); }
 });
@@ -218,6 +375,7 @@ test('room lifecycle: legacy host sessions upgrade in place and confirmed cleanu
     await host.locator('.connection.connected').waitFor();
     await seedLifecycleCache(host);
     const code = (await host.locator('.room-code').innerText()).trim();
+    const cacheId = await cacheIdentity(host);
     await host.evaluate(() => {
       const saved = JSON.parse(sessionStorage.getItem('flashview-host')!);
       delete saved.roomGeneration; delete saved.leaseToken;
@@ -227,7 +385,7 @@ test('room lifecycle: legacy host sessions upgrade in place and confirmed cleanu
     await host.locator('.connection.connected').waitFor();
     await host.waitForFunction(() => Boolean(JSON.parse(sessionStorage.getItem('flashview-host')!).leaseToken));
     assert.equal((await host.locator('.room-code').innerText()).trim(), code);
-    assert.equal(await lifecycleCacheCount(host, code), 1, 'Upgrading credentials preserves existing cached bytes');
+    assert.equal(await lifecycleCacheCount(host, cacheId), 1, 'Upgrading credentials preserves existing cached bytes');
     await host.evaluate(() => {
       const original = IDBObjectStore.prototype.delete;
       IDBObjectStore.prototype.delete = function (key) {
@@ -243,7 +401,7 @@ test('room lifecycle: legacy host sessions upgrade in place and confirmed cleanu
     await host.route('**/api/rooms/**', route => route.abort());
     await host.reload();
     await host.locator('.welcome').waitFor();
-    assert.equal(await lifecycleCacheCount(host, code), 0, 'Confirmed closure permits local cleanup without any control connection');
+    assert.equal(await lifecycleCacheCount(host, cacheId), 0, 'Confirmed closure permits local cleanup without any control connection');
   } finally { await browser.close(); child.kill(); }
 });
 
@@ -868,6 +1026,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       null, { timeout: 20000 });
     await offlinePresentation.close();
 
+    const cachedRoom = await cacheIdentity(host);
     const countRoomChunks = async () => host.evaluate(room => new Promise<number>((resolve, reject) => {
       const request = indexedDB.open('flashview-room-cache');
       request.onsuccess = () => {
@@ -877,7 +1036,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
         count.onerror = () => reject(count.error);
       };
       request.onerror = () => reject(request.error);
-    }), roomCode!);
+    }), cachedRoom);
     assert.ok(await countRoomChunks() >= 3, 'Expected cached PDF chunks');
     await host.getByRole('button', { name: /End room/ }).click();
     await host.getByRole('button', { name: /End & clear cache/ }).isDisabled().then(x => assert.equal(x, true));
@@ -1005,7 +1164,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
         count.onerror = () => reject(count.error);
       };
       request.onerror = () => reject(request.error);
-    }), code);
+    }), await cacheIdentity(host));
     // Allow the initial batch already in-flight before the foreground request
     // to drain. The background pump must still fetch MORE chunks after that.
     await delay(1300);
@@ -1406,7 +1565,7 @@ test('network packet sizes 128/256 KiB preserve exact original PDF bytes in 64 K
           const digest = await crypto.subtle.digest('SHA-256', all);
           return { length, count: parts.length, indices: parts.map(x => x.index),
             sha256: Array.from(new Uint8Array(digest)).map(x => x.toString(16).padStart(2,'0')).join('') };
-        }, code);
+        }, await cacheIdentity(host));
         assert.equal(stored.length, fixture.length, 'Full file must survive packet splitting');
         assert.ok(stored.count > 6, 'Multi-packet test fixture must exercise multiple groups');
         assert.deepEqual(stored.indices, Array.from({length:stored.count}, (_,i)=>i));
@@ -2093,7 +2252,7 @@ test('a transient host IndexedDB write failure recovers without reuploading the 
       }
       const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
       return Array.from(hash, b => b.toString(16).padStart(2, '0')).join('');
-    }, code);
+    }, await cacheIdentity(host));
     assert.equal(actualDigest, createHash('sha256').update(original).digest('hex'),
       'Recovery must preserve original bytes exactly');
   } finally {
@@ -2167,7 +2326,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
         cursor.onerror = () => reject(cursor.error);
       };
       request.onerror = () => reject(request.error);
-    }), code);
+    }), await cacheIdentity(host));
     assert.equal(removed, 1);
 
     // The app only synchronizes in a visible teacher tab, by design.
@@ -2229,7 +2388,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
             .map(el => el.getAttribute('aria-valuenow')),
           documentText: document.body.innerText.slice(-900),
         };
-      }, code);
+      }, await cacheIdentity(host));
       console.error('STALE_CACHE_DIAGNOSTICS', JSON.stringify(diagnostics));
       throw error;
     }
@@ -2258,7 +2417,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
       }
       const hashed = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
       return Array.from(hashed, b => b.toString(16).padStart(2, '0')).join('');
-    }, code);
+    }, await cacheIdentity(host));
     assert.equal(digest, createHash('sha256').update(original).digest('hex'));
   } finally {
     await browser.close();
@@ -2324,7 +2483,7 @@ test('a stalled IndexedDB index query times out and retries without losing a pho
       }
       const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
       return Array.from(hash, n => n.toString(16).padStart(2, '0')).join('');
-    }, code);
+    }, await cacheIdentity(host));
     assert.equal(digest, createHash('sha256').update(pdf).digest('hex'),
       'The resumed transfer must persist every original byte');
   } finally {

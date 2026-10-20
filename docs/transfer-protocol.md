@@ -10,6 +10,24 @@
 - A host authenticates with `roomId` and `hostToken`; a sender joins with `code` or `joinToken` and can later resume with a `resumeToken`. A room code is not equivalent to the host secret.
 - Relay enforces role, sender ownership, approval and range bounds. A sender can only serve its own files; other students do not receive the host's file list.
 
+### Browser cache identity
+
+The current client creates rooms with `POST /api/rooms?cache=2&autoApprove=1|0`.
+Both relays pin `cacheVersion: 2` in the room configuration and return a host-only
+`cacheId` of `generation:<roomGeneration>` in creation and every `room.state`.
+The host stores that exact namespace in its saved session and uses it for chunks,
+previews, completed-file exports, presenter metadata and cleanup. The six-digit
+code remains a join/display identifier; a new room never searches an old code's
+cache for missing bytes or previews.
+
+Requests without `cache=2` retain the legacy code-based namespace. This preserves
+rooms created by already-open older clients. Existing persisted Cloudflare rooms
+without `cacheVersion` also keep that namespace, even when they acquire new lease
+credentials. They advertise `cacheId: <code>`; old servers/sessions without a
+`cacheId` fall back to the code. Existing data is drained in place, not copied,
+renamed or erased to upgrade. This is namespace separation, not a content hash or
+isolation from arbitrary same-origin scripts.
+
 ### HTTP lifecycle controls
 
 Both adapters implement `POST /api/rooms/<roomId>/lease` and `/end` with

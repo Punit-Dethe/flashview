@@ -94,10 +94,14 @@ deletion retains its cache handle and confirmed-closure state for retry, includi
 after refresh. Cleanup operations have a bounded IndexedDB deadline. Sender source
 files are never deleted. Expired local cache cleanup still occurs on later visits.
 
-Local cache keys still use the existing room-code identity; migration to immutable
-generation keys remains part of the cache work. Server generation safety should
-not be mistaken for completion of that separate storage migration. See
-[Security and reliability](./security-and-reliability.md) for cleanup limitations.
+New clients negotiate generation-based browser cache identity when creating a
+room. The server pins its cache version and advertises `cacheId` on creation and
+host sync; the host persists it and uses it for originals, previews, presenter
+reads, exports and deletion. Reusing a six-digit join code does not reuse bytes.
+Existing rooms and requests from older clients retain their code-based namespace
+until they end; adopting lease credentials does not rename their cache. No live
+data is deleted to migrate. See [the protocol](./transfer-protocol.md#browser-cache-identity)
+and [Security and reliability](./security-and-reliability.md) for limitations.
 
 ## Node versus Cloudflare
 

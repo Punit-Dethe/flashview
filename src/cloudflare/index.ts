@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { roomCacheIdentity } from '../shared/roomCacheIdentity';
 import { pruneExpiredRanges } from '../shared/rangeLiveness';
 import { roomExpiresAt, shouldPersistRoomActivity } from '../shared/roomLifetime';
 import { canForwardToHost } from '../shared/relayBackpressure';
@@ -16,7 +17,7 @@ interface Env {
 type Role = 'host' | 'student' | null;
 interface Peer { id: string; role: Role; name: string; approved: boolean }
 interface RoomConfig { code: string; hostToken: string; joinToken: string; created: number; lastActivityAt?: number; autoApprove?: boolean;
-  roomGeneration?: string; leaseToken?: string }
+  roomGeneration?: string; leaseToken?: string; cacheVersion?: 2 }
 interface ResumeSession { id: string; name: string; approved: boolean; token: string }
 interface RangeRequest { fileId: string; senderId: string; begin: number; end: number; created: number }
 const MAX_STUDENTS = 30;
@@ -147,6 +148,7 @@ export class ClassroomRoom extends DurableObject<Env> {
           code: incoming.code!, hostToken: incoming.hostToken!, joinToken: incoming.joinToken!, created,
           lastActivityAt: created, autoApprove: incoming.autoApprove === true,
           roomGeneration: incoming.roomGeneration ?? crypto.randomUUID(), leaseToken: incoming.leaseToken ?? token(32),
+          cacheVersion: incoming.cacheVersion === 2 ? 2 : undefined,
         };
         await this.ctx.storage.put('config', this.config);
         await this.ctx.storage.setAlarm(created + ROOM_TTL_MS);
@@ -221,6 +223,7 @@ export class ClassroomRoom extends DurableObject<Env> {
       send(ws, {
         type: 'room.state', id: cfg.code, code: cfg.code, joinToken: cfg.joinToken,
         roomGeneration: cfg.roomGeneration, leaseToken: cfg.leaseToken,
+        cacheId: roomCacheIdentity(cfg),
         students: this.students(), files: [...this.files.values()],
         autoApprove: cfg.autoApprove === true,
       });
@@ -348,6 +351,7 @@ export class ClassroomRoom extends DurableObject<Env> {
         type: 'room.state', id: this.config?.code, code: this.config?.code,
         joinToken: this.config?.joinToken, students: this.students(),
         roomGeneration: this.config?.roomGeneration, leaseToken: this.config?.leaseToken,
+        cacheId: this.config ? roomCacheIdentity(this.config) : undefined,
         files: [...this.files.values()],
       });
     }
@@ -577,6 +581,7 @@ export default {
         const config: RoomConfig = {
           code, hostToken: token(32), joinToken: code + '.' + token(24), created: Date.now(),
           roomGeneration: crypto.randomUUID(), leaseToken: token(32),
+          cacheVersion: url.searchParams.get('cache') === '2' ? 2 : undefined,
           autoApprove: url.searchParams.get('autoApprove') === '1',
         };
         const room = env.ROOMS.getByName(code);
@@ -587,6 +592,7 @@ export default {
           return json({
             roomId: code, code, joinToken: config.joinToken, hostToken: config.hostToken,
             roomGeneration: config.roomGeneration, leaseToken: config.leaseToken,
+            cacheId: roomCacheIdentity(config),
             autoApprove: config.autoApprove,
           }, 201);
         }

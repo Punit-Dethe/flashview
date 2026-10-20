@@ -5,6 +5,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { roomExpiresAt } from '../shared/roomLifetime.js';
+import { roomCacheIdentity } from '../shared/roomCacheIdentity.js';
 import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle.js';
 import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl.js';
 import {
@@ -18,7 +19,7 @@ type ResumeSession = { id: string; name: string; approved: boolean; token: strin
 type Outstanding = { fileId: string; senderId: string; begin: number; end: number; created: number };
 type Room = {
   id: string; code: string; joinToken: string; hostToken: string; roomGeneration: string; leaseToken: string;
-  autoApprove: boolean;
+  autoApprove: boolean; cacheVersion?: 2;
   created: number; lastActivityAt: number; host: Peer | null; students: Map<string, Peer>;
   sessions: Map<string, ResumeSession>;
   files: Map<string, PdfManifest>; outstanding: Map<string, Outstanding>;
@@ -116,6 +117,7 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     send(ws, {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
       roomGeneration: room.roomGeneration, leaseToken: room.leaseToken,
+      cacheId: roomCacheIdentity(room),
       students: students(room), files: [...room.files.values()], autoApprove: room.autoApprove,
     });
     for (const student of room.students.values()) send(student.ws, { type: 'host.online' });
@@ -210,6 +212,7 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     return void send(ws, {
       type: 'room.state', id: room.id, code: room.code, joinToken: room.joinToken,
       roomGeneration: room.roomGeneration, leaseToken: room.leaseToken,
+      cacheId: roomCacheIdentity(room),
       students: students(room), files: [...room.files.values()], autoApprove: room.autoApprove,
     });
   }
@@ -462,6 +465,7 @@ const http = createServer((req, res) => {
     const room: Room = {
       id: randomUUID(), roomGeneration: randomUUID(), leaseToken: randomToken(32), code, joinToken: randomToken(20),
       hostToken: randomToken(32), created: now, lastActivityAt: now, autoApprove,
+      cacheVersion: url.searchParams.get('cache') === '2' ? 2 : undefined,
       host: null, students: new Map(), sessions: new Map(), files: new Map(), outstanding: new Map(),
     };
     rooms.set(room.id, room);
@@ -469,7 +473,8 @@ const http = createServer((req, res) => {
       'Content-Type': 'application/json', 'Cache-Control': 'no-store',
       'Referrer-Policy': 'no-referrer',
     }).end(JSON.stringify({ roomId: room.id, code, joinToken: room.joinToken, hostToken: room.hostToken,
-      roomGeneration: room.roomGeneration, leaseToken: room.leaseToken, autoApprove }));
+      roomGeneration: room.roomGeneration, leaseToken: room.leaseToken, autoApprove,
+      cacheId: roomCacheIdentity(room) }));
     return;
   }
   if (req.url?.startsWith('/api/')) { res.writeHead(404).end(); return; }

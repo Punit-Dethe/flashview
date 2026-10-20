@@ -1,7 +1,8 @@
 import type { PdfManifest } from '../shared/protocol';
 import { MAX_RANGE_BYTES } from '../shared/protocol';
-import { RoomPdfCache, type CacheProgress, cleanExpiredRoomCaches } from './pdf/roomCache';
+import { type CacheProgress, cleanExpiredRoomCaches } from './pdf/roomCache';
 import type { RoomSocket } from './socket';
+import { RoomTransferClient, WorkerRoomCache } from './transferClient';
 import { perf, perfEnabled, type PerfName } from './perf';
 import { RoomLease } from './roomControl';
 import { isRoomLeaseIdentity, type RoomLeaseIdentity } from '../shared/roomControl';
@@ -16,43 +17,32 @@ export type PdfRangeSource = Pick<RoomSocket, 'requestRange'>;
 export class PresentationHost {
   private tabs = new Map<string, { file: PdfManifest; channel: BroadcastChannel; requests: Map<string, Pending> }>();
   private lease: RoomLeaseIdentity | null = null;
-  private cache: RoomPdfCache | null = null;
-  private lastProgressPaint = new Map<string, number>();
+  private cache: WorkerRoomCache | null = null;
   onProgress: (status: CacheProgress) => void = () => {};
   onWarning: (message: string) => void = () => {};
   onStorageBlocked: (fileId: string) => void = () => {};
   onStorageRecovered: (fileId: string) => void = () => {};
   onStalled: (fileId: string) => void = () => {};
-  constructor(private readonly socket: RoomSocket) {}
+  constructor(private readonly socket: RoomTransferClient) {}
+  bindTransferEvents(): void {
+    this.socket.onProgress = progress => {
+      this.onProgress(progress);
+      for (const entry of this.tabs.values()) if (entry.file.fileId === progress.fileId)
+        entry.channel.postMessage({ type: 'progress', progress });
+    };
+    this.socket.onWarning = message => this.onWarning(message);
+    this.socket.onStorageBlocked = id => this.onStorageBlocked(id);
+    this.socket.onStorageRecovered = id => this.onStorageRecovered(id);
+    this.socket.onStalled = id => this.onStalled(id);
+  }
 
   setRoom(roomId: string): void {
+    this.bindTransferEvents();
     if (this.cache?.roomId === roomId) return;
     this.closeAll();
     this.lease = null;
     this.cache?.dispose();
-    this.lastProgressPaint.clear();
-    const cache = new RoomPdfCache(roomId, this.socket);
-    cache.onProgress = progress => {
-      // Persist every chunk immediately but paint/publish only a few times per
-      // second. Never postpone the completion event: PDF.js may switch to its
-      // complete-local-file path when progress.complete becomes true.
-      const now = performance.now();
-      const previous = this.lastProgressPaint.get(progress.fileId) ?? -Infinity;
-      // A persisted-cache correction must never be hidden by paint throttling:
-      // a recently displayed 100% can become incomplete after IndexedDB loss.
-      if (!progress.complete && !progress.corrected && now - previous < 350) return;
-      this.lastProgressPaint.set(progress.fileId, now);
-      this.onProgress(progress);
-      for (const entry of this.tabs.values()) {
-        if (entry.file.fileId === progress.fileId)
-          entry.channel.postMessage({ type: 'progress', progress });
-      }
-    };
-    cache.onStorageWarning = message => this.onWarning(message);
-    cache.onStorageBlocked = fileId => this.onStorageBlocked(fileId);
-    cache.onStorageRecovered = fileId => this.onStorageRecovered(fileId);
-    cache.onStalled = fileId => this.onStalled(fileId);
-    this.cache = cache;
+    this.cache = new WorkerRoomCache(roomId, this.socket);
     void cleanExpiredRoomCaches(roomId);
   }
   async progress(file: PdfManifest): Promise<CacheProgress> {
@@ -72,8 +62,7 @@ export class PresentationHost {
     this.lease = { ...identity };
     for (const tab of this.tabs.values()) tab.channel.postMessage({ type: 'lease', lease: this.lease });
   }
-  resume(): void { this.cache?.connectionRestored(); }
-  retryBlockedStorage(): void { this.cache?.retryBlockedStorage(); }
+  retryBlockedStorage(): void { this.socket.retryBlockedStorage(); }
   /** Reuse the first-slide image already stored for the presenter, without extra PDF requests. */
   async getPreview(fileId: string): Promise<string | null> {
     return this.cache?.getPreview(fileId) ?? null;
@@ -87,12 +76,7 @@ export class PresentationHost {
       }
     }
   }
-  /** Do not wait for the presentation window; begin caching on file arrival. */
-  queue(file: PdfManifest): void {
-    if (file.status === 'approved') this.cache?.prefetch(file);
-    else this.cache?.pause(file.fileId);
-  }
-  dispose(): void { this.closeAll(); this.cache?.dispose(); this.cache = null; this.lastProgressPaint.clear(); }
+  dispose(): void { this.closeAll(); this.cache?.dispose(); this.cache = null; }
 
   open(file: PdfManifest, locallyComplete = false): void {
     if (!this.cache) throw Error('Classroom cache is unavailable. Refresh the dashboard.');

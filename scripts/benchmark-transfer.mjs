@@ -11,6 +11,7 @@ import { chromium } from 'playwright';
 const target = process.env.BENCH_TARGET ?? 'node';
 const mib = Number(process.env.BENCH_MIB ?? 20);
 const repeats = Number(process.env.BENCH_RUNS ?? 3);
+const diagnostic = process.env.BENCH_DIAGNOSTICS === '1';
 assert.ok(['node', 'cloudflare', 'public'].includes(target), 'BENCH_TARGET must be node, cloudflare or public');
 assert.ok(Number.isInteger(mib) && mib >= 1 && mib <= 45, 'BENCH_MIB must be 1–45 (in-memory automation fixture limit)');
 assert.ok(Number.isInteger(repeats) && repeats >= 1 && repeats <= 10, 'BENCH_RUNS must be 1–10');
@@ -33,18 +34,41 @@ try {
   for (let i = 0; i < repeats; i++) {
     const context = await browser.newContext();
     const host = await context.newPage(); const phone = await context.newPage();
+    let began;
+    const ranges = new Map(), events = [];
+    if (diagnostic) for (const [side, page] of [['host', host], ['phone', phone]]) page.on('websocket', socket => {
+      for (const direction of ['framesent', 'framereceived']) socket.on(direction, ({ payload }) => {
+        if (began === undefined) return;
+        try {
+          const ms = Math.round(performance.now() - began);
+          if (typeof payload === 'string') {
+            const message = JSON.parse(payload);
+            if (message.type === 'range.request') {
+              const range = ranges.get(message.requestId) ?? {};
+              range[side === 'host' ? 'requestedAt' : 'sourceReceivedAt'] = ms; ranges.set(message.requestId, range);
+            } else if (/^(error|range.error|file\.|join\.)/.test(message.type) && events.length < 100)
+              events.push({ side, direction, type: message.type, ms, code: message.code, reason: message.type === 'range.error' ? message.message : undefined });
+          } else {
+            const size = payload.readUInt16BE(0), header = JSON.parse(payload.subarray(2, 2 + size).toString());
+            const range = ranges.get(header.requestId) ?? {};
+            range[side === 'phone' ? 'sourceSentAt' : 'receivedAt'] = ms; ranges.set(header.requestId, range);
+          }
+        } catch { /* Diagnostics never affect transfer success. */ }
+      });
+    });
     let room;
     try {
-      await host.goto(origin);
+      await host.goto(origin + (diagnostic ? '/?perf=1' : ''));
       const start = performance.now();
       await host.getByRole('button', { name: /Create a room/ }).click();
       await host.locator('.connection.connected').waitFor();
       room = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')));
       const roomReadyMs = Math.round(performance.now() - start);
-      await phone.goto(origin + '/?join=' + encodeURIComponent(room.joinToken));
+      await phone.goto(origin + '/?join=' + encodeURIComponent(room.joinToken) + (diagnostic ? '&perf=1' : ''));
       await phone.locator('.student-add-fab:not([disabled])').waitFor();
-      const began = performance.now();
+      began = performance.now();
       await phone.locator('input[type=file]').setInputFiles({ name: 'speed-original.bin', mimeType: 'application/octet-stream', buffer: bytes });
+      const selectionMs = Math.round(performance.now() - began);
       await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor({ timeout: 60000 });
       const cachedMs = Math.round(performance.now() - began);
       const digest = await host.evaluate(async room => {
@@ -57,7 +81,15 @@ try {
         return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', all)), value => value.toString(16).padStart(2, '0')).join('');
       }, room.cacheId ?? room.code);
       assert.equal(digest, expected);
-      runs.push({ roomReadyMs, cachedMs, mibPerSecond: +(mib / (cachedMs / 1000)).toFixed(2), sha256Matched: true });
+      let diagnostics;
+      if (diagnostic) {
+        const timing = [...ranges.values()].map(range => ({ ...range, totalMs: range.receivedAt - range.requestedAt,
+          sourceMs: range.sourceSentAt - range.sourceReceivedAt, downlinkMs: range.receivedAt - range.sourceSentAt }));
+        const metrics = await Promise.all([host, phone].map(page => page.evaluate(() => window.__flashviewPerf?.snapshot().summary)));
+        diagnostics = { events, requestCount: ranges.size, unfinishedRequests: timing.filter(range => range.receivedAt === undefined).length,
+          slowestRanges: timing.filter(range => Number.isFinite(range.totalMs)).sort((a,b) => b.totalMs-a.totalMs).slice(0, 3), hostMetrics: metrics[0], sourceMetrics: metrics[1] };
+      }
+      runs.push({ roomReadyMs, selectionMs, cachedMs, mibPerSecond: +(mib / (cachedMs / 1000)).toFixed(2), sha256Matched: true, ...(diagnostics ? { diagnostics } : {}) });
     } finally {
       if (room) { const ended = await fetch(origin + '/api/rooms/' + room.roomId + '/end', { method: 'POST', headers: { Authorization: 'Bearer ' + room.hostToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ roomGeneration: room.roomGeneration }) }); assert.ok(ended.ok); }
       await context.close();

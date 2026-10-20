@@ -6,9 +6,9 @@ import { assignParticipantColors } from './participantColors';
 import { MAX_FILE_BYTES, MAX_STUDENT_FILES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { hostCacheIdentity } from '../shared/roomCacheIdentity';
 import { isPdfName, isPowerPointName, safeDownloadName } from '../shared/fileTypes';
-import { RoomSocket, type ServerMessage, type SocketStatus } from './socket';
-import { formatBytes } from './pdf/Viewer';
-import { makeFirstPagePreview } from './pdf/firstPagePreview';
+import { type ServerMessage, type SocketStatus } from './socket';
+import { RoomTransferClient } from './transferClient';
+import { formatBytes } from './formatBytes';
 import { PresentationHost } from './presentation';
 import { DocumentCard } from './DocumentCard';
 import { StudentTransferCard } from './StudentTransferCard';
@@ -59,7 +59,7 @@ function normalizedMessage(message: ServerMessage): string {
 }
 
 export function App() {
-  const socket = useRef(new RoomSocket()).current;
+  const socket = useRef(new RoomTransferClient()).current;
   const roomVersions = useRef(new RoomRevisionTracker(initialSession?.roomGeneration)).current;
   const presentation = useRef(new PresentationHost(socket)).current;
   const hostLease = useRef(new RoomLease()).current;
@@ -99,20 +99,6 @@ export function App() {
   const [phonePreviews, setPhonePreviews] = useState<Record<string, string>>({});
   const [hostAvailable, setHostAvailable] = useState(true);
   const hostFilesRef = useRef<PdfManifest[]>([]);
-  // Do not mistake "WebSocket.send returned" for "relay stored completion".
-  // The relay explicitly receipts an idempotent completion message; if its
-  // receipt is missed, the next low-frequency room sync will retry it.
-  const completionAcks = useRef(new Set<string>());
-  const completionLastSent = useRef(new Map<string, number>());
-  const cacheProgressSnapshot = useRef(cacheProgress);
-  cacheProgressSnapshot.current = cacheProgress;
-  const acknowledgeComplete = (fileId: string, bytes: number): void => {
-    if (modeRef.current !== 'host' || !socket.connected || completionAcks.current.has(fileId)) return;
-    const now = Date.now();
-    if (now - (completionLastSent.current.get(fileId) ?? -Infinity) < 7000) return;
-    if (socket.send({ type: 'cache.progress', fileId, bytes }))
-      completionLastSent.current.set(fileId, now);
-  };
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
   const previewLookups = useRef(new Set<string>());
   const activeCacheId = hostSession ? hostCacheIdentity(hostSession) : '';
@@ -166,6 +152,7 @@ export function App() {
   useEffect(() => {
     // Abandoned rooms expire automatically; delete their old browser-stored PDFs
     // on the next visit even if no new room is created.
+    socket.warm();
     void cleanExpiredRoomCaches(initialSession ? hostCacheIdentity(initialSession) : undefined);
   }, []);
 
@@ -176,12 +163,6 @@ export function App() {
         setCacheProgress(existing => ({
           ...existing, [file.fileId]: retainNewestProgress(existing[file.fileId], progress),
         }));
-        // Only finished PDFs need an acknowledgement during host restoration.
-        if (progress.complete) acknowledgeComplete(file.fileId, file.size);
-        else if (socket.connected && file.cachedBytes === file.size) {
-          // Clear an old "Done" when the host's cached bytes were deleted.
-          socket.send({ type: 'cache.progress', fileId: file.fileId, bytes: 0, snapshot: true });
-        }
       }).catch(() => {});
     }
   }, [activeCacheId, documents, presentation, socket]);
@@ -332,6 +313,7 @@ export function App() {
       if (!filesOnPhone.current.has(fileId)) return;
       perf.mark('preview:' + fileId);
       try {
+        const { makeFirstPagePreview } = await import('./pdf/firstPagePreview');
         const url = await makeFirstPagePreview(shared.file);
         perf.elapsed('preview_generate_ms', 'preview:' + fileId, shared.file.size);
         if (!filesOnPhone.current.has(fileId)) return;
@@ -358,14 +340,10 @@ export function App() {
   }
 
   useEffect(() => {
+    presentation.bindTransferEvents();
     socket.onStatus = status => {
       setSocketStatus(status);
       if (status === 'connected') {
-        if (modeRef.current === 'host') {
-          completionAcks.current.clear();
-          completionLastSent.current.clear();
-        }
-        presentation.resume();
         if (modeRef.current === 'student') {
           // A file selected during mobile reconnect must be announced as
           // soon as the new connection is authenticated, not 20 seconds later.
@@ -380,23 +358,11 @@ export function App() {
       }
     };
     presentation.onProgress = progress => {
-      if (progress.corrected) {
-        // The relay may already have receipted the previous completed state.
-        // Explicitly clear it so the phone no longer shows a false Done.
-        completionAcks.current.delete(progress.fileId);
-        completionLastSent.current.delete(progress.fileId);
-        if (socket.connected) socket.send({
-          type: 'cache.progress', fileId: progress.fileId, bytes: 0, snapshot: true,
-        });
-      }
       if (progress.bytes > 0)
         setError(previous => previous.startsWith('File transfer stalled') ? '' : previous);
       setCacheProgress(existing => ({
         ...existing, [progress.fileId]: retainNewestProgress(existing[progress.fileId], progress),
       }));
-      // Single acknowledgement AFTER IndexedDB confirms the entire PDF.
-      // Intermediate progress stays local; it cannot slow PDF byte delivery.
-      if (progress.complete) acknowledgeComplete(progress.fileId, progress.size);
       const now = performance.now();
       const sample = transferSamples.current.get(progress.fileId);
       if (!sample) {
@@ -457,25 +423,6 @@ export function App() {
     window.addEventListener('pageshow', wake);
     window.addEventListener('pagehide', pagehide);
     window.addEventListener('online', online);
-    // Repair missed WebSocket notifications while the page is actually in use.
-    // This is lightweight metadata, NOT a full PDF transfer.
-    const syncTimer = setInterval(() => {
-      if (!socket.connected || document.visibilityState !== 'visible') return;
-      if (modeRef.current === 'host') {
-        socket.send({ type: 'room.sync' });
-        // Only whole-file receipts; never add per-chunk relay metadata traffic.
-        for (const file of hostFilesRef.current) {
-          if (cacheProgressSnapshot.current[file.fileId]?.complete)
-            acknowledgeComplete(file.fileId, file.size);
-        }
-      } else if (modeRef.current === 'student') {
-        socket.send({ type: 'file.sync' });
-        // Retry only file announcements for which no server receipt arrived.
-        for (const [id, entry] of filesOnPhone.current) {
-          if (entry.status === 'announcing') offerLocalFile(id, entry);
-        }
-      }
-    }, 20_000);
     socket.onMessage = message => {
       const type = message.type;
       const metadata = roomVersions.observe(message);
@@ -483,15 +430,6 @@ export function App() {
         socket.send({ type: modeRef.current === 'host' ? 'room.sync' : 'file.sync' });
       // Authenticate/upgrade the host session independently of an old list snapshot.
       if (!metadata.accept && (type !== 'room.state' || !metadata.scopeMatches)) return;
-      if (type === 'cache.progress.receipt' && modeRef.current === 'host' &&
-          typeof message.fileId === 'string' &&
-          typeof message.bytes === 'number') {
-        const file = hostFilesRef.current.find(file => file.fileId === message.fileId);
-        if (file && file.size === message.bytes) {
-          completionAcks.current.add(file.fileId);
-          completionLastSent.current.delete(file.fileId);
-        }
-      }
       if (type === 'room.state') {
         const session = hostSessionRef.current;
         if (session && typeof message.roomGeneration === 'string' && typeof message.leaseToken === 'string' &&
@@ -505,8 +443,6 @@ export function App() {
             presentation.setRoom(hostCacheIdentity(updated));
             setCacheProgress({});
             setDownloadSpeed({});
-            completionAcks.current.clear();
-            completionLastSent.current.clear();
             transferSamples.current.clear();
           }
           if (updated.roomGeneration !== session.roomGeneration || updated.leaseToken !== session.leaseToken ||
@@ -521,7 +457,6 @@ export function App() {
             setHostSession(previous => previous ? { ...previous, autoApprove: message.autoApprove as boolean } : previous);
           }
           hostFilesRef.current = files;
-          for (const file of files) presentation.queue(file);
         }
         setError('');
       }
@@ -536,7 +471,6 @@ export function App() {
         if (!file?.fileId) return;
         setDocuments(existing => [...existing.filter(f => f.fileId !== file.fileId), file]);
         hostFilesRef.current = [...hostFilesRef.current.filter(f => f.fileId !== file.fileId), file];
-        presentation.queue(file);
       }
       if (type === 'cache.progress' && modeRef.current === 'student' &&
           typeof message.fileId === 'string' &&
@@ -670,9 +604,6 @@ export function App() {
         }
         setSentFiles(existing => existing.map(f => f.fileId === id ? { ...f, status } : f));
       }
-      if (type === 'range.request') {
-        void respondToRange(message);
-      }
       if (type === 'room.closed') {
         if (modeRef.current === 'host' && hostSessionRef.current) {
           if (!closeRequestedRef.current) void completeEnd({ ...hostSessionRef.current, serverClosed: true });
@@ -717,7 +648,6 @@ export function App() {
       window.removeEventListener('pageshow', wake);
       window.removeEventListener('pagehide', pagehide);
       window.removeEventListener('online', online);
-      clearInterval(syncTimer);
       hostLease.stop();
       presentation.dispose();
       socket.close();
@@ -726,27 +656,6 @@ export function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socket]);
 
-  async function respondToRange(message: ServerMessage): Promise<void> {
-    const { requestId, fileId, begin, end } = message;
-    if (typeof requestId !== 'string' || typeof fileId !== 'string' ||
-        typeof begin !== 'number' || typeof end !== 'number') return;
-    const response = socket.rangeResponse(requestId, fileId, begin);
-    const shared = filesOnPhone.current.get(fileId);
-    if (!shared || shared.status !== 'approved' || begin < 0 || end > shared.file.size || begin >= end) {
-      response.fail('File is no longer available');
-      return;
-    }
-    try {
-      const readStart = perf.enabled ? performance.now() : 0;
-      const bytes = await shared.file.slice(begin, end).arrayBuffer();
-      if (perf.enabled) perf.record('sender_read_ms', performance.now() - readStart, { bytes: bytes.byteLength });
-      if (!await response.send(bytes)) {
-        response.fail('Network sender is busy');
-      }
-    } catch {
-      response.fail('Cannot read file from sender device');
-    }
-  }
 
   async function createRoom(): Promise<void> {
     setBusy(true);
@@ -770,8 +679,6 @@ export function App() {
       setCacheProgress({});
       setDownloadSpeed({});
       hostFilesRef.current = [];
-      completionAcks.current.clear();
-      completionLastSent.current.clear();
       transferSamples.current.clear();
       presentation.setRoom(hostCacheIdentity(newSession));
       configureHostLease(newSession);
@@ -850,6 +757,7 @@ export function App() {
     setSentFiles(current => [...current, ...batch.map(({ fileId, entry }) => ({
       fileId, name: entry.file.name, size: entry.file.size, status: entry.status,
     }))]);
+    socket.addSources(batch.map(({ fileId, entry }) => ({ fileId, file: entry.file })));
     // Announce the files before doing any decoding. Start a low-resolution
     // local preview shortly afterward; it never awaits host-side reception.
     // Authentication is sufficient to send a manifest. Even if the phone has
@@ -1006,7 +914,6 @@ export function App() {
     setCopied(false);
     setShowDonePill(false);
     hostFilesRef.current = [];
-    completionAcks.current.clear();
     transferSamples.current.clear();
     filesOnPhone.current.clear();
     firstPageImages.current.clear();

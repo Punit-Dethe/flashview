@@ -50,7 +50,8 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | Reconnection and socket handover | Immediate foreground recovery on #37; 20 October follow-up retires obsolete authority, clears receiver requests and preserves sender resume during host absence |
 | All-file benchmark and bounded original-byte readback | Implemented on #35; not ported to this branch |
 | Lockfile and reproducible installs | Implemented on #35; not ported to this branch |
-| Worker-owned transfer and OPFS receipt | Demonstrated in the isolated R2 pilot; **not integrated into the relay application** |
+| Worker-owned relay transfer | Implemented/tested and deployed for user-authorized live reproduction: one socket, source reads, automatic receipt/cache and completion receipts, bounded bridge, cancellation and crash recovery. N38's speed outlier remains unexplained; N37/N39 and phone preview removal remain |
+| OPFS receipt and content verification | Demonstrated in the isolated R2 pilot; not integrated into the relay application |
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | Shared metadata engine owns file transitions, participant admission/approval/rejection, private takeover and host presence; serialized atomic checkpoints, room revisions and client stale-snapshot handling implemented. Integration/release evidence tracked in N31–N33 |
 | Room admission budgets | 300 retained manifests / 4 GiB originals, 120 retained session identities, 30 concurrent senders; exact retries and existing capabilities preserved |
@@ -132,6 +133,29 @@ client command handling and the reliability tracker.
 hidden-dashboard, host-takeover and lost-end-acknowledgment cases.
 
 ### Phase 2 — Move the relay transfer engine off the UI thread
+
+**Current slice:** the dedicated relay worker owns the existing socket and
+cache scheduler on both sender and receiver. It applies authoritative relay
+metadata before publishing UI events, so receipt and confirmed completion do not
+wait for React. File handles are cloned to the worker without materializing
+whole-file buffers; original packets stay inside the worker. Passive local read
+RPCs are bounded/cancellable. Stop/dispose cancels range requests and write
+attempts, and send-buffer waits recheck source authority. Worker crashes get two
+bounded automatic replacements, retaining private identity/generation and source
+handles; a terminated worker permits deletion-only cleanup from the page.
+Entry bundles now lazy-load the presenter/PDF thumbnail code. Existing phone PDF
+thumbnails and progressive local viewer remain transitional until the completed
+viewer migration; this is not completion of every item in this phase. OPFS and
+cryptographic content verification still follow separately.
+Audit N37 remains open: the tested Firefox build still deferred native file/WS
+delivery under a long parent-page JS task despite worker timers running. Keep
+renderer work bounded/isolated and verify browsers explicitly; the Chromium
+stress result is not a cross-browser guarantee.
+N38 remains open: one ordinary public 20 MiB copy took 15.4 s, while other copies
+and traced reruns took roughly 4–5 s. The cause is unconfirmed. The user authorized
+merging and deploying this worker for live reproduction; retain the prior version
+for rollback and continue matched diagnostics rather than claiming it fixed.
+N39 also records a near-deployment reload timeout with an unconfirmed cause.
 
 **Touch:** room socket ownership, range transport, scheduler, progress and
 cache-worker interfaces. Preserve the measured relay packet path initially.

@@ -98,7 +98,26 @@ separately. Keep before/after raw samples and source/version information.
 The 45 MiB fixture ceiling avoids the automation API's large in-memory upload
 restriction; the application's 200 MiB allowance is unchanged.
 
+`BENCH_DIAGNOSTICS=1` additionally enables local perf counters and records
+selection latency, anonymous control-event types, outstanding range counts and
+the three slowest range stages. It never records auth payloads, filenames,
+capabilities or original bytes. Selection latency is also reported in ordinary
+runs. Diagnostic overhead differs from ordinary timing; preserve both batches
+and never substitute fast traced runs for an unexplained slow ordinary sample.
+
 ## Documentation and review expectations
+
+`transfer worker:` browser cases block both UI threads while independently
+checking committed cache and the relay's completion message, crash sender and
+receiver workers, and stop held requests before releasing obsolete source reads.
+`tests/transferHarness.ts` holds initial worker commands until test-only faults
+are installed via Playwright, rather than adding production debug APIs. Faults
+that affect WebSockets, File reads or transfer-cache writes must run in the
+worker; page DOM and completed export checks still run in the page.
+The offline-Stop case can also target the deployed app: set
+`WORKER_RECOVERY_ORIGIN` and run only `--test-name-pattern="offline Stop"`
+against `tests/browser.smoke.ts`. It creates/ends a synthetic room, exercises a
+real private reconnect and explicitly exports only its generated test binary.
 
 - A transfer or storage code change updates [Architecture](./architecture.md), [Protocol](./transfer-protocol.md) or [Security and reliability](./security-and-reliability.md) if behavior changes.
 - Every reliability-audit PR updates the matching entry in [the tracker](./reliability-audit.md), including limitations and a specific test or CI result.

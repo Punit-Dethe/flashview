@@ -8,6 +8,7 @@ import type { PdfManifest } from '../../shared/protocol';
 import type { PdfRangeSource } from '../presentation';
 import { readCompletedPdf, type CacheProgress } from './roomCache';
 import { fileAccentStyle } from '../fileAccent';
+import { formatBytes } from '../formatBytes';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const REQUEST_CHUNK = 65_536;
@@ -83,7 +84,6 @@ class LivePdfRanges extends PDFDataRangeTransport {
     this.cancels.clear();
   }
 }
-
 /**
  * A viewer can be closed and reopened without re-downloading the PDF because
  * its range source is backed by the room-level IndexedDB cache.
@@ -503,10 +503,4 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       </footer>
     </section>
   );
-}
-
-export function formatBytes(size: number): string {
-  if (size < 1024) return size + ' B';
-  if (size < 1024 ** 2) return (size / 1024).toFixed(1) + ' KB';
-  return (size / (1024 ** 2)).toFixed(1) + ' MB';
 }

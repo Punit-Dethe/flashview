@@ -76,17 +76,20 @@ async function readChunk(key: string): Promise<ArrayBuffer | null> {
   return withStorageDeadline(pending, 'Read cached chunk', STORAGE_DEADLINE_MS,
     () => { try { tx.abort(); } catch { /* Already settled. */ } });
 }
-async function saveChunk(record: ChunkRecord): Promise<void> {
+async function saveChunk(record: ChunkRecord, signal?: AbortSignal): Promise<void> {
   const db = await database();
+  if (signal?.aborted) throw Error('File transfer cancelled');
   const tx = db.transaction('chunks', 'readwrite');
+  const abort = () => { try { tx.abort(); } catch { /* Already committed. */ } };
+  signal?.addEventListener('abort', abort, { once: true });
   const pending = new Promise<void>((resolve, reject) => {
     tx.objectStore('chunks').put(record);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error || Error('Browser storage write aborted'));
   });
-  await withStorageDeadline(pending, 'Persist cached chunk', STORAGE_DEADLINE_MS,
-    () => { try { tx.abort(); } catch { /* Already settled. */ } });
+  try { await withStorageDeadline(pending, 'Persist cached chunk', STORAGE_DEADLINE_MS, abort); }
+  finally { signal?.removeEventListener('abort', abort); }
 }
 async function cachedIndices(room: string, fileId: string): Promise<Set<number>> {
   const db = await database();
@@ -273,7 +276,9 @@ export async function cleanExpiredRoomCaches(activeRoom?: string): Promise<void>
  */
 export class RoomPdfCache {
   private stopped = false;
+  get closed(): boolean { return this.stopped; }
   private inFlight = new Map<string, Promise<Uint8Array>>();
+  private attempts = new Map<string, AbortController>();
   // Passive presentation readers subscribe to the cache. Only the
   // background scheduler may create network range requests.
   private cacheWaiters = new Map<string, Set<() => void>>();
@@ -303,8 +308,8 @@ export class RoomPdfCache {
   private stallReported = new Set<string>();
   private readonly adaptive = new Map<string, AdaptiveTransferWindow>();
   // Keep a fixed scheduler available for identical-file A/B tests.
-  private readonly fixedTransfer = new URLSearchParams(location.search).get('transfer') === 'fixed';
-  private readonly networkChunks = packetChunksFromQuery(location.search);
+  private readonly fixedTransfer: boolean;
+  private readonly networkChunks: 1 | 2 | 4;
   private storageFailedFiles = new Set<string>();
   private storageRecovery = new Map<string, StorageRecovery>();
   onProgress: (progress: CacheProgress) => void = () => {};
@@ -314,7 +319,9 @@ export class RoomPdfCache {
   onStalled: (fileId: string) => void = () => {};
   private warned = false;
 
-  constructor(readonly roomId: string, private readonly socket: RoomSocket) {
+  constructor(readonly roomId: string, private readonly socket: RoomSocket, query = location.search) {
+    this.fixedTransfer = new URLSearchParams(query).get('transfer') === 'fixed';
+    this.networkChunks = packetChunksFromQuery(query);
     void writeRoom(roomId).catch(() => this.warning());
   }
   private warning(): void {
@@ -344,7 +351,7 @@ export class RoomPdfCache {
     if (!state || this.stopped || state.blocked) return;
     state.timer = null;
     try {
-      const writing = saveChunk(state.record);
+      const writing = saveChunk(state.record, this.attempt(fileId).signal);
       this.pendingWrites.add(writing);
       try { await writing; }
       finally { this.pendingWrites.delete(writing); }
@@ -400,6 +407,38 @@ export class RoomPdfCache {
   }
   private key(fileId: string, index: number): string {
     return this.roomId + '/' + fileId + '/' + index;
+  }
+  private attempt(fileId: string): AbortController {
+    let attempt = this.attempts.get(fileId);
+    if (!attempt) { attempt = new AbortController(); this.attempts.set(fileId, attempt); }
+    return attempt;
+  }
+  private discardMemory(key: string, fileId: string): void {
+    const bytes = this.memory.get(key);
+    if (bytes) this.memoryBytes -= bytes.byteLength;
+    this.memory.delete(key); this.indices.delete(fileId);
+  }
+  private receive(file: PdfManifest, begin: number, end: number, signal: AbortSignal): Promise<Uint8Array> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted || this.stopped) return reject(Error('File transfer cancelled'));
+      if (!this.socket.connected) return reject(Error('The sender is offline. Cached pages remain available.'));
+      const started = performance.now();
+      let cancelNetwork = () => {};
+      const cleanup = () => signal.removeEventListener('abort', abort);
+      const abort = () => { cancelNetwork(); cleanup(); reject(Error('File transfer cancelled')); };
+      signal.addEventListener('abort', abort, { once: true });
+      cancelNetwork = this.socket.requestRange(file.fileId, begin, end, (start, bytes) => {
+        cleanup();
+        if (signal.aborted) return reject(Error('File transfer cancelled'));
+        if (start !== begin || bytes.byteLength !== end - begin) return reject(Error('Incomplete PDF byte range'));
+        if (!this.fixedTransfer && !this.stopped) this.tuner(file.fileId).success(performance.now() - started);
+        resolve(bytes);
+      }, reason => {
+        cleanup();
+        if (!this.fixedTransfer && !this.stopped && !signal.aborted) this.tuner(file.fileId).failure();
+        reject(Error(reason));
+      });
+    });
   }
   private indexSet(file: PdfManifest): Promise<CachedChunkIndex> {
     const fileId = file.fileId;
@@ -520,15 +559,16 @@ export class RoomPdfCache {
       return result?.dataUrl ?? null;
     } catch { return null; }
   }
-  async progress(file: PdfManifest): Promise<CacheProgress> {
+  async progress(file: PdfManifest, repair = true): Promise<CacheProgress> {
     const indices = await this.indexSet(file);
     const state = await this.checkedProgress(file, indices);
-    if (state.corrected && file.status === 'approved' && !this.storageFailedFiles.has(file.fileId))
+    if (repair && state.corrected && file.status === 'approved' && !this.storageFailedFiles.has(file.fileId))
       this.prefetch(file);
     return state;
   }
   private async chunk(file: PdfManifest, index: number): Promise<Uint8Array> {
     if (this.stopped) throw Error('Classroom cache closed');
+    const signal = this.attempt(file.fileId).signal;
     const key = this.key(file.fileId, index);
     const cached = this.memory.get(key);
     if (cached) return cached;
@@ -557,50 +597,36 @@ export class RoomPdfCache {
     if (afterRead) return afterRead;
     const begin = index * CHUNK_BYTES;
     const end = Math.min(file.size, begin + CHUNK_BYTES);
-    const networkStartedAt = performance.now();
-    const promise = new Promise<Uint8Array>((resolve, reject) => {
-      if (!this.socket.connected) return reject(Error('The sender is offline. Cached pages remain available.'));
-      this.socket.requestRange(file.fileId, begin, end,
-        (start: number, data: Uint8Array) => {
-          if (start !== begin || data.byteLength !== end - begin) {
-            reject(Error('Incomplete PDF byte range')); return;
-          }
-          if (!this.fixedTransfer && !this.stopped)
-            this.tuner(file.fileId).success(performance.now() - networkStartedAt);
-          resolve(data);
-        }, (reason: string) => {
-          if (!this.fixedTransfer && !this.stopped) this.tuner(file.fileId).failure();
-          reject(Error(reason));
-        });
-    }).then(async data => {
-      if (this.stopped) throw Error('Classroom cache closed');
+    const promise = this.receive(file, begin, end, signal).then(async data => {
+      if (this.stopped || signal.aborted) throw Error('File transfer cancelled');
       this.putMemory(key, data);
       const writingSince = perf.enabled ? performance.now() : 0;
       const record: ChunkRecord = {
         key, room: this.roomId, document: this.roomId + '/' + file.fileId,
         index, data: data.slice().buffer,
       };
-      const saving = saveChunk(record);
+      const saving = saveChunk(record, signal);
       this.pendingWrites.add(saving);
       try {
         await saving;
         if (perf.enabled) perf.record('cache_write_ms', performance.now() - writingSince, { bytes: data.byteLength });
-        if (this.stopped) return data;
+        if (this.stopped || signal.aborted) { this.discardMemory(key, file.fileId); return data; }
         const set = await this.indexSet(file);
         set.add(index);
         this.notePersistedByte(file.fileId);
         const state = await this.checkedProgress(file, set);
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
-        if (!this.stopped) this.onProgress(state);
+        if (!this.stopped && !signal.aborted) this.onProgress(state);
         this.notifyCacheWaiters(key);
       } catch (error) {
+        if (signal.aborted || this.stopped) { this.discardMemory(key, file.fileId); return data; }
         this.storageWriteFailed(file, record, error);
         // Storage can fail while an in-memory copy remains viewable.
         this.notifyCacheWaiters(key);
       }
       finally { this.pendingWrites.delete(saving); }
       return data;
-    }).finally(() => this.inFlight.delete(key));
+    }).finally(() => { if (this.inFlight.get(key) === promise) this.inFlight.delete(key); });
     this.inFlight.set(key, promise);
     return promise;
   }
@@ -610,26 +636,13 @@ export class RoomPdfCache {
    * changing storage batching belongs to the NEXT isolated experiment.
    */
   private async chunkGroup(file: PdfManifest, indices: number[]): Promise<void> {
+    const signal = this.attempt(file.fileId).signal;
     if (indices.length < 2 || indices.length > 4) throw Error('Invalid network group');
     const begin = indices[0] * CHUNK_BYTES;
     const end = Math.min(file.size, (indices[indices.length - 1] + 1) * CHUNK_BYTES);
     if (end - begin > MAX_RANGE_BYTES) throw Error('Network range too large');
-    const networkStartedAt = performance.now();
-    const data = await new Promise<Uint8Array>((resolve, reject) => {
-      if (!this.socket.connected) return reject(Error('The sender is offline. Cached pages remain available.'));
-      this.socket.requestRange(file.fileId, begin, end, (start, bytes) => {
-        if (start !== begin || bytes.byteLength !== end - begin) {
-          reject(Error('Incomplete PDF byte range')); return;
-        }
-        if (!this.fixedTransfer && !this.stopped)
-          this.tuner(file.fileId).success(performance.now() - networkStartedAt);
-        resolve(bytes);
-      }, reason => {
-        if (!this.fixedTransfer && !this.stopped) this.tuner(file.fileId).failure();
-        reject(Error(reason));
-      });
-    });
-    if (this.stopped) throw Error('Classroom cache closed');
+    const data = await this.receive(file, begin, end, signal);
+    if (this.stopped || signal.aborted) throw Error('File transfer cancelled');
     await Promise.all(indices.map(async index => {
       const key = this.key(file.fileId, index);
       const offset = index * CHUNK_BYTES - begin;
@@ -640,20 +653,21 @@ export class RoomPdfCache {
         key, room: this.roomId, document: this.roomId + '/' + file.fileId,
         index, data: piece.slice().buffer,
       };
-      const saving = saveChunk(record);
+      const saving = saveChunk(record, signal);
       this.pendingWrites.add(saving);
       try {
         await saving;
         if (perf.enabled) perf.record('cache_write_ms', performance.now() - writingSince, { bytes: piece.byteLength });
-        if (this.stopped) return;
+        if (this.stopped || signal.aborted) { this.discardMemory(key, file.fileId); return; }
         const set = await this.indexSet(file);
         set.add(index);
         this.notePersistedByte(file.fileId);
         const state = await this.checkedProgress(file, set);
         if (state.complete) perf.elapsed('cache_complete_ms', 'cache:' + file.fileId, file.size);
-        if (!this.stopped) this.onProgress(state);
+        if (!this.stopped && !signal.aborted) this.onProgress(state);
         this.notifyCacheWaiters(key);
       } catch (error) {
+        if (signal.aborted || this.stopped) { this.discardMemory(key, file.fileId); return; }
         this.storageWriteFailed(file, record, error);
         // A persisted chunk is never acknowledged before its transaction
         // commits. In-memory bytes can still satisfy existing viewers.
@@ -767,6 +781,7 @@ export class RoomPdfCache {
   /** Queue a file as soon as it is offered, not when the viewer opens. */
   prefetch(file: PdfManifest): void {
     if (this.stopped || this.storageFailedFiles.has(file.fileId)) return;
+    if (this.attempts.get(file.fileId)?.signal.aborted) this.attempts.delete(file.fileId);
     if (!this.jobs.has(file.fileId)) {
       perf.mark('cache:' + file.fileId);
       this.firstQueuedAt.set(file.fileId, Date.now());
@@ -776,6 +791,7 @@ export class RoomPdfCache {
   }
   /** A disconnected student must not consume the background scheduler. */
   pause(fileId: string): void {
+    this.attempt(fileId).abort();
     this.cancelStorageRetry(fileId);
     this.schedulingGeneration++;
     this.wakeScheduler?.();
@@ -864,6 +880,7 @@ export class RoomPdfCache {
               continue;
             }
             if (this.stopped) return;
+            if (!this.jobs.has(fileId)) continue;
             const total = Math.ceil(file.size / CHUNK_BYTES);
             if (cached.size === total) {
               if ((this.reserved.get(fileId)?.size ?? 0) === 0) {
@@ -894,13 +911,14 @@ export class RoomPdfCache {
             // Each request settles independently. Failures back off ONLY
             // the affected student/file; successful peers continue.
             let task: Promise<void>;
+            const attempt = this.attempt(fileId);
             const transfer = indices.length === 1
               ? this.chunk(file, indices[0]).then(() => {})
               : this.chunkGroup(file, indices);
             task = transfer.then(() => {
-              this.cooldown.delete(fileId);
+              if (!attempt.signal.aborted) this.cooldown.delete(fileId);
             }).catch(error => {
-              if (this.jobs.has(fileId)) {
+              if (!attempt.signal.aborted && this.jobs.has(fileId)) {
                 this.cooldown.set(fileId, Date.now() + 4500);
                 this.recoverStalledTransfer(fileId, error);
               }
@@ -950,6 +968,8 @@ export class RoomPdfCache {
   }
   dispose(): void {
     this.stopped = true;
+    for (const attempt of this.attempts.values()) attempt.abort();
+    this.attempts.clear();
     this.schedulingGeneration++;
     this.wakeScheduler?.();
     this.wakeScheduler = null;

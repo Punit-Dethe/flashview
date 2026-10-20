@@ -353,6 +353,38 @@ isolation, content hashes, completed-file readers/viewers, campus/device proof
 and broader operational abuse controls remain later work. R2 and personal
 multi-gigabyte mode remain deferred; the 200 MiB cap is unchanged.
 
+## 20 October relay transfer worker integration (in progress)
+
+Parent PR #45 passed full CI. This slice retains relay transport, packet sizes,
+IndexedDB schema and the 200 MiB cap; it changes browser ownership. Counts for
+the original 30 findings remain unchanged until merge.
+
+| New ID | Status | Problem / correction | Evidence |
+| --- | --- | --- | --- |
+| N34 | **In progress** | File reads, socket handling, scheduling, cache writes and completion notices depended on the UI event loop. A dedicated worker now owns these on each page; authoritative metadata drives receipt before React sees it. A bounded/coalesced mailbox carries status and bounded passive cache RPCs. | A browser case blocks both UI threads for ten seconds, independently observes complete persisted bytes and relayed completion before either returns, then exports the exact original. See worker validation for complete suites and public speed comparison. |
+| N35 | **In progress** | Pause removed queued jobs without cancelling their pending range/write attempts. A source revoked during send-buffer backpressure could also finish its old send. | Per-file abort controllers cancel ranges/storage attempts, invalidate uncommitted memory and prevent obsolete results from changing a new attempt's backoff. Sends recheck authority during backpressure. A browser holds source reads, completes a healthy file, drops range-error notices, stops the held file, verifies cancellation and releases old reads without late binary responses. A unit case revokes during send backpressure. |
+| N36 | **In progress** | A new worker failure boundary must not silently lose private identity/File handles, leave RPCs pending or create a parallel UI scheduler. | Worker replacement terminates the old owner, rejects pending reads and retains initial private capability, learned generation and source handles. Two automatic attempts are bounded. Browser tests crash sender/receiver mid-file and verify one participant/file plus exact export. Bridge cases cover settlement, cancelled reads, stale-session replies, startup failure and exhaustion. Page cleanup can delete only after a failed worker is terminated. |
+| N37 | **Open** | Complete UI independence is not established in the tested Firefox build: worker timers ran during a ten-second parent-page busy loop, but native Blob reads and incoming WebSocket delivery waited for the page to yield. | In the gated native-read stress test, first source read/send and receiver delivery occurred at/after the block ended. A test-only FileReaderSync probe moved source reading/sending inside the block, but receiver delivery still waited; that probe is not production code. Chromium must finish persistence/relayed completion inside both blocks. Firefox is explicitly tested for bounded, exact recovery after the block, not silently counted as passing the stricter criterion. Mitigation continues through bounded renderer work/process separation and real-browser/device validation. |
+| N38 | **Open — user-authorized live trial** | Final public worker samples included one unexplained 15.409 s completion among ordinary 4.443/4.807 s copies. It is not established whether selection/automation, native I/O, network/retry or the new owner caused it. | All copies matched SHA-256. Three subsequent traced runs were 4.142/4.654/4.138 s with 80 completed ranges each, no range failures and short source-read/cache-write times; the slow event was not reproduced or explained. After a temporary rollback, the user explicitly authorized merge/deployment for live reproduction. Corrected Worker e3939396 is deployed at 100%; prior Worker 2635dc65 remains available for rollback. Preserve raw batches, instrument selection/ranges/storage and compare matched owners. Deployment does not resolve this finding. |
+| N39 | **Unconfirmed — rollout follow-up** | An immediate host reload across the final worker deployment timed out waiting for connection. | A fresh-room pair of reloads passed; a repeat legacy-room upgrade after five seconds also preserved cache identity, exact originals and old-phone interoperability. The first failure had insufficient diagnostics to establish a cause; do not label it a fixed session bug or proven asset propagation issue. |
+| N40 | **Open — deployment ownership** | A later untagged deployment (863caf70, 20 October 15:26 UTC) replaced the explicitly promoted worker during repository merges. Public creation returned legacy session fields and HTTP End returned 404, invalidating the subsequent benchmark cleanup. | The preceding three creation/private-resume rounds and two host reloads passed on the promoted version. The later deployment is recorded in Cloudflare history; its publishing source is unconfirmed. Reconcile the final source, verify active assets and controls after deployment, and identify any competing publisher. Do not treat a successful deployment command or the interrupted benchmark as a final release pass. |
+
+Final Stop review also caught connection gating before local worker retirement.
+The rollout was temporarily reverted while Stop was made independent of current
+socket status, retained across worker replacement and replayed after reconnect.
+The offline Stop regression verifies no late binary data, terminal relay state
+and healthy subsequent transfer on both backends. Final local validation passed
+116 unit/protocol tests, 35 Chromium cases per backend and 16 targeted Firefox
+cases, with N37's weaker Firefox stress criterion explicitly retained.
+
+Initial checks caught React callback replacement delaying displayed completion;
+the listener is now bound from the stable presentation instance. Page-only fault
+hooks also had to move into the actual worker. Failed attempts are not counted
+as passes. See [worker validation](./relay-worker-validation.md) for final
+suite/release/performance results. OPFS, production content hashes, phone PDF
+preview removal, completed-only viewers and physical-device/campus proof remain
+pending. This slice does not complete the entire roadmap.
+
 ## How to keep this tracker current
 
 - Each reliability PR **must** link affected IDs and update the affected tracker rows, status counts, completed approach, regression coverage, and remaining limitations in this same PR.

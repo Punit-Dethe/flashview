@@ -1,3 +1,4 @@
+import { transferInit, transferEval, transferWait, transferWorker } from './transferHarness';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -129,7 +130,7 @@ test('room cache identity: reused code cannot inherit bytes or previews and clea
   for (let i = 0; i < original.length; i++) original[i] = (i * 37 + Math.floor(i / 65536)) % 256;
   try {
     const root = 'http://127.0.0.1:' + port;
-    await host.addInitScript(() => {
+    await transferInit(host, () => {
       const reads: string[] = [];
       (window as typeof window & { __previewKeys?: string[] }).__previewKeys = reads;
       const get = IDBObjectStore.prototype.get;
@@ -187,9 +188,9 @@ test('room cache identity: reused code cannot inherit bytes or previews and clea
     await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
     assert.equal(await cacheIdentity(host), session.cacheId);
     const previewKey = session.cacheId + '/' + fileId;
-    await host.waitForFunction(key => (window as typeof window & { __previewKeys?: string[] })
+    await transferWait(host, key => (window as typeof window & { __previewKeys?: string[] })
       .__previewKeys?.includes(key), previewKey);
-    const previewReads = await host.evaluate(() =>
+    const previewReads = await transferEval(host, () =>
       (window as typeof window & { __previewKeys?: string[] }).__previewKeys ?? []);
     assert.ok(previewReads.every(key => key === previewKey), 'Preview lookup cannot fall back to a reused code');
     const downloading = host.waitForEvent('download');
@@ -339,7 +340,7 @@ test('room lifecycle: failed cache deletion retains its handle and confirmed clo
     await seedLifecycleCache(host);
     const code = (await host.locator('.room-code').innerText()).trim();
     const cacheId = await cacheIdentity(host);
-    await host.evaluate(() => {
+    await transferEval(host, () => {
       const original = IDBObjectStore.prototype.delete;
       let fail = true;
       IDBObjectStore.prototype.delete = function (key) {
@@ -386,7 +387,7 @@ test('room lifecycle: legacy host sessions upgrade in place and confirmed cleanu
     await host.waitForFunction(() => Boolean(JSON.parse(sessionStorage.getItem('flashview-host')!).leaseToken));
     assert.equal((await host.locator('.room-code').innerText()).trim(), code);
     assert.equal(await lifecycleCacheCount(host, cacheId), 1, 'Upgrading credentials preserves existing cached bytes');
-    await host.evaluate(() => {
+    await transferEval(host, () => {
       const original = IDBObjectStore.prototype.delete;
       IDBObjectStore.prototype.delete = function (key) {
         if (this.name === 'rooms') { this.transaction.abort(); throw Error('Injected cleanup failure'); }
@@ -667,7 +668,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
   const host = await browser.newPage();
   const student = await browser.newPage();
   // Record the current WebSocket in the student's browser without adding a production debug API.
-  await student.addInitScript({ content: `
+  await transferInit(student, { content: `
     (() => {
       const Original = window.WebSocket;
       window.__flashviewSockets = [];
@@ -937,24 +938,23 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
 
     // Simulate exactly what happens when a mobile browser drops the connection.
     // No teacher reapproval or file reselection should be needed on recovery.
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
       const ws = record.__flashviewSockets?.at(-1);
       if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('Expected an open WebSocket');
       ws.close(4100, 'Simulated mobile tab background');
     });
-    await student.waitForFunction(() => {
+    await transferWait(student, () => {
       const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
       const sockets = record.__flashviewSockets ?? [];
-      return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN &&
-        document.querySelector('.student-drive') !== null &&
-        (document.querySelector('.student-file-card')?.textContent ?? '').includes('smoke.pdf');
-    }, null, { timeout: 20000 });
+      return sockets.length >= 2 && sockets.at(-1)?.readyState === WebSocket.OPEN;
+    }, undefined, 20000);
+    await student.locator('.student-drive').waitFor();
     assert.match(await student.locator('.student-file-card').first().innerText(), /smoke\.pdf/);
 
     // Drop exactly ONE student announcement while the WebSocket still reports OPEN.
     // The sender must not claim server acceptance; sync repairs the lost offer.
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       const record = window as typeof window & { __flashviewSockets?: WebSocket[] };
       const ws = record.__flashviewSockets?.at(-1);
       if (!ws) throw Error('Missing student WebSocket');
@@ -1086,7 +1086,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
   // Simulate an overloaded phone/campus relay. PDF.js may need bytes from
   // anywhere in a non-linearized PDF; delay those reads, never block them.
   // Full caching then takes many seconds, leaving time for early page render.
-  await student.addInitScript(() => {
+  await transferInit(student, () => {
     const realSlice = File.prototype.slice;
     const realArrayBuffer = Blob.prototype.arrayBuffer;
     const slowed = new WeakSet<Blob>();
@@ -1232,7 +1232,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
 
     // Release the delayed foreground request and the document's cross-ref
     // tail. The original bytes should finish caching without closing the viewer.
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       (window as typeof window & { __releaseHeldTail?: () => void }).__releaseHeldTail?.();
     });
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 45000 });
@@ -1301,7 +1301,7 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
   const browser = await browserEngine.launch({ headless: true });
   const host = await browser.newPage();
   const student = await browser.newPage();
-  await student.addInitScript(() => {
+  await transferInit(student, () => {
     // Record real native student sockets, but do not alter their behavior
     // during connection, authentication or approval.
     const Native = window.WebSocket;
@@ -1328,7 +1328,7 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
     await student.getByRole('button', { name: /Join room/ }).click();
     await host.locator('.approval').getByRole('button', { name: 'Allow' }).click();
     await student.locator('.student-drive').waitFor();
-    const pressureApplied = await student.evaluate(() => {
+    const pressureApplied = await transferEval(student, () => {
       const w = window as typeof window & {
         __testSocket?: () => WebSocket | undefined;
         __testSocketReads?: () => number;
@@ -1363,7 +1363,7 @@ test('Stage 1: a temporarily full student send buffer waits and drains without r
       (window as typeof window & {
         __flashviewPerf?: { snapshot: () => { summary: Array<{ metric: string; count: number }> } };
       }).__flashviewPerf?.snapshot().summary ?? []);
-    const forcedReads = await student.evaluate(() =>
+    const forcedReads = await transferEval(student, () =>
       (window as typeof window & { __testSocketReads?: () => number }).__testSocketReads?.() ?? 0);
     assert.ok(forcedReads > 1, 'The real sender socket must read the simulated backlog');
     assert.ok(samples.some(s => s.metric === 'sender_backpressure_ms' && s.count > 0),
@@ -1383,7 +1383,7 @@ test('mobile progress recovers missed events from the relay manifest and pill is
   const student = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const origin = 'http://127.0.0.1:' + port;
   try {
-    await student.addInitScript(() => {
+    await transferInit(student, () => {
       const Original = window.WebSocket;
       const scoped = window as typeof window & { __flashviewSockets?: WebSocket[] };
       scoped.__flashviewSockets = [];
@@ -1412,7 +1412,7 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     // Deliberately lose BOTH forms of progress delivery. The teacher must
     // still finish caching the exact original PDFs, and a subsequent sync
     // must recover the real counts without depending on host tab timers.
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       const scoped = window as typeof window & {
         __flashviewSockets?: WebSocket[]; __dropManifest?: boolean;
       };
@@ -1456,7 +1456,7 @@ test('mobile progress recovers missed events from the relay manifest and pill is
       'A dropped final acknowledgement must not display false completion');
     await student.locator('.student-status-pill.is-uploading').waitFor();
 
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       const scoped = window as typeof window & {
         __flashviewSockets?: WebSocket[]; __dropManifest?: boolean;
       };
@@ -1472,7 +1472,7 @@ test('mobile progress recovers missed events from the relay manifest and pill is
     // Verify the dock from explicit connection-state notifications. Real
     // reconnect is exercised by the other browser tests; WebSocket close
     // handshakes in the local Cloudflare emulator are not deterministic.
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       const sockets = (window as typeof window & { __flashviewSockets?: WebSocket[] }).__flashviewSockets;
       const ws = sockets?.at(-1);
       if (!ws?.onmessage) throw Error('Expected active student socket');
@@ -1492,7 +1492,7 @@ test('mobile progress recovers missed events from the relay manifest and pill is
       .waitFor({ timeout: 6000 });
     await host.locator('.document-row').filter({ hasText: 'stale-host-status.bin' })
       .locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 10000 });
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       const sockets = (window as typeof window & { __flashviewSockets?: WebSocket[] }).__flashviewSockets;
       const ws = sockets?.at(-1);
       if (!ws?.onmessage) throw Error('Expected active student socket');
@@ -1540,7 +1540,7 @@ test('room engine: stale snapshots, pending approvals and foreign closure cannot
     };
   }`;
   try {
-    await host.addInitScript(instrument); await phone.addInitScript(instrument);
+    await transferInit(host, instrument); await transferInit(phone, instrument);
     const root = 'http://127.0.0.1:' + port;
     await host.goto(root); await host.getByLabel('Require approval').check();
     await host.getByRole('button', { name: /Create a room/ }).click();
@@ -1553,15 +1553,17 @@ test('room engine: stale snapshots, pending approvals and foreign closure cannot
     await phone.locator('input[type=file]').setInputFiles({ name: 'engine-protected.bin', mimeType: 'application/octet-stream', buffer: original });
     await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
     await phone.locator('.student-status-pill.is-done').waitFor();
-    await phone.evaluate(`{
+    await transferEval(phone, `{
       if (!window.__oldPending) throw Error('Pending snapshot not captured');
       window.__engineSockets.at(-1).dispatchEvent(new MessageEvent('message', { data: window.__oldPending }));
     }`);
     await host.evaluate(`{
-      if (!window.__oldRoom) throw Error('Room snapshot not captured');
       window.__rowVanished = false;
       new MutationObserver(() => { if (!document.querySelector('.document-row')) window.__rowVanished = true; })
         .observe(document.querySelector('.premium-app'), { childList: true, subtree: true });
+    }`);
+    await transferEval(host, `{
+      if (!window.__oldRoom) throw Error('Room snapshot not captured');
       const socket = window.__engineSockets.at(-1);
       socket.dispatchEvent(new MessageEvent('message', { data: window.__oldRoom }));
       const foreign = { ...JSON.parse(window.__oldRoom), roomGeneration: 'foreign-generation', roomRevision: 999999 };
@@ -1581,6 +1583,250 @@ test('room engine: stale snapshots, pending approvals and foreign closure cannot
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }
+});
+
+test('transfer worker: UI stalls preserve exact originals; Chromium receipt remains independent', { timeout: 45000 }, async t => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const context = await browser.newContext({ acceptDownloads: true });
+  const host = await context.newPage();
+  const phone = await browser.newPage();
+  const observer = await context.newPage();
+  const original = Buffer.alloc(12 * 1024 * 1024 + 7, 109);
+  try {
+    await transferInit(host, `{
+      const Native=WebSocket;
+      window.__completionCommands=[];
+      window.__firstBinaryAt=0;
+      window.WebSocket=class extends Native { send(data) {
+        if(typeof data==='string' && JSON.parse(data).type==='cache.progress') window.__completionCommands.push({bytes:JSON.parse(data).bytes,at:Date.now()});
+        return super.send(data);
+      } constructor(...args) {super(...args);this.addEventListener('message',event=>{if(typeof event.data!=='string'&&!window.__firstBinaryAt)window.__firstBinaryAt=Date.now()})}};
+    }`);
+    await transferInit(phone, `{
+      const read = Blob.prototype.arrayBuffer;
+      window.__allowTransfer = false; window.__waitingReads = [];
+      window.__firstReadAt=0;window.__firstSendAt=0;
+      Blob.prototype.arrayBuffer = async function() {
+        if(typeof document === 'undefined' && !window.__allowTransfer) await new Promise(r => window.__waitingReads.push(r));
+        await new Promise(r => setTimeout(r, 60)); const bytes=await read.call(this);if(!window.__firstReadAt)window.__firstReadAt=Date.now();return bytes;
+      };
+      const Native = WebSocket;
+      window.__completedFromRelay = 0;
+      window.WebSocket = class extends Native { send(data){if(typeof data!=='string'&&!window.__firstSendAt)window.__firstSendAt=Date.now();return super.send(data)} constructor(...args) { super(...args); this.addEventListener('message', event => {
+        if (typeof event.data === 'string') { const m = JSON.parse(event.data); if (m.type === 'cache.progress' && m.complete) window.__completedFromRelay = Date.now(); }
+      }); } };
+    }`);
+    const root = 'http://127.0.0.1:' + port;
+    await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const saved = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    await phone.goto(root + '/?join=' + encodeURIComponent(saved.joinToken));
+    await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    await observer.goto(root);
+    assert.equal(await observer.evaluate(() => sessionStorage.getItem('flashview-host')), null);
+    await phone.locator('input[type=file]').setInputFiles({ name: 'independent.bin', mimeType: 'application/octet-stream', buffer: original });
+    await transferWait(phone, 'window.__waitingReads.length > 0');
+    // Observe in another worker: Firefox may defer DevTools evaluations and
+    // same-context observer-page JS while a page thread is deliberately busy.
+    // Record timestamps inside each agent and inspect them after the block.
+    const observing = observer.waitForEvent('worker', { predicate: worker => worker.url().startsWith('blob:') });
+    await observer.evaluate(({ room, size }) => {
+      const code = `globalThis.__observedAt=0;
+        async function scan(){
+          const request=indexedDB.open('flashview-room-cache');
+          const db=await new Promise((resolve,reject)=>{request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)});
+          const bytes=await new Promise((resolve,reject)=>{
+            let total=0;const request=db.transaction('chunks','readonly').objectStore('chunks').index('room').openCursor(IDBKeyRange.only(${JSON.stringify(room)}));
+            request.onsuccess=()=>{const cursor=request.result;if(cursor){total+=cursor.value.data.byteLength;cursor.continue()}else resolve(total)};request.onerror=()=>reject(request.error);
+          });db.close();if(bytes===${size})globalThis.__observedAt=Date.now();else setTimeout(scan,50);
+        }scan();`;
+      new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+    }, { room: saved.cacheId, size: original.length });
+    const observerWorker = await observing;
+    await transferEval(phone, 'setTimeout(()=>{window.__releasedAt=Date.now();window.__allowTransfer=true;window.__waitingReads.splice(0).forEach(resolve=>resolve())},1000)');
+    await Promise.all([host, phone].map(page => page.evaluate(() => {
+      setTimeout(() => {
+        const start = Date.now(), until = performance.now() + 10000;
+        while (performance.now() < until) { /* Deliberately block only the page. */ }
+        (window as typeof window & { __blockInterval?: { start: number; end: number } }).__blockInterval = { start, end: Date.now() };
+      }, 100);
+    })));
+    await delay(11000);
+    const blocks = await Promise.all([host, phone].map(page => page.evaluate(() =>
+      (window as typeof window & { __blockInterval: { start: number; end: number } }).__blockInterval)));
+    let observedAt = Number(await observerWorker.evaluate('globalThis.__observedAt'));
+    let receiptAt = Number(await transferEval(phone, 'window.__completedFromRelay'));
+    const first = Math.max(...blocks.map(block => block.start)), last = Math.min(...blocks.map(block => block.end));
+    const recoveredBy = Math.max(...blocks.map(block => block.end)) + 5000;
+    if (process.env.FLASHVIEW_BROWSER === 'firefox') {
+      // The first snapshot is only about one second after the busy interval.
+      // Wait through the existing recovery deadline before judging timestamps;
+      // the independent observer may still be scanning after receipt completes.
+      while ((!observedAt || !receiptAt) && Date.now() < recoveredBy) {
+        await delay(50);
+        observedAt = Number(await observerWorker.evaluate('globalThis.__observedAt'));
+        receiptAt = Number(await transferEval(phone, 'window.__completedFromRelay'));
+      }
+    }
+    t.diagnostic(JSON.stringify({ browser:browser.version(), blocks, observedAt, receiptAt, source: await transferEval(phone, '({releasedAt:window.__releasedAt,firstReadAt:window.__firstReadAt,firstSendAt:window.__firstSendAt})'), host:await transferEval(host,'({firstBinaryAt:window.__firstBinaryAt,completionCommands:window.__completionCommands})') }));
+    if (process.env.FLASHVIEW_BROWSER === 'firefox') {
+      // N37: this Firefox build's native File/WS delivery still waits for the
+      // parent main thread. Keep an explicit bounded-recovery/integrity check;
+      // do not silently count it as passing Chromium's independence criterion.
+      assert.ok(observedAt > first && observedAt < recoveredBy, 'Firefox must preserve and finish receipt promptly after its native delivery resumes');
+      assert.ok(receiptAt > first && receiptAt < recoveredBy, 'Firefox completion must recover without reselection/reapproval');
+      t.diagnostic('N37: Firefox native delivery coupling is a known limitation; this case checks bounded recovery, not complete UI independence.');
+    } else {
+      assert.ok(observedAt > first && observedAt < last, 'All original bytes must persist while both UI threads are blocked');
+      assert.ok(receiptAt > first && receiptAt < last, 'Completion must reach the sender worker while both UI threads are blocked');
+    }
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor();
+    const exporting = host.waitForEvent('download');
+    await host.getByRole('button', { name: 'Download independent.bin' }).click();
+    assert.deepEqual(await readFile((await (await exporting).path())!), original);
+    assert.equal((await transferWorker(host)).url().includes('relayWorker-'), true);
+  } finally { await browser.close(); child.kill(); }
+});
+
+test('transfer worker: sender and receiver crashes resume the same private original from committed cache', { timeout: 60000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true }); const phone = await browser.newPage();
+  const original = Buffer.alloc(24 * 1024 * 1024 + 7, 83);
+  try {
+    await transferInit(phone, `{
+      const read = Blob.prototype.arrayBuffer;
+      Blob.prototype.arrayBuffer = async function() { await new Promise(r => setTimeout(r, 100)); return read.call(this); };
+    }`);
+    const root = 'http://127.0.0.1:' + port;
+    await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const saved = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    await phone.goto(root + '/?join=' + encodeURIComponent(saved.joinToken));
+    await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    await phone.locator('input[type=file]').setInputFiles({ name: 'restartable.bin', mimeType: 'application/octet-stream', buffer: original });
+    await host.waitForFunction(() => Number(document.querySelector('.cache-ring')?.getAttribute('aria-valuenow')) >= 5);
+    for (const owner of [phone, host]) {
+      const before = Number(await host.locator('.document-row .cache-ring').getAttribute('aria-valuenow'));
+      assert.ok(before < 100, 'Crash during active transfer');
+      const replacement = owner.waitForEvent('worker', { predicate: w => /relayWorker-/.test(w.url()) });
+      await (await transferWorker(owner)).evaluate(() => { setTimeout(() => { throw Error('Synthetic transfer worker crash'); }, 0); });
+      await replacement;
+      await host.waitForFunction(previous => Number(document.querySelector('.cache-ring')?.getAttribute('aria-valuenow')) > previous, before, { timeout: 15000 });
+    }
+    await host.locator('.document-row .cache-ring[aria-valuenow="100"]').waitFor({ timeout: 30000 });
+    await phone.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').waitFor();
+    assert.equal(await host.locator('.participant-row').count(), 1);
+    assert.equal(await host.locator('.document-row').count(), 1);
+    const exporting = host.waitForEvent('download'); await host.getByRole('button', { name: 'Download restartable.bin' }).click();
+    assert.deepEqual(await readFile((await (await exporting).path())!), original);
+    for (const page of [host, phone]) assert.equal(page.workers().filter(w => /relayWorker-/.test(w.url())).length, 1);
+  } finally { await browser.close(); child.kill(); }
+});
+
+test('transfer worker: Stop cancels held ranges and ignores late original reads while another file completes', { timeout: 40000 }, async () => {
+  const { port, child } = await runningServer(); const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true }); const phone = await browser.newPage();
+  let cancels = 0, latePackets = 0, stopped = false;
+  host.on('websocket', socket => socket.on('framesent', ({ payload }) => {
+    if (typeof payload === 'string' && JSON.parse(payload).type === 'range.cancel') cancels++;
+  }));
+  phone.on('websocket', socket => socket.on('framesent', ({ payload }) => {
+    if (stopped && typeof payload !== 'string') latePackets++;
+  }));
+  try {
+    await transferInit(host, `{
+      const Native = WebSocket;
+      window.WebSocket = class extends Native { constructor(...args) { super(...args); this.addEventListener('message', event => {
+        if (typeof event.data === 'string' && JSON.parse(event.data).type === 'range.error') event.stopImmediatePropagation();
+      }); } };
+    }`);
+    await transferInit(phone, `{
+      const slice = File.prototype.slice;
+      window.__heldOriginals = [];
+      File.prototype.slice = function(...args) {
+        const blob = slice.apply(this,args), read = blob.arrayBuffer.bind(blob);
+        if (this.name === 'held-original.bin') blob.arrayBuffer = () => new Promise(resolve => window.__heldOriginals.push(() => read().then(resolve)));
+        return blob;
+      };
+    }`);
+    const root = 'http://127.0.0.1:' + port;
+    await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const token = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken);
+    await phone.goto(root + '/?join=' + encodeURIComponent(token)); await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    const healthy = Buffer.alloc(768 * 1024 + 7, 31);
+    await phone.locator('input[type=file]').setInputFiles([
+      { name: 'held-original.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2 * 1024 * 1024, 17) },
+      { name: 'healthy-original.bin', mimeType: 'application/octet-stream', buffer: healthy },
+    ]);
+    await transferWait(phone, 'window.__heldOriginals.length > 0');
+    await host.locator('.document-row').filter({ hasText: 'healthy-original.bin' }).locator('.cache-ring[aria-valuenow="100"]').waitFor();
+    await phone.locator('.student-file-card').filter({ hasText: 'held-original.bin' }).getByRole('button', { name: 'Stop sharing' }).click();
+    await phone.getByText('Sharing stopped', { exact: true }).waitFor();
+    for (let attempt = 0; attempt < 40 && !cancels; attempt++) await delay(50);
+    assert.ok(cancels > 0, 'Stop must cancel receiver ranges immediately rather than occupying slots until timeout');
+    stopped = true;
+    await transferEval(phone, 'window.__heldOriginals.splice(0).forEach(release => release())');
+    await delay(250); assert.equal(latePackets, 0, 'Retired source reads cannot send binary responses');
+    assert.equal(await host.locator('.document-row').filter({ hasText: 'held-original.bin' }).locator('.cache-ring[aria-valuenow="100"]').count(), 0);
+    const exporting = host.waitForEvent('download'); await host.getByRole('button', { name: 'Download healthy-original.bin' }).click();
+    assert.deepEqual(await readFile((await (await exporting).path())!), healthy);
+  } finally { await browser.close(); child.kill(); }
+});
+
+test('transfer worker: offline Stop retires source bytes and is replayed after private reconnect', { timeout: 45000 }, async () => {
+  const remote = process.env.WORKER_RECOVERY_ORIGIN;
+  const { port, child } = remote ? { port: 0, child: null } : await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true }); const phone = await browser.newPage();
+  let revoked = false, stopped = false, binaryAfterStop = 0;
+  host.on('websocket', socket => socket.on('framereceived', ({ payload }) => {
+    if (typeof payload === 'string') { const message = JSON.parse(payload); if (message.type === 'file.updated' && message.file.name === 'offline-stop.bin' && message.file.revoked) revoked = true; }
+  }));
+  phone.on('websocket', socket => socket.on('framesent', ({ payload }) => { if (stopped && typeof payload !== 'string') binaryAfterStop++; }));
+  try {
+    await transferInit(phone, `{
+      const Native=WebSocket;window.__offlineSockets=[];
+      window.WebSocket=class extends Native {constructor(...args){super(...args);window.__offlineSockets.push(this)}};
+      const slice=File.prototype.slice;window.__offlineReads=[];
+      File.prototype.slice=function(...args){const blob=slice.apply(this,args),read=blob.arrayBuffer.bind(blob);
+        if(this.name==='offline-stop.bin')blob.arrayBuffer=()=>new Promise(resolve=>window.__offlineReads.push(()=>read().then(resolve)));return blob;};
+    }`);
+    const root = remote ? new URL(remote).origin : 'http://127.0.0.1:' + port;
+    await host.goto(root); await host.getByRole('button', { name: /Create a room/ }).click(); await host.locator('.connection.connected').waitFor();
+    const token = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken);
+    await phone.goto(root + '/?join=' + encodeURIComponent(token)); await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    await phone.locator('input[type=file]').setInputFiles({ name: 'offline-stop.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2 * 1024 * 1024, 47) });
+    await transferWait(phone, 'window.__offlineReads.length > 0');
+    await phone.context().setOffline(true);
+    await transferEval(phone, 'window.__offlineSockets.at(-1).close(4100,"Synthetic offline Stop")');
+    await host.waitForFunction(() => document.querySelectorAll('.participant-row').length === 0);
+    await phone.getByRole('button', { name: 'Stop sharing' }).click(); await phone.getByText('Sharing stopped', { exact: true }).waitFor();
+    stopped = true;
+    await transferEval(phone, 'window.__offlineReads.splice(0).forEach(release=>release())');
+    await phone.context().setOffline(false); await phone.evaluate(() => window.dispatchEvent(new Event('online')));
+    for (let attempt = 0; attempt < 150 && !revoked; attempt++) await delay(50);
+    assert.equal(revoked, true, 'Reconnect must replay the terminal command, not just drop the source bytes');
+    assert.equal(binaryAfterStop, 0); stopped = false;
+    await host.waitForFunction(() => document.querySelectorAll('.participant-row').length === 1);
+    const healthy = Buffer.alloc(512 * 1024 + 7, 93);
+    await phone.locator('input[type=file]').setInputFiles({ name: 'after-offline-stop.bin', mimeType: 'application/octet-stream', buffer: healthy });
+    await host.locator('.document-row').filter({ hasText: 'after-offline-stop.bin' }).locator('.cache-ring[aria-valuenow="100"]').waitFor();
+    const exporting = host.waitForEvent('download'); await host.getByRole('button', { name: 'Download after-offline-stop.bin' }).click();
+    assert.deepEqual(await readFile((await (await exporting).path())!), healthy);
+  } finally {
+    await phone.context().setOffline(false).catch(() => {});
+    try {
+      if (remote && await host.getByRole('button', { name: 'End room', exact: true }).isVisible().catch(() => false)) {
+        await host.getByRole('button', { name: 'End room', exact: true }).click();
+        await host.locator('.end-check input').check();
+        await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+        await host.locator('.welcome').waitFor();
+      }
+    } finally { await browser.close(); child?.kill(); }
+  }
 });
 
 test('network packet sizes 128/256 KiB preserve exact original PDF bytes in 64 KiB browser cache', { timeout: 110000 }, async () => {
@@ -2237,7 +2483,7 @@ test('connection guard: admission retry delay retains selected bytes and clears 
     const token = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).joinToken as string);
     // Inject one server-requested wait without spending a real minute or
     // weakening server quotas. The real relay still authenticates the retry.
-    await phone.addInitScript(`{
+    await transferInit(phone, `{
       const Native = window.WebSocket;
       window.__guardSockets = [];
       window.WebSocket = class extends Native {
@@ -2265,10 +2511,12 @@ test('connection guard: admission retry delay retains selected bytes and clears 
     await phone.locator('input[type=file]').setInputFiles({ name: 'retained-during-wait.bin', mimeType: 'application/octet-stream', buffer: original });
     const before = await phone.evaluate(() => {
       for (let i = 0; i < 20; i++) { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('online')); }
+    });
+    const guard = await transferEval(phone, () => {
       const w = window as typeof window & { __guardSockets: WebSocket[]; __guardDeadline: number };
       return { sockets: w.__guardSockets.length, remaining: w.__guardDeadline - Date.now() };
     });
-    assert.equal(before.sockets, 1); assert.ok(before.remaining > 0);
+    assert.equal(guard.sockets, 1); assert.ok(guard.remaining > 0);
     await phone.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 20000 });
     assert.equal(await phone.getByRole('alert').count(), 0, 'Successful admission clears only its own waiting notice');
     assert.equal(await host.locator('.participant-row').count(), 1);
@@ -2425,7 +2673,7 @@ test('a transient host IndexedDB write failure recovers without reuploading the 
   const root = 'http://127.0.0.1:' + port;
   const original = makePdf(2100);
   try {
-    await host.addInitScript(() => {
+    await transferInit(host, () => {
       const put = IDBObjectStore.prototype.put;
       let rejected = false;
       IDBObjectStore.prototype.put = function(value: unknown, key?: IDBValidKey) {
@@ -2450,7 +2698,7 @@ test('a transient host IndexedDB write failure recovers without reuploading the 
     });
     const row = host.locator('.document-row').filter({ hasText: 'recover-storage.pdf' });
     await row.waitFor();
-    await host.waitForFunction(() => (window as typeof window & { __testFailedWrite?: boolean }).__testFailedWrite === true);
+    await transferWait(host, () => (window as typeof window & { __testFailedWrite?: boolean }).__testFailedWrite === true);
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 40000 });
     const actualDigest = await host.evaluate(async room => {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -2492,7 +2740,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
   const original = makePdf(1600);
   try {
     // Test-only socket capture installed before the app constructs its socket.
-    await host.addInitScript(() => {
+    await transferInit(host, () => {
       const NativeWebSocket = window.WebSocket;
       window.WebSocket = class extends NativeWebSocket {
         constructor(url: string | URL, protocols?: string | string[]) {
@@ -2520,7 +2768,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
       .locator('.transfer-ring[aria-valuenow="100"]').waitFor({ timeout: 15000 });
     // Freeze ALL new phone reads after initial completion. This makes the
     // downward correction observable before the missing range can be repaired.
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       const read = Blob.prototype.arrayBuffer;
       const waiting: Array<() => void> = [];
       let released = false;
@@ -2556,7 +2804,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
     // focus event is correctly ignored and would test a different behavior.
     await host.bringToFront();
     assert.equal(await host.evaluate(() => document.visibilityState), 'visible');
-    await host.evaluate(() => {
+    await transferEval(host, () => {
       const record = window as typeof window & {
         __staleSockets?: WebSocket[];
         __staleCacheEvents?: string[];
@@ -2614,7 +2862,7 @@ test('a deleted cached chunk retracts false completion and is downloaded again',
       console.error('STALE_CACHE_DIAGNOSTICS', JSON.stringify(diagnostics));
       throw error;
     }
-    await student.evaluate(() => {
+    await transferEval(student, () => {
       (window as typeof window & { __releaseCacheRepair?: () => void }).__releaseCacheRepair?.();
     });
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 25000 });
@@ -2655,7 +2903,7 @@ test('a stalled IndexedDB index query times out and retries without losing a pho
   const root = 'http://127.0.0.1:' + port;
   const pdf = makePdf(750);
   try {
-    await host.addInitScript(() => {
+    await transferInit(host, () => {
       const getAllKeys = IDBIndex.prototype.getAllKeys;
       let blocked = false;
       IDBIndex.prototype.getAllKeys = function (...args) {
@@ -2680,7 +2928,7 @@ test('a stalled IndexedDB index query times out and retries without losing a pho
     await student.locator('input[type=file]').setInputFiles({
       name: 'index-timeout.pdf', mimeType: 'application/pdf', buffer: pdf,
     });
-    await host.waitForFunction(() =>
+    await transferWait(host, () =>
       (window as typeof window & { __blockedIndexOnce?: boolean }).__blockedIndexOnce === true);
     const row = host.locator('.document-row').filter({ hasText: 'index-timeout.pdf' });
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({ timeout: 35000 });
@@ -2725,7 +2973,7 @@ test('large binary download streams IndexedDB records without a getAll whole-fil
   const bytes=Buffer.alloc(12*1024*1024+137);
   for (let i=0; i<bytes.length; i++) bytes[i]=(i*31+(i>>13))&255;
   try {
-    await host.addInitScript(() => {
+    await transferInit(host, () => {
       const getAll=IDBIndex.prototype.getAll;
       const record=window as typeof window & {__bulkCacheReads?: number};
       record.__bulkCacheReads=0;
@@ -2797,7 +3045,7 @@ test('persistent quota triggers visible pause and explicit byte-exact recovery',
   const original=Buffer.alloc(410_123);
   for(let i=0;i<original.length;i++)original[i]=(i*13+(i>>8))&255;
   try {
-    await host.addInitScript(() => {
+    await transferInit(host, () => {
       const put=IDBObjectStore.prototype.put;
       let full=true;
       let failures=0;
@@ -2833,13 +3081,13 @@ test('persistent quota triggers visible pause and explicit byte-exact recovery',
     assert.equal(await row.locator('.cache-ring[aria-valuenow="100"]').count(),0);
     assert.equal(await host.locator('.connection.connected').count(),1,
       'Full browser quota should never restart the shared room socket');
-    const before=await host.evaluate(()=>
+    const before=await transferEval(host, ()=>
       (window as typeof window & {__quotaFailures?:()=>number}).__quotaFailures?.() ?? -1);
     await delay(1800);
-    const after=await host.evaluate(()=>
+    const after=await transferEval(host, ()=>
       (window as typeof window & {__quotaFailures?:()=>number}).__quotaFailures?.() ?? -1);
     assert.equal(after,before,'Storage retries must stop after the persistent quota threshold');
-    await host.evaluate(()=>
+    await transferEval(host, ()=>
       (window as typeof window & {__restoreStorage?:()=>void}).__restoreStorage?.());
     await banner.getByRole('button',{name:'Retry saving'}).click();
     await row.locator('.cache-ring[aria-valuenow="100"]').waitFor({timeout:45000});

@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import type { PdfManifest } from '../shared/protocol';
 import { isPdfName, isPowerPointName } from '../shared/fileTypes';
 import type { CacheProgress } from './pdf/roomCache';
-import { formatBytes } from './pdf/Viewer';
+import { formatBytes } from './formatBytes';
 import { PixelIcon, pixelKindForName } from './PixelIcon';
 
 type Props = {

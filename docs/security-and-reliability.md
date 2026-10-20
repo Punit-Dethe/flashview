@@ -1,5 +1,17 @@
 # Security, storage and reliability
 
+The worker described below is live for user-authorized reproduction of the N38
+speed outlier. The outlier remains unexplained; deployment does not resolve it.
+See [worker validation](./relay-worker-validation.md) for versions and rollback.
+
+Relay transfer now runs in one dedicated worker per sender/host page. Workers
+own socket authentication, File reads, scheduling and cache writes; original
+transfer buffers do not pass through React. This is scheduling isolation, not
+a new origin/security boundary. Renderer isolation and completed-file reader
+leases remain roadmap work. Bounded worker replacement retains capabilities
+and File handles and rebuilds committed cache. Aborted requests cannot regain
+source authority after Stop. See [worker validation](./relay-worker-validation.md).
+
 This document describes **current boundaries and recovery behavior**, not a security certification. See [Transfer protocol](./transfer-protocol.md) and the living [30-issue reliability audit](./reliability-audit.md) for evidence and unresolved work.
 
 ## Trust boundaries

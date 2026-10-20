@@ -54,7 +54,7 @@ See the [audit tracker](./reliability-audit.md) for reproduction and release sta
 | Completed local PDF/image preview | Demonstrated in the isolated pilot; production viewer migration pending |
 | Shared room engine | File and participant admission plus terminal stop/control/cache-identity rules shared; full command/revision/persistence orchestration pending |
 | Room admission budgets | 300 retained manifests / 4 GiB originals, 120 retained session identities, 30 concurrent senders; exact retries and existing capabilities preserved |
-| Connection and request guards | Bounded pending/closing sockets and authentication deadlines; durable source creation quotas on Cloudflare, shared new-identity join quotas and retry handling; release validation tracked in N24–N26 |
+| Connection and request guards | Bounded pending/closing sockets and authentication deadlines; durable source creation quotas on Cloudflare, shared new-identity join quotas and retry handling; mixed-version rollout compatibility and release validation tracked in N24–N27 |
 | Lease/end lifecycle | Deployed on the recovery line; PR #40 full CI passed: scoped renewals, generation-safe HTTP closure, retryable cleanup, legacy session upgrade and removal of fixed presenter cutoff; physical-device verification pending |
 | Local cache identity | Generation-based namespaces implemented for newly negotiated rooms; legacy rooms drain in place. Regression/release evidence tracked under N20 |
 | R2 | Deferred; prototype retained for reference |

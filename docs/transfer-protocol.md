@@ -259,6 +259,10 @@ The creation window survives room End and isolate/process restart; its alarm
 schedules cleanup, and expired windows reset on use even if cleanup was delayed.
 No new object class/binding or migration is required. Creation rejects a foreign
 Origin before charging a window. `Retry-After` is rounded up to seconds.
+During a mixed-version rollout/rollback, only an internal guard endpoint `404`
+uses legacy creation without this quota. Real denials/errors never take that
+path. Creation responses expose `X-WarpView-Creation-Guard: enforced|legacy` for
+release verification. Fully updated objects enforce the durable window.
 
 These are admission/resource bounds, not comprehensive DDoS protection. A full
 transport pool can delay a new handshake, including a reconnect; authenticated

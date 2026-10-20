@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { checkCreationPermit } from './creationPermit';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity';
 import { admitFile, admitSender } from '../shared/roomAdmission';
 import { AUTH_TIMEOUT_MS, MAX_PENDING_ROOM, MAX_ROOM_SOCKETS, CREATION_LIMIT, CREATION_WINDOW_MS, JOIN_LIMIT, JOIN_WINDOW_MS,
@@ -677,11 +678,8 @@ export default {
       // Cloudflare supplies this address at the edge; never accept a client
       // forwarded-for header. Hashing avoids storing the raw address in a name.
       const source = request.headers.get('CF-Connecting-IP') ?? 'unknown';
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
-      const key = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-      const permit = await env.ROOMS.getByName('creation:' + key)
-        .fetch(new Request('https://internal/creation-permit', { method: 'POST' }));
-      if (!permit.ok) return permit;
+      const guard = await checkCreationPermit(source, env.ROOMS);
+      if (guard.denial) return guard.denial;
       for (let attempt = 0; attempt < 12; attempt++) {
         const code = String(100_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000));
         const config: RoomConfig = {
@@ -695,12 +693,14 @@ export default {
           method: 'POST', body: JSON.stringify(config),
         }));
         if (initialized.status === 201) {
-          return json({
+          const response = json({
             roomId: code, code, joinToken: config.joinToken, hostToken: config.hostToken,
             roomGeneration: config.roomGeneration, leaseToken: config.leaseToken,
             cacheId: roomCacheIdentity(config),
             autoApprove: config.autoApprove,
           }, 201);
+          response.headers.set('X-WarpView-Creation-Guard', guard.mode);
+          return response;
         }
         if (initialized.status !== 409) return json({ error: 'Room creation unavailable' }, 503);
       }

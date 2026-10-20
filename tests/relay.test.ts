@@ -190,6 +190,8 @@ test('room creation is source-limited with Retry-After and Cloudflare quota surv
     assert.equal((await fetch(origin + '/api/rooms', { method: 'POST', headers: { Origin: 'https://unrelated.example' } })).status, 403);
     for (let i = 0; i < CREATION_LIMIT; i++) {
       const created = await fetch(origin + '/api/rooms', { method: 'POST' }); assert.equal(created.status, 201);
+      if (process.env.FLASHVIEW_BACKEND === 'cloudflare')
+        assert.equal(created.headers.get('X-WarpView-Creation-Guard'), 'enforced');
       const room = await created.json() as { roomId: string; roomGeneration: string; hostToken: string };
       assert.equal((await fetch(origin + '/api/rooms/' + room.roomId + '/end', { method: 'POST',
         headers: { Authorization: 'Bearer ' + room.hostToken, 'Content-Type': 'application/json' },

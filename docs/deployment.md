@@ -98,6 +98,17 @@ tests, not on the public source address used by real users. A frontend rollback
 predating retry-deadline handling may retry throttled joins more often; the relay
 still enforces its own window.
 
+Worker and Durable Object updates can briefly run different versions. The
+creation guard treats only the previous class's unknown-endpoint `404` as legacy
+mode, allowing the established creation path during that overlap. `429`, other
+errors and exceptions never bypass the guard. Successful creation reports
+`X-WarpView-Creation-Guard: enforced|legacy`; verify `enforced` after rollout.
+This deliberately leaves source quotas unavailable while the object still runs
+pre-guard code. Retain compatibility while rollback to that code is supported.
+See Cloudflare's [code-update guidance](https://developers.cloudflare.com/durable-objects/platform/known-issues/#code-updates).
+Check the HTML entry's JavaScript asset and a real browser after deployment;
+an upload or traffic switch alone is not release verification.
+
 Generation-cache rollout adds `cache=2` negotiation to room creation. Deploy
 frontend and relay together. Existing rooms drain in place. A rollback serving
 frontend code older than cache-identity support cannot be expected to reopen new

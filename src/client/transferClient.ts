@@ -67,6 +67,7 @@ export class RoomTransferClient {
       this.status = 'disconnected'; this.onStatus('disconnected');
       for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(Error('Transfer worker restarted; retry the operation.')); }
       this.pending.clear();
+      if (!this.identity && !this.roomId) return; // An idle warm-up can retry when a room is actually opened.
       if (this.identity && this.restarts++ < 2) {
         this.onWarning('Transfer interrupted. Reconnecting automatically; keep both pages open.');
         try {
@@ -101,6 +102,8 @@ export class RoomTransferClient {
     this.sources.clear(); this.restarts = 0; this.failed = false; this.status = 'connecting'; this.onStatus('connecting');
     this.post({ type: 'connect', identity: this.identity });
   }
+  /** Fetch/initialize before room creation; no identity or socket is opened. */
+  warm(): void { if (!this.worker && !this.failed) this.post({ type: 'room', roomId: this.roomId }); }
   send(message: Record<string, unknown>): boolean {
     if (!this.connected) return false;
     if (message.type === 'file.revoke' && typeof message.fileId === 'string') this.sources.delete(message.fileId);

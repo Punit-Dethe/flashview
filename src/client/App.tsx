@@ -152,6 +152,7 @@ export function App() {
   useEffect(() => {
     // Abandoned rooms expire automatically; delete their old browser-stored PDFs
     // on the next visit even if no new room is created.
+    socket.warm();
     void cleanExpiredRoomCaches(initialSession ? hostCacheIdentity(initialSession) : undefined);
   }, []);
 

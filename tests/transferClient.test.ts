@@ -48,6 +48,15 @@ test('worker bridge resolves results once, cancels passive reads and rejects old
   worker.events([{ type: 'status', status: 'connected' }], owner);
   assert.equal(client.connected, false, 'An old worker batch cannot authenticate another room');
 });
+test('idle worker warm-up opens no connection and reuses the owner when a room is created', t => {
+  const client = setup(t); client.warm(); client.warm();
+  assert.equal(FakeWorker.instances.length, 1);
+  assert.ok(FakeWorker.instances[0].sent.every(message => message.command.type === 'room'));
+  assert.equal(client.connected, false);
+  client.connect({ role: 'host', roomId: '123456' });
+  assert.equal(FakeWorker.instances.length, 1);
+  assert.equal(FakeWorker.instances[0].sent.at(-1).command.type, 'connect');
+});
 test('worker crash preserves the initial private capability, learned generation and selected File handles', async t => {
   const client = setup(t); client.connect({ role: 'student', code: '123456' });
   const first = FakeWorker.instances[0], initial = first.sent.find(message => message.command.type === 'connect').command.identity;

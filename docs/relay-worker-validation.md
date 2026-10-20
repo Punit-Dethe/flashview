@@ -24,7 +24,8 @@ readers still use local cache.
 
 ## Correctness evidence
 
-114 unit/protocol cases passed, including worker RPC settlement/cancellation,
+115 unit/protocol cases passed, including idle worker warm-up with no socket,
+worker RPC settlement/cancellation,
 stale session replies, capability/generation preservation, startup failure,
 retry exhaustion and source revocation during backpressure.
 
@@ -42,6 +43,10 @@ with the explicit weaker stall criterion below; Firefox `157.0`, Chromium
 `156.0.8078.4`. Normal recovery, worker crashes, Stop and exact exports passed.
 Build, TypeScript and Worker dry-run passed. A small 2 MiB synthetic baseline
 with 40 ms sender reads passed with all required timing metrics present.
+After the warm-up follow-up, targeted cache-upgrade/UI-stall/worker-crash/picker
+checks passed 4/4 on Node and 4/4 on local Cloudflare, plus 3/3 Firefox worker and
+picker checks. The warm-up only overlaps worker-script loading with room setup;
+it does not open an idle WebSocket or change the transfer worker.
 
 ### Firefox limitation (audit N37, still open)
 
@@ -74,6 +79,22 @@ in fresh rooms/desktop Chromium contexts, with other suites idle, produced
 Run `BENCH_TARGET=public npm run bench:transfer` using your shell's environment
 syntax. Timing includes selection, transfer, cache persistence and completion
 UI; independent hashing is outside the interval. After samples follow release.
+
+The initial worker release (`137820c`, Worker
+`e79a6772-de0b-436f-bfb2-f7dc8d1ed205`) measured **4237 / 4413 / 4775 ms**, median
+**4413 ms**, all SHA-256 matches. Cold room-setup samples were 2476/1468/2426 ms
+versus baseline 1452/1430/1889 ms. This exposed a separate worker-script fetch on
+the room-start path, so the page now warms the idle worker before room creation
+and overlaps loading with the HTTP request. Final warm-up samples follow below.
+
+## Public upgrade verification
+
+A browser room prepared on the previous UI-owned release retained its complete
+cached original across host reload into the first worker release. Cache identity
+was unchanged and the new host had exactly one transfer worker. The old phone
+bundle and selected File handles remained open and sent another original into
+the new receiver; independent hashes matched both originals. No room/cache
+migration or fresh selection of the first original was needed.
 
 These small desktop/network samples are regression checks, not campus/phone
 proof, 200 MiB behavior or multiple-sender fairness. Optional worker performance

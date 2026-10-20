@@ -63,7 +63,9 @@ Sender browser(s)                       Relay                         Host brows
 
 The same worker entry runs in sender mode: it owns the socket, cloned browser
 File handles and bounded asynchronous original reads. Original transfer packets
-never cross the page/worker boundary. The page forwards focus/visibility/freeze
+never cross the page/worker boundary. The page warms its idle worker before room
+creation to overlap script loading with setup; warming opens no socket.
+The page forwards focus/visibility/freeze
 signals, commands and file selection; the worker independently handles
 authentication, manifest repair, receipt scheduling and completion receipts.
 One unacknowledged UI batch and at most 1024 coalesced pending events bound the

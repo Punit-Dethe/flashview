@@ -120,4 +120,15 @@ See [Deployment](./deployment.md) for configuration and verification. Real-netwo
 
 ## Known architectural limits
 
+File/participant admission is shared between both relay adapters. A room retains
+at most 300 new file manifests / 4 GiB of declared original sizes and 120 join
+sessions, with the existing 30 concurrent sender and 10 files/person limits.
+Budgets reserve before asynchronous persistence, include offline/stopped originals
+and never double-charge exact retries. Existing records above a new budget are
+preserved. These caps bound normal room growth, not the browser's available disk.
+The 4 GiB budget leaves room for a 30-person, 50 MiB-per-person class (about
+1.5 GiB); it is an application policy, not a browser or relay platform ceiling.
+Unauthenticated sockets, distributed creation rate limits and full shared
+room-command/revision orchestration remain separate work.
+
 No HTTP-only transport fallback or end-to-end file encryption is implemented. Sender tab suspension can halt uncached byte delivery. Large PPTX/PDF renderers still require significant host memory despite lower-copy download assembly. These are **known limitations**, not resolved by the room relay. Track verification in [the audit](./reliability-audit.md).

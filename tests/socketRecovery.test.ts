@@ -79,6 +79,20 @@ test('foreground probes preserve healthy sockets and do not postpone a missing p
   assert.equal(socket.connected, true);
 });
 
+test('temporary room capacity preserves the private identity and retries admission automatically', t => {
+  const { socket, first } = setup(t);
+  first.message({ type: 'error', code: 'ROOM_ACTIVE_LIMIT', retryable: true,
+    message: 'Room temporarily unavailable: all 30 participant places are in use. Retrying…' });
+  first.onclose?.();
+  t.mock.timers.tick(1500);
+  assert.equal(SuspendedSocket.instances.length, 2);
+  const replacement = SuspendedSocket.instances[1];
+  replacement.accept();
+  assert.equal(JSON.parse(replacement.sent[0]).resumeToken, 'preserved-resume-token');
+  replacement.message({ type: 'join.resumed' });
+  assert.equal(socket.connected, true);
+});
+
 test('stalled room authentication retires its socket even when close never completes', t => {
   const { socket } = setup(t);
   socket.restartStalledTransfer();

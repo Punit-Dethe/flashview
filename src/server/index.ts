@@ -6,10 +6,11 @@ import { resolve, extname, sep } from 'node:path';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { roomExpiresAt } from '../shared/roomLifetime.js';
 import { roomCacheIdentity } from '../shared/roomCacheIdentity.js';
+import { admitFile, admitSender } from '../shared/roomAdmission.js';
 import { resumeDisconnectedFile, revokeFile } from '../shared/fileLifecycle.js';
 import { authorizeRoomControl, readRoomControlGeneration, RoomControlInputError, validControlToken } from '../shared/roomControl.js';
 import {
-  decodeRangePacket, MAX_FILE_BYTES, MAX_STUDENT_FILES, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
+  decodeRangePacket, MAX_RANGE_BYTES, RANGE_TIMEOUT_MS, ROOM_TTL_MS,
   type PdfManifest, type StudentInfo,
 } from '../shared/protocol.js';
 
@@ -28,7 +29,6 @@ const rooms = new Map<string, Room>();
 const connections = new WeakMap<WebSocket, Peer>();
 const roomCreationByIp = new Map<string, { count: number; reset: number }>();
 const MAX_ROOMS = 100;
-const MAX_STUDENTS = 30;
 const PORT = Number(process.env.PORT ?? 3000);
 const publicDir = resolve(process.cwd(), 'dist');
 
@@ -134,6 +134,14 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     }
     const previous = typeof msg.resumeToken === 'string'
       ? room.sessions.get(msg.resumeToken) : undefined;
+    const admission = admitSender(room.students.size, room.sessions.size, Boolean(previous),
+      Boolean(previous && room.students.has(previous.id)));
+    if (admission.kind === 'rejected') {
+      send(ws, { type: admission.retryable ? 'error' : 'join.rejected', code: admission.code,
+        message: admission.message, retryable: admission.retryable });
+      ws.close(1008, 'Room admission limit');
+      return;
+    }
     if (previous) {
       const oldPeer = room.students.get(previous.id);
       if (oldPeer) {
@@ -171,7 +179,6 @@ function handleHello(ws: WebSocket, msg: Record<string, unknown>): void {
     if (!room.host || room.host.ws.readyState !== WebSocket.OPEN) {
       return void sendError(ws, 'The host is offline');
     }
-    if (room.students.size >= MAX_STUDENTS) return void sendError(ws, 'Room is full');
     const approved = room.autoApprove;
     const peer: Peer = {
       ws, id: randomUUID(), role: 'student', room,
@@ -195,6 +202,7 @@ function sendError(ws: WebSocket, message: string): void {
   send(ws, { type: 'error', message });
 }
 function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
   if (msg.type === 'hello') {
     if (!connections.has(ws)) handleHello(ws, msg);
     else sendError(ws, 'Already authenticated');
@@ -266,6 +274,10 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
       const student = room.students.get(msg.studentId);
       if (student) {
         for (const [key, record] of room.sessions) if (record.id === student.id) room.sessions.delete(key);
+        // Retire authority and release the place before waiting for a close
+        // handshake. A suspended phone may not acknowledge closure promptly.
+        connections.delete(student.ws);
+        removeStudent(student);
         send(student.ws, { type: 'join.rejected' });
         student.ws.close(1008, 'Rejected');
       }
@@ -310,33 +322,15 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     return;
   }
   if (msg.type === 'file.offer') {
-    const fileId = msg.fileId;
-    const size = msg.size;
-    if (!validId(fileId) || !Number.isSafeInteger(size) ||
-        Number(size) <= 0 || Number(size) > MAX_FILE_BYTES ||
-        (!room.files.has(fileId) && [...room.files.values()].filter(f => f.ownerId === peer.id).length >= MAX_STUDENT_FILES)) {
-      return void sendError(ws, 'Invalid file size or room file limit reached');
-    }
-    const name = acceptableText(msg.name, 130);
-    if (!name || name === '.' || name === '..') return void sendError(ws, 'File name required');
-    const existing = room.files.get(fileId);
-    if (existing) {
-      if (existing.status === 'pending' && peer.approved) {
-        existing.status = 'approved';
-        notifyHost(room, { type: 'file.updated', file: existing });
-      }
-      if (existing.ownerId !== peer.id || existing.size !== Number(size) || existing.name !== name) {
-        return void sendError(ws, 'Conflicting document ID');
-      }
-      return void send(ws, { type: 'file.state', file: existing });
-    }
-    const file: PdfManifest = {
-      fileId, name, size: Number(size), ownerId: peer.id, ownerName: peer.name, status: 'approved',
-    };
-    room.files.set(fileId, file);
-    notifyHost(room, { type: 'file.announced', file });
-    send(ws, { type: 'file.approved', fileId });
-    send(ws, { type: 'file.state', file });
+    const result = admitFile(room.files, peer, msg);
+    if (result.kind === 'rejected') return void send(ws, {
+      type: 'file.rejected', fileId: msg.fileId, code: result.code, message: result.message,
+    });
+    if (result.kind === 'created') {
+      notifyHost(room, { type: 'file.announced', file: result.file });
+      send(ws, { type: 'file.approved', fileId: result.file.fileId });
+    } else if (result.kind === 'updated') notifyHost(room, { type: 'file.updated', file: result.file });
+    send(ws, { type: 'file.state', file: result.file });
   } else if (msg.type === 'range.error' && typeof msg.requestId === 'string') {
     const pending = room.outstanding.get(msg.requestId);
     if (pending?.senderId === peer.id) {

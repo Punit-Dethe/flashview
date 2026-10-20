@@ -2155,6 +2155,100 @@ test('host handover never sends a stale offline event; new host still receives t
   }
 });
 
+test('room admission: capacity denial stops replay, releases local slots and preserves cached originals', { timeout: 70000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const host = await browser.newPage({ acceptDownloads: true });
+  const phone = await browser.newPage();
+  const offered: string[] = [];
+  let manifests = 0;
+  phone.on('websocket', ws => {
+    ws.on('framesent', ({ payload }) => {
+      if (typeof payload !== 'string') return;
+      const m = JSON.parse(payload); if (m.type === 'file.offer') offered.push(m.name);
+    });
+    ws.on('framereceived', ({ payload }) => {
+      if (typeof payload === 'string' && JSON.parse(payload).type === 'file.manifest') manifests++;
+    });
+  });
+  try {
+    const root = 'http://127.0.0.1:' + port;
+    await host.goto(root);
+    await host.getByRole('button', { name: /Create a room/ }).click();
+    await host.locator('.connection.connected').waitFor();
+    const session = await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!));
+    await phone.goto(root + '/?join=' + encodeURIComponent(session.joinToken));
+    await phone.locator('.student-add-fab:not([disabled])').waitFor();
+    const original = Buffer.alloc(4096, 73);
+    await phone.locator('input[type=file]').setInputFiles({ name: 'already-received.bin', mimeType: 'application/octet-stream', buffer: original });
+    await phone.locator('.student-file-card .transfer-ring[aria-valuenow="100"]').waitFor();
+    // Reserve metadata only, not 4 GiB of generated/network/disk data. These
+    // short-lived senders then go offline; their retained manifests still count.
+    await host.evaluate(async token => {
+      for (let sender = 0; sender < 3; sender++) {
+        const ws = new WebSocket(location.origin.replace(/^http/, 'ws') + '/ws?room=' + token.split('.')[0]);
+        let waiting: { type: string; resolve: () => void; reject: (error: Error) => void } | undefined;
+        let last = 'opening', file = -1;
+        const watchdog = setInterval(() => waiting?.reject(Error('Admission fixture stalled: sender ' + sender +
+          ', file ' + file + ', waiting ' + waiting.type + ', last ' + last)), 8000);
+        ws.addEventListener('message', event => {
+          if (typeof event.data !== 'string') return;
+          const m = JSON.parse(event.data);
+          last = m.type + ':' + (m.code ?? '');
+          if (m.type === 'error' || m.type === 'file.rejected' || m.type === 'join.rejected')
+            waiting?.reject(Error('Admission fixture refused: ' + last));
+          if (waiting && m.type === waiting.type) { const next = waiting; waiting = undefined; next.resolve(); }
+        });
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(Error('Admission fixture handshake timed out')), 8000);
+          ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+          ws.addEventListener('error', () => { clearTimeout(timer); reject(Error('Admission fixture connection failed')); }, { once: true });
+        });
+        const joined = new Promise<void>((resolve, reject) => { waiting = { type: 'join.accepted', resolve, reject }; });
+        ws.send(JSON.stringify({ type: 'hello', role: 'student', joinToken: token, name: 'Budget fixture' })); await joined;
+        for (let i = sender * 10; i < Math.min(21, (sender + 1) * 10); i++) {
+          file = i;
+          const acknowledged = new Promise<void>((resolve, reject) => { waiting = { type: 'file.state', resolve, reject }; });
+          ws.send(JSON.stringify({ type: 'file.offer', fileId: 'browser-budget-' + i, name: 'reserved-' + i + '.bin',
+            size: i < 20 ? 200 * 1024 * 1024 : 96 * 1024 * 1024 - 4096 }));
+          await acknowledged;
+        }
+        clearInterval(watchdog);
+        const closed = new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(Error('Fixture close handshake timed out for sender ' + sender)), 8000);
+          ws.addEventListener('close', () => { clearTimeout(timer); resolve(); }, { once: true });
+        });
+        ws.close(); await closed;
+      }
+    }, session.joinToken);
+    await phone.locator('input[type=file]').setInputFiles({ name: 'denied.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(64) });
+    await phone.getByRole('alert').getByText(/4 GiB file budget/).waitFor();
+    assert.equal(await phone.locator('.student-file-card').count(), 1, 'Denied file cannot leave a phantom uploading card');
+    for (let i = 0; i < 3; i++) {
+      const before = manifests;
+      await phone.evaluate(() => window.dispatchEvent(new Event('focus')));
+      for (let tries = 0; tries < 100 && manifests === before; tries++) await delay(20);
+      assert.ok(manifests > before, 'Force authoritative reconciliation after rejection');
+    }
+    assert.equal(offered.filter(name => name === 'denied.bin').length, 1, 'Capacity failures are not endlessly re-offered');
+    // Nine remaining local slots are still usable after a rejected selection.
+    await phone.locator('input[type=file]').setInputFiles(Array.from({ length: 9 }, (_, i) => ({
+      name: 'denied-batch-' + i + '.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(64),
+    })));
+    for (let tries = 0; tries < 100 && offered.filter(name => name.startsWith('denied-batch-')).length < 9; tries++) await delay(20);
+    assert.equal(offered.filter(name => name.startsWith('denied-batch-')).length, 9, 'Rejected offers release local admission slots');
+    await phone.waitForFunction(() => document.querySelectorAll('.student-file-card').length === 1);
+    const ready = host.locator('.document-row').filter({ hasText: 'already-received.bin' });
+    const downloading = host.waitForEvent('download');
+    await ready.getByRole('button', { name: 'Download already-received.bin' }).click();
+    assert.deepEqual(await readFile((await (await downloading).path())!), original);
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
+    await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await host.locator('.welcome').waitFor();
+  } finally { await browser.close(); child.kill(); }
+});
+
 test('phone and relay enforce the same ten-file room limit without phantom uploads',
   { timeout: 85000 }, async () => {
   const { port, child } = await runningServer();

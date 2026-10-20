@@ -71,6 +71,7 @@ Control messages are UTF-8 JSON over WebSocket and include `{ "v": 1, "type": ".
 | `file.offer` | Sender → relay | Announce `fileId`, `name`, `size`; relay checks limits |
 | `file.announced`, `file.updated` | Relay → host | File manifest and status updates |
 | `file.state`, `file.approved`, `file.manifest` | Relay → sender | Confirm/replay that sender's file manifests |
+| `file.rejected` | Relay → sender | Admission failed; includes `fileId`, stable `code` and readable `message`; no manifest reserved |
 | `file.sync`, `file.revoke` | Sender → relay | Reconcile or stop serving an offered file |
 | `range.request` | Host → relay → sender | Request missing half-open byte interval `[begin, end)` |
 | `range.cancel` | Host → relay | Drop a pending request |
@@ -174,6 +175,9 @@ Host completion notices are idempotent: if a receipt is lost, replaying a notice
 | File size | 1 byte–**200 MiB** per file |
 | Sender manifest cap | **10** files per sender in a room |
 | Room students | **30** concurrent students per room |
+| Retained join sessions | **120** per room; existing private resume capabilities are not evicted |
+| Retained room manifests | **300**, including completed, stopped and offline files |
+| Aggregate original sizes | **4 GiB** per room, reserved at file admission |
 | Individual range | At most **256 KiB** |
 | Outstanding relay ranges | At most **48** per room |
 | Range timeout | **20 s** on relay; client request timeout also bounded |
@@ -181,6 +185,35 @@ Host completion notices are idempotent: if a receipt is lost, replaying a notice
 | WebSocket access | File bytes require WSS; HTTP lease/end controls do not provide a file-transfer fallback |
 
 IDs, file lengths and sender identity must be checked on **both relay implementations**. The sender never chooses a different file owner just by writing a `fileId`. The relay does not execute uploaded bytes or reveal one student's file list to another.
+
+Both adapters use [shared admission transitions](../src/shared/roomAdmission.ts).
+Ownership and immutable metadata are checked before any replay can promote a
+legacy pending file. New manifests reserve their full length synchronously,
+before Cloudflare persistence yields. Exact replays do not reserve again and
+remain valid at capacity, including for stopped files; replay never reverses a
+terminal stop. Offline/completed/stopped records remain charged because the host
+may still hold their original bytes. End room releases the room budget.
+
+Admission denials return `file.rejected` with `code` and `message`. The current
+sender stops re-offering that selection, releases its local selection slot and
+shows the reason. Already-admitted files continue. Previously admitted rooms
+above a new budget retain their data and exact replays; new admissions are
+refused, without evicting or deleting originals. These application budgets do
+not promise that a device has 4 GiB available; browser quota handling still applies.
+
+New participants rejected by capacity receive `join.rejected` with a reason.
+A known sender replacing its current socket keeps its place even at capacity.
+A known but disconnected sender returning when all places are taken receives
+`error` with `code: ROOM_ACTIVE_LIMIT, retryable: true`, followed by closure.
+The client retains its private resume token and selected Files and retries with
+bounded backoff. The 120-session cap affects new identities, not reconnects.
+
+Host rejection retires sender authority and cancels outstanding ranges before
+waiting for closure or persistence. Cloudflare also clears the serialized socket
+attachment; late commands and original bytes are ignored. Cloudflare explicitly
+replies to received close events, including in local emulation. See Cloudflare's
+[close-handler contract](https://developers.cloudflare.com/durable-objects/api/base/#websocketclose):
+the call is safe when the runtime already completed the handshake.
 
 ## Changing the protocol
 

@@ -222,6 +222,15 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   box-shadow:0 0 0 4px rgba(14,15,20,.1); }
 .premium-app .reference-join-form .reference-pill { width:100%; }
 
+/* A roomier desktop composition; phone and tablet dimensions stay unchanged. */
+@media(min-width:941px) {
+  .premium-app .reference-hero { padding-top:190px; }
+  .premium-app .reference-actions { width:min(960px,100%); }
+  .premium-app .reference-pane { padding:32px 32px 30px; }
+  .premium-app .reference-pane h2.reference-serif { font-size:40px; }
+  .premium-app .reference-pane>p { font-size:16px; }
+}
+
 /* Below-the-fold explanation, trust band and footer. */
 .premium-app .reference-section { max-width:1080px; margin:0 auto; padding:90px 22px 0; }
 .premium-app .reference-section h2.reference-serif { margin:0 0 36px; max-width:14em;

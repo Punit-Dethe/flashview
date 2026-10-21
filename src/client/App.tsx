@@ -1184,6 +1184,7 @@ export function App() {
                   </div>
                   <div className="invite-content">
                     <div className="invite-code">
+                      <div className="room-code-label">Use this code to join</div>
                       <div className="room-code" aria-label={'Room code '+hostSession.code}>{hostSession.code}</div>
                     </div>
                     <div className="invite-actions">

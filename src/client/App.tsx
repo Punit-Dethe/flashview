@@ -930,12 +930,12 @@ export function App() {
     await completeEnd(hostSessionRef.current);
   }
 
-  async function copyInvite(): Promise<void> {
-    if (!joinLink) return;
+  async function copyRoomCode(): Promise<void> {
+    if (!hostSession) return;
     try {
-      await navigator.clipboard.writeText(joinLink);
+      await navigator.clipboard.writeText(hostSession.code);
       setCopied(true);
-    } catch { setError('Could not copy invitation. Check your clipboard permissions.'); }
+    } catch { setError('Could not copy room code. Check your clipboard permissions.'); }
   }
 
   function returnHome(): void {
@@ -1179,17 +1179,16 @@ export function App() {
                 <section className="room-card premium-invite" aria-label="Live room QR code">
                   <div className="qr-side">
                     <div className="qr-plate">
-                      <QRCodeSVG value={joinLink} size={320} marginSize={4} bgColor="#ffffff" fgColor="#0e0f14"/>
+                      <QRCodeSVG value={joinLink} size={440} marginSize={1} bgColor="#ffffff" fgColor="#0e0f14"/>
                     </div>
                   </div>
                   <div className="invite-content">
                     <div className="invite-code">
-                    <div className="room-code-label">Or enter this code on WarpView</div>
-                    <div className="room-code">{hostSession.code}</div>
+                      <div className="room-code" aria-label={'Room code '+hostSession.code}>{hostSession.code}</div>
                     </div>
                     <div className="invite-actions">
                       <button type="button" className="outline-button reference-pill"
-                        onClick={()=>void copyInvite()}>{copied?'Link copied':'Copy link'}</button>
+                        onClick={()=>void copyRoomCode()}>{copied?'Code copied':'Copy code'}</button>
                       <button type="button" className="outline-button reference-pill end-room-button"
                         onClick={()=>setEndConfirm(true)}>End room</button>
                     </div>

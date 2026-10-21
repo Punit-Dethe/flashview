@@ -814,10 +814,10 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
       'Reference v8 list toggle should switch the real file queue');
     await first.getByRole('button', { name: 'Grid view' }).click();
     assert.equal(await first.locator('.document-grid.is-list').count(), 0);
-    const copy = await first.getByRole('button', { name: /Copy link/ }).boundingBox();
+    const copy = await first.getByRole('button', { name: /Copy code/ }).boundingBox();
     const end = await first.getByRole('button', { name: /End room/ }).boundingBox();
     assert.ok(copy && end && Math.abs(copy.y - end.y) < 4,
-      'Copy link and End room should share a row');
+      'Copy code and End room should share a row');
     assert.equal(await first.getByRole('button', { name: /Join another room/ }).count(), 0,
       'Room-switch controls were deliberately removed from the host sidebar');
 
@@ -2332,6 +2332,11 @@ test('reference UI assigns one color per real participant, including two student
     await host.getByRole('button',{name:/Create a room/}).click();
     await host.locator('.connection.connected').waitFor();
     const code=(await host.locator('.room-code').innerText()).trim();
+    assert.equal(await host.locator('.room-code-label').count(),0,'Room code needs no explanatory label');
+    await host.evaluate("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{document.documentElement.dataset.copiedRoomCode=value;}}})");
+    await host.getByRole('button',{name:'Copy code',exact:true}).click();
+    assert.equal(await host.locator('html').getAttribute('data-copied-room-code'),code,
+      'Copy code copies the six digits');
     for(const page of [first,second]) {
       await page.goto(root);
       await page.locator('#code').fill(code);
@@ -2669,7 +2674,7 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
     await configure.click();
     assert.equal(await configure.getAttribute('aria-expanded'),'true');
     assert.equal(await host.locator('.qr-plate').isVisible(),true);
-    assert.equal(await host.getByRole('button',{name:'Copy link'}).isVisible(),true);
+    assert.equal(await host.getByRole('button',{name:'Copy code'}).isVisible(),true);
     assert.equal(await host.getByRole('button',{name:'End room'}).isVisible(),true);
     assert.equal(await host.getByText('Approve each person').count(),0);
     assert.equal(await host.getByLabel('Require approval').count(),0);

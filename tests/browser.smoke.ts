@@ -2592,6 +2592,7 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
   const root='http://127.0.0.1:'+port;
   try{
     await host.goto(root);
+    await host.locator('.reference-actions .join-card').waitFor();
     const order=await host.evaluate(()=>{
       const join=document.querySelector('.reference-actions .join-card')!.getBoundingClientRect();
       const create=document.querySelector('.reference-actions .host-card')!.getBoundingClientRect();

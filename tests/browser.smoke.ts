@@ -818,19 +818,23 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       buffer: makePdf(),
     });
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).waitFor();
-    // Reference v8 uses a fixed 118px preview tile, separate filename and
-    // a rounded action footer. The PDF JPEG must not resize that fixed tile.
+    // Previews have a stable ratio and a card-colored bezel. Loading a JPEG
+    // must not change the reserved preview space.
     const card = host.locator('.document-row').filter({ hasText: 'smoke.pdf' });
     const tile = await card.boundingBox();
     const swatch = await card.evaluate(element => {
       const visual=element.querySelector('.document-card-visual')!;
       return {
         height: visual.getBoundingClientRect().height,
+        ratio: getComputedStyle(visual).aspectRatio,
+        bezel: getComputedStyle(visual).marginLeft,
         background: getComputedStyle(element.querySelector('.document-thumb')!).backgroundColor,
       };
     });
     assert.ok(tile && tile.width > 170 && tile.height > 170, 'Reference gallery cards need readable dimensions');
-    assert.ok(Math.abs(swatch.height - 118) < 2, 'Reference HTML preview height is 118px');
+    assert.ok(swatch.height >= 128, 'Preview remains large enough to read');
+    assert.equal(swatch.ratio, '16 / 10');
+    assert.equal(swatch.bezel, '6px');
     assert.notEqual(swatch.background, 'rgba(0, 0, 0, 0)');
     // Rendering on the sender is independent: diagnose phone rendering
     // before checking delivery to the host, especially on Firefox.
@@ -2290,7 +2294,8 @@ test('refined file cards align owner dots, truncate long names and keep phone co
         cardRightEdge:cardRect.right,
         ownerDisplay:getComputedStyle(owner).display,
         metaWrap:getComputedStyle(line).flexWrap,
-        nameHasOverflow:name.scrollWidth>name.clientWidth,
+        nameEllipsis:getComputedStyle(name).textOverflow,
+        nameWhiteSpace:getComputedStyle(name).whiteSpace,
         dotCenter:(dotRect.top+dotRect.bottom)/2,
         nameCenter:(nameRect.top+nameRect.bottom)/2,
         sizeRightEdge:sizeRect.right,
@@ -2306,9 +2311,21 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     assert.equal(check.metaWrap,'nowrap');
     assert.ok(Math.abs(check.dotCenter-check.nameCenter)<4,
       'The color dot is centered beside the sender name, never above it');
-    assert.equal(check.nameHasOverflow,true,'Long sender names also truncate rather than wrap');
+    assert.equal(check.nameEllipsis,'ellipsis','Sender names truncate when they exceed the available width');
+    assert.equal(check.nameWhiteSpace,'nowrap','Sender names stay on one line when a wider card can fit them');
     assert.ok(check.sizeRightEdge<=check.metaRightEdge+1,
       'File size remains visible without overflowing the metadata row');
+    await host.setViewportSize({width:390,height:844});
+    const contentsFit=await card.evaluate(element=>{
+      const outer=element.getBoundingClientRect();
+      return [...element.querySelectorAll('.document-card-visual, .document-card-info, .document-card-actions button')]
+        .every(child=>{
+          const box=child.getBoundingClientRect();
+          return box.left>=outer.left&&box.right<=outer.right;
+        });
+    });
+    assert.equal(contentsFit,true,'Phone previews, text and both actions fit inside the card bezel');
+    await host.setViewportSize({width:1280,height:760});
     await host.getByRole('button',{name:'List view'}).click();
     const list=host.locator('.document-grid.is-list');
     await list.waitFor();

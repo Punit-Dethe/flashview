@@ -246,7 +246,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   overflow:hidden; display:flex; background:transparent; }
 .premium-app .reference-room .workspace-split {
   display:grid; width:100%; min-height:0; height:100%; min-width:0;
-  grid-template-columns:390px minmax(0,1fr); gap:22px; overflow:visible;
+  grid-template-columns:420px minmax(0,1fr); gap:22px; overflow:visible;
 }
 .premium-app .reference-room .workspace-left {
   display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden;
@@ -365,21 +365,23 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 @keyframes reference-pulse {70%{box-shadow:0 0 0 10px rgba(47,207,145,0)}100%{box-shadow:0 0 0 0 rgba(47,207,145,0)}}
 
 .premium-app .reference-room .workspace-right .document-list.document-grid {
-  display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,210px),1fr));
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));
   gap:14px; padding:0; margin:0; border:0; border-radius:0; background:transparent;
   overflow:visible; align-items:start; }
 .premium-app .reference-room .workspace-right .document-grid .document-card {
-  position:relative; display:flex; flex-direction:column; width:100%; min-width:0;
+  position:relative; display:flex; flex-direction:column; align-items:stretch; width:100%; min-width:0;
   height:auto; aspect-ratio:auto; min-height:0; gap:0; padding:0; margin:0;
   border:1px solid #e2e6ef; border-radius:16px; background:#fff; overflow:hidden;
   box-shadow:none; animation:reference-pop .5s; }
 .premium-app .reference-room .workspace-right .document-grid .document-card:hover {
   border-color:#c5ccdb; background:#fff; transform:none; box-shadow:none; }
 .premium-app .reference-room .document-card-visual {
-  position:relative; width:100%; flex:0 0 118px; height:118px; min-height:118px; background:#f4f5f8; }
+  position:relative; width:calc(100% - 12px); min-width:0; align-self:stretch; flex:none; height:auto; min-height:128px;
+  aspect-ratio:16/10; margin:6px 6px 0; border-radius:10px; overflow:hidden; background:#f4f5f8; }
 .premium-app .reference-room .document-thumb {
   position:absolute; inset:0; display:grid; place-items:center; background:#f4f5f8; }
-.premium-app .reference-room .document-thumb-image { object-fit:contain; }
+.premium-app .reference-room .document-thumb-image { object-fit:contain; object-position:center top; }
+.premium-app .reference-room .document-thumb-image.is-portrait { object-fit:cover; }
 .premium-app .reference-room .document-thumb-placeholder { background:transparent; display:grid; place-items:center; }
 .premium-app .reference-room .document-pdf-symbol {
   width:auto; height:auto; min-height:0; padding:0; display:grid; place-items:center;
@@ -468,8 +470,10 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   padding:10px 14px 10px 18px; gap:14px; }
 .premium-app .reference-room .workspace-right .document-grid.is-list .document-card:last-child { border-bottom:0; }
 .premium-app .reference-room .document-grid.is-list .document-card-visual {
-  flex:0 0 40px; width:40px; height:40px; min-height:40px; background:transparent; }
+  flex:0 0 40px; width:40px; height:40px; min-height:40px; margin:0;
+  aspect-ratio:1; border-radius:6px; background:transparent; }
 .premium-app .reference-room .document-grid.is-list .document-thumb { background:transparent; }
+.premium-app .reference-room .document-grid.is-list .document-thumb-image { object-fit:contain; object-position:center; }
 .premium-app .reference-room .document-grid.is-list .document-pdf-symbol svg { height:32px; }
 .premium-app .reference-room .document-grid.is-list .document-card-info {
   flex:1 1 auto; min-width:0; padding:0; background:transparent; }
@@ -738,4 +742,12 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 }
 .premium-app .reference-room .document-card-actions > .document-card-present:focus-visible {
   outline:2px solid #5160aa; outline-offset:2px;
+}
+@media(max-width:600px) {
+  .premium-app .reference-room .document-grid:not(.is-list) .document-card-actions {
+    width:calc(100% - 16px); margin:0 8px 10px;
+  }
+  .premium-app .reference-room .document-grid:not(.is-list) .document-card-download {
+    padding:0 6px;
+  }
 }

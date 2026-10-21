@@ -18,10 +18,9 @@ type Props = {
 
 const CIRCUMFERENCE = 2 * Math.PI * 16;
 
-/** Layout mirrors the reference HTML: square white card, shallow tile,
- * filename row and a full-width round action underneath. */
+/** Responsive file card with a framed preview and independent file actions. */
 export function DocumentCard({file,participantColor,previewUrl,progress,bytesPerSecond=0,onPresent,onDownload,saving=false}:Props) {
-  const [imageState,setImageState]=useState({url:'',ready:false,failed:false});
+  const [imageState,setImageState]=useState({url:'',ready:false,failed:false,portrait:false});
   const [fallbackTimeout,setFallbackTimeout]=useState(false);
   const pdf=isPdfName(file.name);
   const powerpoint=isPowerPointName(file.name);
@@ -43,10 +42,12 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
     <div className="document-card-visual">
       <div className="document-thumb" aria-hidden="true">
         {(pdf||powerpoint)&&previewUrl&&!imageFailed&&
-          <img className={'document-thumb-image'+(showingImage?' is-visible':'')}
+          <img className={'document-thumb-image'+(showingImage?' is-visible':'')+
+            (imageState.url===previewUrl&&imageState.portrait?' is-portrait':'')}
             src={previewUrl} alt="" loading="lazy" decoding="async"
-            onLoad={()=>setImageState({url:previewUrl,ready:true,failed:false})}
-            onError={()=>setImageState({url:previewUrl,ready:false,failed:true})}/>}
+            onLoad={event=>setImageState({url:previewUrl,ready:true,failed:false,
+              portrait:event.currentTarget.naturalHeight>event.currentTarget.naturalWidth})}
+            onError={()=>setImageState({url:previewUrl,ready:false,failed:true,portrait:false})}/>}
         {!showingImage&&<div className="document-thumb-placeholder">
           {showIcon?<span className="document-pdf-symbol"><PixelIcon kind={pixelKindForName(file.name)} color={participantColor}/></span>
             :<span className="document-thumb-spinner"/>}

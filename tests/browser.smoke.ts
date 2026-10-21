@@ -49,6 +49,33 @@ async function waitForPresenterPopup(host: Page): Promise<Page> {
   return page;
 }
 
+async function swipePreview(page: Page, selector: string, dx: number, dy = 0) {
+  const box = await page.locator(selector).boundingBox();
+  assert.ok(box);
+  const x = box.x + box.width / 2 - dx / 2, y = box.y + box.height / 2 - dy / 2;
+  if (process.env.FLASHVIEW_BROWSER === 'firefox') {
+    await page.evaluate(({ selector, x, y, dx, dy }) => {
+      const surface = document.querySelector(selector)!;
+      for (const [type, touches, changed] of [
+        ['touchstart', [{clientX:x,clientY:y}], []],
+        ['touchend', [], [{clientX:x+dx,clientY:y+dy}]],
+      ] as const) {
+        const event = new Event(type, { bubbles:true });
+        Object.defineProperties(event, { touches:{value:touches}, changedTouches:{value:changed} });
+        surface.dispatchEvent(event);
+      }
+    }, { selector, x, y, dx, dy });
+    return;
+  }
+  const client = await page.context().newCDPSession(page);
+  try {
+    await client.send('Input.dispatchTouchEvent', { type:'touchStart', touchPoints:[{x,y}] });
+    for (let step = 1; step <= 5; step++)
+      await client.send('Input.dispatchTouchEvent', { type:'touchMove', touchPoints:[{x:x+dx*step/5,y:y+dy*step/5}] });
+    await client.send('Input.dispatchTouchEvent', { type:'touchEnd', touchPoints:[] });
+  } finally { await client.detach(); }
+}
+
 async function assertPowerPointFits(page: Page) {
   await page.waitForFunction(() => {
     const slide = document.querySelector('.pptxv-stage')?.getBoundingClientRect();
@@ -921,6 +948,17 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       return Boolean(canvas && canvas.width >= 500 && canvas.height >= 700 &&
         canvas.dataset.renderedPage === '1' && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 20000 });
+    await presentation.locator('.presentation-transition').waitFor({state:'hidden'});
+    const initialFit = await presentation.locator('.page-shell canvas').evaluate(element => {
+      const canvas = element.getBoundingClientRect(), stage = document.querySelector('.page-stage')!;
+      return Math.abs(canvas.width - (stage.clientWidth - 24)) < 3 ||
+        Math.abs(canvas.height - (stage.clientHeight - 12)) < 3;
+    });
+    assert.equal(initialFit, true, 'The first visible PDF page is already fitted');
+    await swipePreview(presentation, '.page-stage', -160);
+    await presentation.waitForFunction(() => document.querySelector('canvas[data-rendered-page="2"]'));
+    await swipePreview(presentation, '.page-stage', 160);
+    await presentation.waitForFunction(() => document.querySelector('canvas[data-rendered-page="1"]'));
     const renderedDarkPixels = await presentation.locator('.page-shell canvas').evaluate(canvas => {
       const context = (canvas as HTMLCanvasElement).getContext('2d');
       if (!context) return 0;
@@ -2315,9 +2353,9 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     assert.equal(check.metadataVisible,false,'Cards omit uploader, color dot and file size');
     assert.equal(check.bezel,6,'The existing preview bezel stays the same width');
     assert.equal(check.previewBorder,1,'The preview has a thin visible outline');
-    assert.equal(check.cardBackground,'rgb(240, 244, 249)');
-    assert.equal(check.panelBackground,'rgb(255, 255, 255)');
-    assert.equal(check.panelBlur,'none','The gallery is solid white');
+    assert.equal(check.cardBackground,'rgb(255, 255, 255)');
+    assert.equal(check.panelBackground,'rgba(255, 255, 255, 0.62)');
+    assert.equal(check.panelBlur,'blur(14px)','The original translucent gallery is restored');
     await mkdir('test-artifacts/ui',{recursive:true});
     await host.waitForFunction(()=>[...document.querySelectorAll('.document-row')]
       .every(element=>Number(getComputedStyle(element).opacity)>.99));
@@ -2428,7 +2466,7 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
   const root='http://127.0.0.1:'+port;
   let popup:Page|null=null;
   try{
-    const pptx=await makePowerPointFixture(2);
+    const pptx=await makePowerPointFixture(3);
     await host.goto(root);
     await host.getByRole('button',{name:/Create a room/}).click();
     await host.locator('.connection.connected').waitFor();
@@ -2488,10 +2526,37 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
       'Host generates a genuine first-slide JPEG locally after the PPTX download completes');
     assert.equal(await presentButton.isEnabled(),true);
     assert.equal(await downloadButton.isEnabled(),true);
+    let releaseImport!: () => void, imported!: () => void;
+    const importGate = new Promise<void>(resolve => { releaseImport = resolve; });
+    const importRequested = new Promise<void>(resolve => { imported = resolve; });
+    await host.context().route('**/assets/PowerPointPresenter-*.js', async route => {
+      imported(); await importGate; await route.continue();
+    });
     [popup]=await Promise.all([waitForPresenterPopup(host),presentButton.click()]);
+    await importRequested;
+    const brand = await popup.locator('.presentation-transition').elementHandle();
+    assert.ok(brand);
+    assert.equal(await popup.locator('.presentation-transition').isVisible(), true);
+    assert.equal(await popup.locator('.presentation-transition-brand').innerText(), 'warpview');
+    assert.doesNotMatch(await popup.locator('body').innerText(), /Loading PowerPoint|Opening PowerPoint|Opening presentation/);
+    if (!process.env.FLASHVIEW_BACKEND)
+      await popup.screenshot({ path:'test-artifacts/ui/preview-transition.png' });
+    releaseImport();
     await popup.getByRole('spinbutton', { name: 'Slide number' }).waitFor({timeout:45000});
     await popup.waitForFunction(() => !(document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.disabled);
+    await popup.locator('.presentation-transition').waitFor({state:'hidden'});
+    assert.equal(await brand.evaluate(element => element.isConnected), true, 'One branded layer survives both loading stages');
     assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1');
+    await swipePreview(popup, '.flashview-pptx-canvas', -160);
+    await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '2');
+    await swipePreview(popup, '.flashview-pptx-canvas', 160);
+    await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '1');
+    await swipePreview(popup, '.flashview-pptx-canvas', 10, 150);
+    assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1');
+    await popup.getByRole('button', { name: 'Zoom in', exact:true }).click();
+    await swipePreview(popup, '.flashview-pptx-canvas', -160);
+    assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1', 'Zoomed dragging must not change slides');
+    await popup.getByRole('button', { name: 'Reset zoom to fit' }).click();
     assert.equal(await popup.getByRole('button',{name:'Fullscreen',exact:true}).count(),1);
     await popup.getByRole('spinbutton', { name: 'Slide number' }).fill('2');
     await popup.getByRole('spinbutton', { name: 'Slide number' }).press('Enter');

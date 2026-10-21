@@ -1,6 +1,7 @@
 import React, { lazy, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { PresentationTransition } from './PresentationTransition';
 import './styles.css';
 import './styles.refined.css';
 import './styles.immersive.css';
@@ -10,6 +11,6 @@ const Presenter = lazy(() => import('./Presenter').then(module => ({ default: mo
 
 createRoot(document.getElementById('root')!).render(
   window.location.pathname === '/present'
-    ? <Suspense fallback={<div role="status">Opening presentation…</div>}><Presenter/></Suspense>
+    ? <PresentationTransition><Suspense fallback={null}><Presenter/></Suspense></PresentationTransition>
     : <React.StrictMode><App/></React.StrictMode>,
 );

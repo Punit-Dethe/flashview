@@ -4,11 +4,13 @@ import type { PdfManifest } from '../shared/protocol';
 import { PresentationGuest } from './presentation';
 import { Viewer } from './pdf/Viewer';
 import { isPowerPointName } from '../shared/fileTypes';
+import { usePreviewReady } from './PresentationTransition';
 
 const PowerPointPresenter = lazy(() => import('./pptx/PowerPointPresenter'));
 
 /** /present is separate from the host dashboard: it never opens a host socket. */
 export function Presenter() {
+  const reveal = usePreviewReady();
   const [key] = useState(() => location.hash.slice(1));
   const [source, setSource] = useState<PresentationGuest | null>(null);
   const [file, setFile] = useState<PdfManifest | null>(null);
@@ -17,6 +19,7 @@ export function Presenter() {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const slideVisible = useRef(false);
+  useEffect(() => { if (unavailable) reveal(); }, [unavailable, reveal]);
 
   useEffect(() => {
     if (!/^[a-f0-9]{32}$/i.test(key) || typeof BroadcastChannel === 'undefined') {
@@ -58,25 +61,16 @@ export function Presenter() {
   }, [key]);
 
   const markVisible = useCallback(() => {
+    reveal();
     if (!slideVisible.current) {
       slideVisible.current = true;
       source?.report('first_slide_after_present_ms');
     }
-  }, [source]);
+  }, [source, reveal]);
   const pageReady = useCallback(() => {
     source?.firstPageRendered();
     markVisible();
   }, [source, markVisible]);
-  useEffect(() => {
-    if (!preview || !file || !source || slideVisible.current) return;
-    // Mark after the preview is painted, not merely when bytes arrive.
-    const first = requestAnimationFrame(() => {
-      const second = requestAnimationFrame(() => markVisible());
-      // A separate animation frame paints the preview between these callbacks.
-      return second;
-    });
-    return () => cancelAnimationFrame(first);
-  }, [preview, file, source, markVisible]);
   const reportTiming = useCallback((metric: 'pdf_open_ms' | 'page_render_ms',
     duration: number, page?: number) => {
     source?.report(metric, duration, page);
@@ -94,23 +88,16 @@ export function Presenter() {
       {file && source && !unavailable
         ? isPowerPointName(file.name)
           ? cached?.complete && roomId
-            ? <Suspense fallback={<div className="presentation-state" role="status"><span className="spinner"/><h1>Loading PowerPoint viewer…</h1></div>}>
-                <PowerPointPresenter file={file} roomId={roomId} close={close} onFirstSlideRendered={pageReady}/>
+            ? <Suspense fallback={null}>
+                <PowerPointPresenter file={file} roomId={roomId} close={close}
+                  onFirstSlideRendered={pageReady} onError={reveal}/>
               </Suspense>
-            : <div className="presentation-state" role="status">
-                <span className="spinner"/>
-                <h1>Finishing PowerPoint download…</h1>
-                <p>PowerPoint playback becomes available after the original file is cached.</p>
-                <button className="outline-button" onClick={close}>Close viewer</button>
-              </div>
+            : null
           : <Viewer file={file} socket={source} close={close} cached={cached} previewImage={preview} cachedRoomId={roomId} onFirstPageRendered={pageReady}
-              onTiming={reportTiming}/>
-        : <div className="presentation-state" role="status">
-          {!unavailable && <span className="spinner"/>}
-          <h1>{unavailable ? 'Presentation unavailable.' : 'Opening your presentation.'}</h1>
-          <p>{unavailable
-            ? 'Go back to your classroom dashboard and open the file again.'
-            : 'Connecting to the classroom tab. Keep that tab open while presenting.'}</p>
+              onPreviewReady={markVisible} onError={reveal} onTiming={reportTiming}/>
+        : unavailable && <div className="presentation-state" role="status">
+          <h1>Presentation unavailable.</h1>
+          <p>Go back to your classroom dashboard and open the file again.</p>
           <button className="outline-button" onClick={close}>Close viewer ↗</button>
         </div>}
     </div>

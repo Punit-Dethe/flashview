@@ -8,6 +8,7 @@ import type { PdfManifest } from '../../shared/protocol';
 import type { PdfRangeSource } from '../presentation';
 import { readCompletedPdf, type CacheProgress } from './roomCache';
 import { PresentationControls, PresentationZoomControls } from '../PresentationControls';
+import { useSwipeNavigation } from '../useSwipeNavigation';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const REQUEST_CHUNK = 65_536;
@@ -87,7 +88,8 @@ class LivePdfRanges extends PDFDataRangeTransport {
  * A viewer can be closed and reopened without re-downloading the PDF because
  * its range source is backed by the room-level IndexedDB cache.
  */
-export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage, onFirstPageRendered, onTiming }: {
+export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage, onFirstPageRendered,
+  onPreviewReady, onError, onTiming }: {
   file: PdfManifest;
   socket: PdfRangeSource;
   close: () => void;
@@ -95,12 +97,15 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   cachedRoomId?: string | null;
   previewImage?: string | null;
   onFirstPageRendered?: () => void;
+  onPreviewReady?: () => void;
+  onError?: () => void;
   onTiming?: (metric: 'pdf_open_ms' | 'page_render_ms', duration: number, page?: number) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const wrapper = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [previewSize, setPreviewSize] = useState({ url: '', width: 0, height: 0 });
   const reportedFirst = useRef(false);
   const renderSequence = useRef(0);
   const activeRender = useRef<ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | null>(null);
@@ -117,6 +122,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   const [fullscreen, setFullscreen] = useState(false);
   const [immersiveFallback, setImmersiveFallback] = useState(false);
   const [fullscreenNotice, setFullscreenNotice] = useState('');
+  useEffect(() => { if (error) onError?.(); }, [error, onError]);
   // A functioning partial viewer must remain visible when caching finishes.
   // Only fall back to the complete local file if the first page has NOT
   // rendered yet or a later page needs repair.
@@ -259,7 +265,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   }, [file.fileId, file.size, socket, cachedRoomId, loadingFullPdf, attempt, onTiming]);
 
   useEffect(() => {
-    if (!pdfDocument || !canvas.current) return;
+    if (!pdfDocument || !canvas.current || !stageSize.width || !stageSize.height) return;
     let cancelled = false;
     const generation = ++renderSequence.current;
     const pageStartedAt = performance.now();
@@ -281,10 +287,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
         const pdfPage = await pdfDocument.getPage(page);
         if (cancelled || generation !== renderSequence.current || !canvas.current) return;
         const original = pdfPage.getViewport({ scale: 1 });
-        const fit = stageSize.width > 0 && stageSize.height > 0
-          ? Math.min((stageSize.width - 24) / original.width,
-              (stageSize.height - 12) / original.height)
-          : 1;
+        const fit = Math.min((stageSize.width - 24) / original.width,
+          (stageSize.height - 12) / original.height);
         const viewport = pdfPage.getViewport({ scale: Math.max(0.1, fit) * zoom });
         const pixelRatio = Math.max(0.1, Math.min(
           window.devicePixelRatio || 1, 2,
@@ -354,6 +358,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     if (!pdfDocument || !Number.isFinite(next)) return;
     setPage(Math.min(pdfDocument.numPages, Math.max(1, Math.floor(next))));
   };
+  useSwipeNavigation(stage, Boolean(pdfDocument) && zoom <= 1,
+    () => go(page - 1), () => go(page + 1));
   useEffect(() => {
     const keyHandler = (event: KeyboardEvent) => {
       if (!pdfDocument || event.target instanceof HTMLInputElement) return;
@@ -416,18 +422,35 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     else setAttempt(value => value + 1);
   };
   const showQuickPreview = Boolean(previewImage && page === 1 && renderedPage !== 1);
+  const previewFit = previewSize.url === previewImage && previewSize.width && previewSize.height &&
+    stageSize.width && stageSize.height
+    ? Math.min((stageSize.width - 24) / previewSize.width,
+        (stageSize.height - 12) / previewSize.height) * zoom : 0;
+  useEffect(() => {
+    if (!showQuickPreview || !previewFit) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => onPreviewReady?.());
+    });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [showQuickPreview, previewFit, onPreviewReady]);
   const inFullscreen = fullscreen || immersiveFallback;
   return (
     <section ref={wrapper} className={'viewer' + (inFullscreen ? ' viewer-immersive' : '')}
       aria-label="PDF presenter">
       {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
-      <div className="page-stage" ref={stage}>
-        {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
+      <div className="page-stage" ref={stage} style={{ touchAction: zoom <= 1 ? 'pan-y pinch-zoom' : 'auto' }}>
         {(pdfDocument || showQuickPreview) && <div className="page-shell">
-          {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>}
+          {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}
+            style={{ display: showQuickPreview ? 'none' : undefined }}/>}
           {showQuickPreview && <div className="quick-preview">
             <img src={previewImage!} alt="First slide preview" data-first-page-preview="true"
-              style={{ transform: `scale(${zoom})` }}/>
+              onLoad={event => {
+                const image = event.currentTarget;
+                setPreviewSize({ url: previewImage!, width: image.naturalWidth, height: image.naturalHeight });
+              }}
+              style={{ width: previewSize.width * previewFit, height: previewSize.height * previewFit,
+                maxWidth: 'none', maxHeight: 'none', visibility: previewFit ? 'visible' : 'hidden' }}/>
             <span>First slide ready · full PDF caching in background</span>
           </div>}
           {rendering && !error && !showQuickPreview && renderedPage !== page &&

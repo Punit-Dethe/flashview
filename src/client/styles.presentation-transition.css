@@ -1,0 +1,27 @@
+.presentation-shell { position:relative; height:100dvh; background:#000; color:#fff; }
+.presentation-transition {
+  position:fixed; inset:0; z-index:2000; display:grid; place-items:center;
+  background:#000; opacity:1; visibility:visible;
+  transition:opacity 180ms cubic-bezier(.16,1,.3,1), visibility 0s;
+}
+.presentation-transition.is-revealed {
+  opacity:0; visibility:hidden; pointer-events:none;
+  transition:opacity 180ms cubic-bezier(.16,1,.3,1), visibility 0s 180ms;
+}
+.presentation-transition-brand {
+  color:#fff; font:700 clamp(48px,9vw,88px)/1 "DM Sans",sans-serif;
+  letter-spacing:-.04em; animation:preview-brand-in 150ms ease-out;
+}
+.presentation-transition-close {
+  position:absolute; right:max(22px,env(safe-area-inset-right));
+  bottom:max(22px,env(safe-area-inset-bottom)); min-height:40px;
+  padding:0 18px; border:1px solid #41434b; border-radius:999px;
+  color:#e8e9f2; background:#16181f; font:600 13px "DM Sans",sans-serif; cursor:pointer;
+}
+.presentation-transition-close:hover { background:#30333e; }
+.presentation-transition-close:focus-visible { outline:2px solid #a5a6f5; outline-offset:2px; }
+@keyframes preview-brand-in { from { opacity:0; } to { opacity:1; } }
+@media(prefers-reduced-motion:reduce) {
+  .presentation-transition, .presentation-transition.is-revealed { transition:none; }
+  .presentation-transition-brand { animation:none; }
+}

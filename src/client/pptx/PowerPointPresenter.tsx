@@ -4,6 +4,7 @@ import type { PdfManifest } from '../../shared/protocol';
 import { readCompletedFile } from '../pdf/roomCache';
 import { inspectPptx } from './inspect';
 import { PresentationControls, PresentationZoomControls } from '../PresentationControls';
+import { useSwipeNavigation } from '../useSwipeNavigation';
 
 type Engine = ReturnType<typeof import('pptx-vanilla-viewer').createPptxViewer>;
 
@@ -12,11 +13,12 @@ type Props = {
   roomId: string | null;
   close: () => void;
   onFirstSlideRendered?: () => void;
+  onError?: () => void;
 };
 
 /** Runs only in a separate /present tab. It never talks to the relay or affects
  * background transfer concurrency. A PPTX is eligible only after complete cache. */
-export default function PowerPointPresenter({ file, roomId, close, onFirstSlideRendered }: Props) {
+export default function PowerPointPresenter({ file, roomId, close, onFirstSlideRendered, onError }: Props) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Engine | null>(null);
@@ -30,6 +32,11 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
   const [fullscreen, setFullscreen] = useState(false);
   const [immersiveFallback, setImmersiveFallback] = useState(false);
   const [fullscreenNotice, setFullscreenNotice] = useState('');
+  // Own one-finger gestures before the embedded renderer, which also detects
+  // swipes. Native scrolling still pans enlarged slides; pinch remains intact.
+  useSwipeNavigation(hostRef, stage === 'ready',
+    () => { if (zoom <= 1 && slideIndex > 0) viewerRef.current?.goToSlide(slideIndex - 1); },
+    () => { if (zoom <= 1 && slideIndex < slideCount - 1) viewerRef.current?.goToSlide(slideIndex + 1); }, true);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -87,6 +94,7 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
       if (watchdog) clearTimeout(watchdog);
       setError(message);
       setStage('error');
+      onError?.();
     };
     async function start() {
       if (!roomId || !hostRef.current) {
@@ -167,13 +175,11 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
   };
 
   return <div ref={wrapperRef} className="flashview-pptx-presenter">
-    <div ref={hostRef} className="flashview-pptx-canvas" aria-label="PowerPoint slides" />
-    {stage !== 'ready' && <div className="flashview-pptx-state" role="status">
-      {stage === 'loading' && <span className="spinner" />}
-      <h1>{stage === 'loading' ? 'Opening PowerPoint…' : 'Unable to open PowerPoint'}</h1>
-      <p>{stage === 'loading'
-        ? 'Preparing the fully downloaded presentation in your browser.'
-        : error}</p>
+    <div ref={hostRef} className="flashview-pptx-canvas" aria-label="PowerPoint slides"
+      style={{ touchAction: zoom <= 1 ? 'pan-y pinch-zoom' : 'auto' }}/>
+    {stage === 'error' && <div className="flashview-pptx-state" role="alert">
+      <h1>Unable to open PowerPoint</h1>
+      <p>{error}</p>
     </div>}
     <PresentationControls page={slideIndex + 1} pageCount={stage === 'ready' ? slideCount : 0} unit="slide"
       go={page => viewerRef.current?.goToSlide(page - 1)} fullscreen={fullscreen || immersiveFallback}

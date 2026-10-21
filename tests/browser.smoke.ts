@@ -2419,6 +2419,16 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     assert.equal(await host.getByRole('heading',{name:/^Files/}).count(),1);
     assert.equal(await host.locator('.reference-room-tools button').count(),2,
       'Top-right toolbar must contain only Grid/List controls');
+    const toolbar=await host.locator('.list-heading').evaluate(el=>{
+      const title=el.querySelector('h1')!.getBoundingClientRect();
+      const tools=el.querySelector('.reference-room-tools')!.getBoundingClientRect();
+      const count=el.querySelector('sup')!.getBoundingClientRect();
+      return {divider:getComputedStyle(el).borderBottomWidth,
+        aligned:Math.abs(title.top+title.height/2-tools.top-tools.height/2)<2,
+        countAligned:Math.abs(title.top+title.height/2-count.top-count.height/2)<2};
+    });
+    assert.equal(toolbar.divider,'0px','The file toolbar has no inherited divider');
+    assert.ok(toolbar.aligned&&toolbar.countAligned,'Files, count and view controls share one center line');
     assert.equal(await host.locator('.reference-live').count(),0,
       'The relay status pill must no longer occupy the top-right toolbar');
     assert.equal(await host.locator('.sidebar-participants-heading .connection.connected').count(),1,
@@ -2580,8 +2590,69 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
   }
 });
 
+test('PowerPoint saved thumbnails work without loading the presentation renderer', {timeout:45000}, async t=>{
+  const {port,child}=await runningServer(),browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({viewport:{width:1280,height:760}}),student=await browser.newPage();
+  let popup:Page|null=null;
+  const heavyRequests:string[]=[];
+  await host.route('**/assets/PresentationBuilder-*.js',route=>{
+    heavyRequests.push(route.request().url());
+    return route.abort();
+  });
+  try{
+    await host.goto('http://127.0.0.1:'+port);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    const saved=await host.evaluate(()=>{
+      const canvas=document.createElement('canvas');canvas.width=160;canvas.height=90;
+      const context=canvas.getContext('2d')!;context.fillStyle='#1f4fe8';context.fillRect(0,0,160,90);
+      return {png:canvas.toDataURL('image/png').split(',')[1],jpeg:canvas.toDataURL('image/jpeg').split(',')[1]};
+    });
+    await student.goto('http://127.0.0.1:'+port);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    const files=await Promise.all((['png','jpeg'] as const).map(async extension=>({
+      name:'saved-'+extension+'.pptx',mimeType:'application/octet-stream',
+      buffer:await makePowerPointFixture(3,{bytes:Buffer.from(saved[extension],'base64'),extension}),
+    })));
+    const started=performance.now();
+    await student.locator('input[type=file]').setInputFiles(files);
+    for(const file of files){
+      const card=host.locator('.document-card').filter({hasText:file.name});
+      const thumb=card.locator('.document-thumb-image.is-visible');
+      await thumb.waitFor({timeout:15000});
+      const pixels=await thumb.evaluate(el=>{
+        const image=el as HTMLImageElement,canvas=document.createElement('canvas');
+        canvas.width=1;canvas.height=1;
+        const context=canvas.getContext('2d')!;context.drawImage(image,0,0,1,1);
+        return {width:image.naturalWidth,height:image.naturalHeight,color:[...context.getImageData(0,0,1,1).data]};
+      });
+      assert.equal(pixels.width,360);assert.equal(pixels.height,203);
+      assert.ok(Math.abs(pixels.color[0]-31)<5&&Math.abs(pixels.color[1]-79)<5&&Math.abs(pixels.color[2]-232)<5,
+        'The actual saved preview is decoded and re-encoded');
+      assert.equal(await card.getByRole('button',{name:'Present '+file.name}).isEnabled(),true);
+    }
+    t.diagnostic('PPTX fixtures: upload two files through relay to visible saved thumbnails '+Math.round(performance.now()-started)+' ms');
+    assert.equal(heavyRequests.length,0,'Saved previews do not fetch or mount the full PPTX renderer on the host');
+    assert.equal(await host.locator('.pptxv-stage').count(),0);
+    await host.reload();await host.locator('.connection.connected').waitFor();
+    for(const file of files)await host.locator('.document-card').filter({hasText:file.name}).locator('.document-thumb-image.is-visible').waitFor();
+    assert.equal(heavyRequests.length,0,'Room recovery reuses saved thumbnails');
+    const presentStarted=performance.now();
+    [popup]=await Promise.all([waitForPresenterPopup(host),host.getByRole('button',{name:'Present '+files[0].name}).click()]);
+    await popup.getByText('FlashView PowerPoint Test',{exact:true}).waitFor();
+    await popup.locator('.presentation-transition').waitFor({state:'hidden'});
+    t.diagnostic('PPTX fixture: cold presenter click to visible slide '+Math.round(performance.now()-presentStarted)+' ms');
+    await closePresenter(popup);
+    await host.getByRole('button',{name:'End room'}).click();
+    await host.getByRole('button',{name:/End & clear cache/}).click();
+  }finally{await popup?.close().catch(()=>{});await host.close();await student.close();await browser.close();child.kill('SIGTERM');}
+});
+
 test('complete PowerPoint uses lazy browser-only presenter with independent Download and Present actions',
-  {timeout:130000}, async()=>{
+  {timeout:130000}, async t=>{
   const {port,child}=await runningServer();
   const browser=await browserEngine.launch({headless:true});
   const host=await browser.newPage({viewport:{width:1280,height:760},acceptDownloads:true});
@@ -2639,7 +2710,9 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
       const rgb=paint.backgroundColor.match(/[0-9]+/g)?.map(Number)??[];
       return rgb.length>=3 && rgb.slice(0,3).every(value=>value>=245);
     },null,{timeout:3000});
+    const thumbnailStarted=performance.now();
     await card.locator('img.document-thumb-image.is-visible').waitFor({timeout:45000});
+    t.diagnostic('PPTX fixture: complete cache to visible thumbnail '+Math.round(performance.now()-thumbnailStarted)+' ms');
     const thumb=await card.locator('img.document-thumb-image').evaluate(el=>({
       width:(el as HTMLImageElement).naturalWidth,
       height:(el as HTMLImageElement).naturalHeight,
@@ -2670,10 +2743,12 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     assert.doesNotMatch(await popup.locator('body').innerText(), /Loading PowerPoint|Opening PowerPoint|Opening presentation/);
     if (!process.env.FLASHVIEW_BACKEND)
       await popup.screenshot({ path:'test-artifacts/ui/preview-transition.png' });
+    const presentStarted=performance.now();
     releaseImport();
     await popup.getByRole('spinbutton', { name: 'Slide number' }).waitFor({timeout:45000});
     await popup.waitForFunction(() => !(document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.disabled);
     await popup.locator('.presentation-transition').waitFor({state:'hidden'});
+    t.diagnostic('PPTX fixture: released presenter import to visible slide '+Math.round(performance.now()-presentStarted)+' ms');
     assert.equal(await brand.evaluate(element => element.isConnected), true, 'One branded layer survives both loading stages');
     assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1');
     await swipePreview(popup, '.flashview-pptx-canvas', -160);

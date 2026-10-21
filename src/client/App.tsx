@@ -16,7 +16,7 @@ import { DocumentCard } from './DocumentCard';
 import { StudentTransferCard } from './StudentTransferCard';
 import { TransferPill } from './TransferPill';
 import { summarizeTransfers } from './transferProgress';
-import { cleanExpiredRoomCaches, readCompletedBlob, readCompletedFile, type CacheProgress } from './pdf/roomCache';
+import { cleanExpiredRoomCaches, readCompletedBlob, type CacheProgress } from './pdf/roomCache';
 import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
@@ -106,12 +106,15 @@ export function App() {
   const [hostAvailable, setHostAvailable] = useState(true);
   const hostFilesRef = useRef<PdfManifest[]>([]);
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
+  const documentPreviewsRef = useRef(documentPreviews);
+  documentPreviewsRef.current = documentPreviews;
   const previewLookups = useRef(new Set<string>());
   const activeCacheId = hostSession ? hostCacheIdentity(hostSession) : '';
   const previewRoom = useRef(initialSession ? hostCacheIdentity(initialSession) : '');
   // PPTX thumbnails are host-only, complete-file-only cosmetic work.
   // Serialize idle jobs and never run alongside a background file transfer.
   const pptxThumbAttempts = useRef(new Map<string, number>());
+  const pptxThumbPending = useRef(new Set<string>());
   const pptxThumbQueue = useRef<Promise<void>>(Promise.resolve());
   const [pptxThumbnailRetryTick, triggerPptxThumbnailRetry] = useState(0);
   const thumbnailTransferBusy = useRef(false);
@@ -204,9 +207,9 @@ export function App() {
       if (!isPowerPointName(file.name) || !cacheProgress[file.fileId]?.complete ||
           documentPreviews[file.fileId]) continue;
       const key = room + '/' + file.fileId;
-      const attempt = pptxThumbAttempts.current.get(key) ?? 0;
-      if (attempt >= 2) continue;
-      pptxThumbAttempts.current.set(key, attempt + 1);
+      if (pptxThumbPending.current.has(key) || (pptxThumbAttempts.current.get(key) ?? 0) >= 2) continue;
+      pptxThumbPending.current.add(key);
+      let attempt = 0;
       pptxThumbQueue.current = pptxThumbQueue.current.catch(() => {}).then(async () => {
         // Yield both parsing and JPEG encoding until the browser has breathing
         // room. Never initiate PPTX thumbnail work from the phone.
@@ -214,16 +217,23 @@ export function App() {
           if ('requestIdleCallback' in window) window.requestIdleCallback(() => resolve(), { timeout: 4000 });
           else setTimeout(resolve, 350);
         });
-        if (previewRoom.current !== room || modeRef.current !== 'host') return;
+        if (previewRoom.current !== room || modeRef.current !== 'host' || documentPreviewsRef.current[file.fileId]) return;
         if (thumbnailTransferBusy.current) {
           // A fresh upload began while we were waiting for idle time.
-          pptxThumbAttempts.current.delete(key);
           return;
         }
-        const bytes = await readCompletedFile(room, file);
-        if (!bytes || previewRoom.current !== room) throw Error('Complete PPTX cache unavailable');
+        attempt = (pptxThumbAttempts.current.get(key) ?? 0) + 1;
+        pptxThumbAttempts.current.set(key, attempt);
+        const original = await readCompletedBlob(room, file);
+        if (!original || previewRoom.current !== room) throw Error('Complete PPTX cache unavailable');
+        if (documentPreviewsRef.current[file.fileId]) return;
+        // Reading storage can overlap a fresh upload; recheck before any parsing.
+        if (thumbnailTransferBusy.current) {
+          pptxThumbAttempts.current.set(key, attempt - 1);
+          return;
+        }
         const { makePowerPointThumbnail } = await import('./pptx/makeThumbnail');
-        const preview = await makePowerPointThumbnail(bytes);
+        const preview = await makePowerPointThumbnail(original);
         if (!preview || previewRoom.current !== room) throw Error('Thumbnail rendering returned no image');
         await presentation.savePreview(file.fileId, preview);
         if (previewRoom.current === room)
@@ -233,13 +243,13 @@ export function App() {
         // Don't permanently silence a transient browser/image decode failure.
         // Only one delayed retry; never let retries affect the transfer queue.
         console.warn('[WarpView] PPTX thumbnail attempt failed:', error);
-        if (attempt === 0 && previewRoom.current === room) {
+        if (attempt === 1 && previewRoom.current === room) {
           setTimeout(() => {
             if (previewRoom.current === room)
               triggerPptxThumbnailRetry(value => value + 1);
           }, 8_000);
         }
-      });
+      }).finally(() => pptxThumbPending.current.delete(key));
     }
   }, [activeCacheId, mode, documents, cacheProgress, documentPreviews, presentation, pptxThumbnailRetryTick]);
 

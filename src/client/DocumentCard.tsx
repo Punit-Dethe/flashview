@@ -39,6 +39,9 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
   const progressLabel=cached?'Fully cached':Math.round(percent)+'% cached'+
     (bytesPerSecond>0?' · '+formatBytes(bytesPerSecond)+'/s':'');
   return <article className="document-row document-card" data-owner-id={file.ownerId}>
+    <div className="document-card-info">
+      <h3 title={file.name}>{file.name}</h3>
+    </div>
     <div className="document-card-visual">
       <div className="document-thumb" aria-hidden="true">
         {(pdf||powerpoint)&&previewUrl&&!imageFailed&&
@@ -53,9 +56,6 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
             :<span className="document-thumb-spinner"/>}
         </div>}
       </div>
-    </div>
-    <div className="document-card-info">
-      <h3 title={file.name}>{file.name}</h3>
     </div>
     <div className={'cache-ring'+(cached?' is-complete':'')} role="progressbar"
       aria-label={'Cached progress for '+file.name}

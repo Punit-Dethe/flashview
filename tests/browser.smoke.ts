@@ -2343,6 +2343,8 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
         cardBackground:getComputedStyle(element).backgroundColor,
         panelBackground:getComputedStyle(element.closest('.workspace-right')!).backgroundColor,
         panelBlur:getComputedStyle(element.closest('.workspace-right')!).backdropFilter,
+        titleAbovePreview:titleRect.bottom<=visual.getBoundingClientRect().top,
+        actionsBelowPreview:visual.getBoundingClientRect().bottom<=element.querySelector('.document-card-actions')!.getBoundingClientRect().top,
       };
     });
     assert.equal(check.filename,longName,'Long original filename remains intact');
@@ -2356,6 +2358,7 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     assert.equal(check.cardBackground,'rgb(240, 244, 249)');
     assert.equal(check.panelBackground,'rgb(255, 255, 255)');
     assert.equal(check.panelBlur,'none','The Files section has a solid background');
+    assert.ok(check.titleAbovePreview&&check.actionsBelowPreview,'Cards show title, preview, then actions');
     await mkdir('test-artifacts/ui',{recursive:true});
     await host.waitForFunction(()=>[...document.querySelectorAll('.document-row')]
       .every(element=>Number(getComputedStyle(element).opacity)>.99));
@@ -2363,6 +2366,10 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     await host.setViewportSize({width:390,height:844});
     const contentsFit=await card.evaluate(element=>{
       const outer=element.getBoundingClientRect();
+      const title=element.querySelector('.document-card-info')!.getBoundingClientRect();
+      const preview=element.querySelector('.document-card-visual')!.getBoundingClientRect();
+      const actions=element.querySelector('.document-card-actions')!.getBoundingClientRect();
+      if(title.bottom>preview.top||preview.bottom>actions.top)return false;
       return [...element.querySelectorAll('.document-card-visual, .document-card-info, .document-card-actions button')]
         .every(child=>{
           const box=child.getBoundingClientRect();
@@ -2377,6 +2384,8 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     await list.waitFor();
     assert.equal(await list.locator('.document-file-meta,.document-file-owner,.document-file-size').count(),0,
       'List mode also omits uploader and file size');
+    assert.equal(await card.evaluate(element=>element.querySelector('.document-card-visual')!.getBoundingClientRect().right<=
+      element.querySelector('.document-card-info')!.getBoundingClientRect().left),true,'List view keeps the thumbnail before the title');
     await host.getByRole('button',{name:'End room'}).click();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   }finally{

@@ -377,7 +377,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   border-color:#c5ccdb; background:#f0f4f9; transform:none; box-shadow:none; }
 .premium-app .reference-room .document-card-visual {
   position:relative; width:calc(100% - 12px); min-width:0; align-self:stretch; flex:none; height:auto; min-height:128px;
-  aspect-ratio:16/10; margin:6px 6px 0; border:1px solid #e2e6ef;
+  aspect-ratio:16/10; margin:0 6px 12px; border:1px solid #e2e6ef;
   border-radius:10px; overflow:hidden; background:#f0f4f9; }
 .premium-app .reference-room .document-thumb {
   position:absolute; inset:0; display:grid; place-items:center; background:#f0f4f9; }
@@ -446,7 +446,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   padding:10px 14px 10px 18px; gap:14px; }
 .premium-app .reference-room .workspace-right .document-grid.is-list .document-card:last-child { border-bottom:0; }
 .premium-app .reference-room .document-grid.is-list .document-card-visual {
-  flex:0 0 40px; width:40px; height:40px; min-height:40px; margin:0;
+  order:-1; flex:0 0 40px; width:40px; height:40px; min-height:40px; margin:0;
   aspect-ratio:1; border-radius:6px; background:transparent; }
 .premium-app .reference-room .document-grid.is-list .document-thumb { background:transparent; }
 .premium-app .reference-room .document-grid.is-list .document-thumb-image { object-fit:contain; object-position:center; }

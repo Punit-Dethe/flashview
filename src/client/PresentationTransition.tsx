@@ -15,6 +15,7 @@ export function PresentationTransition({ children }: { children: ReactNode }) {
         aria-hidden={ready}>
         <div className="presentation-transition-brand" role="status" aria-label="Opening preview">
           <span aria-hidden="true">warpview</span>
+          <span className="presentation-transition-spinner" aria-hidden="true"/>
         </div>
         <button className="presentation-transition-close" type="button" tabIndex={ready ? -1 : 0}
           onClick={() => { window.close(); setTimeout(() => location.replace('/'), 0); }}>Close</button>

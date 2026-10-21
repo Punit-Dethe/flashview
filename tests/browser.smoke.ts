@@ -2547,6 +2547,12 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     assert.ok(brand);
     assert.equal(await popup.locator('.presentation-transition').isVisible(), true);
     assert.equal(await popup.locator('.presentation-transition-brand').innerText(), 'warpview');
+    assert.equal(await popup.locator('.presentation-transition-spinner').isVisible(),true);
+    assert.equal(await popup.locator('.presentation-transition-brand').evaluate(element=>{
+      const title=element.querySelector('span')!.getBoundingClientRect();
+      const spinner=element.querySelector('.presentation-transition-spinner')!.getBoundingClientRect();
+      return spinner.top>title.bottom&&getComputedStyle(element.querySelector('.presentation-transition-spinner')!).animationName!=='none';
+    }),true,'An animated loading indicator sits below WarpView');
     assert.doesNotMatch(await popup.locator('body').innerText(), /Loading PowerPoint|Opening PowerPoint|Opening presentation/);
     if (!process.env.FLASHVIEW_BACKEND)
       await popup.screenshot({ path:'test-artifacts/ui/preview-transition.png' });

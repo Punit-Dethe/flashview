@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PdfManifest } from '../../shared/protocol';
 import { readCompletedFile } from '../pdf/roomCache';
 import { inspectPptx } from './inspect';
+import { PresentationControls } from '../PresentationControls';
 
 type Engine = ReturnType<typeof import('pptx-vanilla-viewer').createPptxViewer>;
 
@@ -16,6 +17,7 @@ type Props = {
 /** Runs only in a separate /present tab. It never talks to the relay or affects
  * background transfer concurrency. A PPTX is eligible only after complete cache. */
 export default function PowerPointPresenter({ file, roomId, close, onFirstSlideRendered }: Props) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Engine | null>(null);
   const firstVisible = useRef(false);
@@ -23,6 +25,31 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
   const [error, setError] = useState('');
   const [slideIndex, setSlideIndex] = useState(0);
   const [slideCount, setSlideCount] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [immersiveFallback, setImmersiveFallback] = useState(false);
+  const [fullscreenNotice, setFullscreenNotice] = useState('');
+
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === wrapperRef.current);
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement) return;
+      if (event.key === 'Escape') { setImmersiveFallback(false); return; }
+      const viewer = viewerRef.current;
+      if (!viewer || !['ArrowRight', 'PageDown', 'ArrowLeft', 'PageUp'].includes(event.key)) return;
+      event.preventDefault();
+      // Own navigation in both windowed and fullscreen views; don't also let
+      // the renderer process the same key a second time.
+      event.stopImmediatePropagation();
+      if (['ArrowRight', 'PageDown'].includes(event.key)) viewer.next();
+      else viewer.prev();
+    };
+    document.addEventListener('fullscreenchange', sync);
+    window.addEventListener('keydown', keyboard, true);
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      window.removeEventListener('keydown', keyboard, true);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +87,7 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
         editable: false,
         showToolbar: false,
         showThumbnails: false,
+        customization: { hiddenPanels: ['titleBar', 'statusBar', 'notes'] },
         showCompatibilityToasts: false,
         fileName: file.name,
         onLoad: ({ slideCount: count }) => {
@@ -95,15 +123,25 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
     };
   }, [file.fileId, file.size, roomId]);
 
-  const next = () => viewerRef.current?.next();
-  const previous = () => viewerRef.current?.prev();
-  const fullscreen = () => {
-    const viewer = viewerRef.current;
-    if (viewer) void viewer.enterPresentation().catch(error =>
-      setError(error instanceof Error ? error.message : 'Fullscreen was blocked by the browser.'));
+  const changeFullscreen = async () => {
+    const target = wrapperRef.current;
+    if (!target) return;
+    setFullscreenNotice('');
+    if (immersiveFallback) { setImmersiveFallback(false); return; }
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (document.fullscreenEnabled && target.requestFullscreen) await target.requestFullscreen();
+      else {
+        setImmersiveFallback(true);
+        setFullscreenNotice('Browser fullscreen is unavailable here. Using the full-window view; F11 may hide desktop browser chrome.');
+      }
+    } catch {
+      setImmersiveFallback(true);
+      setFullscreenNotice('The browser blocked native fullscreen. Using the full-window view; try F11 on desktop.');
+    }
   };
 
-  return <div className="flashview-pptx-presenter">
+  return <div ref={wrapperRef} className="flashview-pptx-presenter">
     <div ref={hostRef} className="flashview-pptx-canvas" aria-label="PowerPoint slides" />
     {stage !== 'ready' && <div className="flashview-pptx-state" role="status">
       {stage === 'loading' && <span className="spinner" />}
@@ -111,15 +149,11 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
       <p>{stage === 'loading'
         ? 'Preparing the fully downloaded presentation in your browser.'
         : error}</p>
-      {stage === 'error' && <button type="button" onClick={close}>Close presentation</button>}
     </div>}
-    {stage === 'ready' && <div className="flashview-pptx-controls">
-      <span aria-live="polite">Slide {slideIndex + 1} / {slideCount}</span>
-      <button type="button" onClick={previous} disabled={slideIndex === 0} aria-label="Previous slide">←</button>
-      <button type="button" onClick={next} disabled={slideIndex >= slideCount - 1} aria-label="Next slide">→</button>
-      <button type="button" onClick={fullscreen} aria-label="Start slideshow">Fullscreen</button>
-      <button type="button" onClick={close} aria-label="Close presentation">Close</button>
-    </div>}
+    <PresentationControls page={slideIndex + 1} pageCount={stage === 'ready' ? slideCount : 0} unit="slide"
+      go={page => viewerRef.current?.goToSlide(page - 1)} fullscreen={fullscreen || immersiveFallback}
+      onFullscreen={changeFullscreen} close={close}/>
+    {fullscreenNotice && <div className="viewer-fullscreen-notice" role="status">{fullscreenNotice}</div>}
     {error && stage === 'ready' && <div className="flashview-pptx-warning" role="alert">{error}</div>}
   </div>;
 }

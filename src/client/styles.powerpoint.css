@@ -13,21 +13,9 @@
 .flashview-pptx-state h1 { font-size:25px; margin:18px 0 6px; }
 .flashview-pptx-state p { max-width:420px; color:#b6bcc9; line-height:1.6; }
 .flashview-pptx-state button { border:1px solid #8e96a5; background:transparent; color:white; border-radius:99px; padding:10px 18px; }
-.flashview-pptx-controls {
-  z-index:2; position:absolute; bottom:20px; right:20px; display:flex;
-  align-items:center; gap:8px; background:rgba(18,20,26,.9); color:#fff;
-  border:1px solid #41434b; padding:8px; border-radius:99px;
-}
-.flashview-pptx-controls span { font-size:12px; padding:0 12px; font-variant-numeric:tabular-nums; }
-.flashview-pptx-controls button { border:0; background:#34363f; color:white; border-radius:99px; min-height:37px; padding:0 12px; cursor:pointer; font-size:13px; }
-.flashview-pptx-controls button:disabled { opacity:.35; cursor:default; }
-.flashview-pptx-controls button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
 .flashview-pptx-warning {
   position:absolute; left:20px; bottom:80px; max-width:450px; padding:10px 15px;
   color:white; background:#672f35; border-radius:12px; z-index:3;
 }
-@media(max-width:600px) {
-  .flashview-pptx-controls { left:10px; right:10px; bottom:10px; justify-content:center; gap:5px; }
-  .flashview-pptx-controls button { padding:0 9px; }
-  .flashview-pptx-controls span { padding:0 5px; }
-}
+
+.flashview-pptx-presenter:fullscreen { width:100vw; height:100dvh; }

@@ -7,8 +7,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PdfManifest } from '../../shared/protocol';
 import type { PdfRangeSource } from '../presentation';
 import { readCompletedPdf, type CacheProgress } from './roomCache';
-import { fileAccentStyle } from '../fileAccent';
-import { formatBytes } from '../formatBytes';
+import { PresentationControls } from '../PresentationControls';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const REQUEST_CHUNK = 65_536;
@@ -107,7 +106,6 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   const activeRender = useRef<ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | null>(null);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
-  const [pageInput, setPageInput] = useState('1');
   const [zoom, setZoom] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -352,8 +350,6 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   }, [pdfDocument, page, zoom, pageAttempt, stageSize.width, stageSize.height,
     onFirstPageRendered, onTiming]);
 
-  useEffect(() => { setPageInput(String(page)); }, [page]);
-
   const go = (next: number) => {
     if (!pdfDocument || !Number.isFinite(next)) return;
     setPage(Math.min(pdfDocument.numPages, Math.max(1, Math.floor(next))));
@@ -421,36 +417,9 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   };
   const showQuickPreview = Boolean(previewImage && page === 1 && renderedPage !== 1);
   const inFullscreen = fullscreen || immersiveFallback;
-  const cachedLabel = cached
-    ? (cached.complete ? 'Saved for this room · direct local rendering' :
-      formatBytes(cached.bytes) + ' / ' + formatBytes(cached.size) + ' cached · streaming preview')
-    : 'Checking local cache…';
   return (
     <section ref={wrapper} className={'viewer' + (inFullscreen ? ' viewer-immersive' : '')}
-      style={fileAccentStyle(file.fileId)} aria-label="PDF presenter">
-      <header className="viewer-toolbar">
-        <div className="viewer-filename">
-          <button type="button" className="icon-button close-viewer" onClick={close}
-            aria-label="Back to documents" title="Back to classroom">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-              aria-hidden="true"><path d="m14 5-7 7 7 7"/></svg>
-          </button>
-          <span className="viewer-file-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
-              strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 3.5h7.5L19 9v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1Z"/>
-              <path d="M13 3.5V9h6M8 13h8M8 16.5h6"/>
-            </svg>
-          </span>
-          <div className="viewer-file-info">
-            <strong title={file.name}>{file.name}</strong>
-            <small title={cachedLabel}><span className={'viewer-file-status ' +
-              (cached?.complete ? 'is-complete' : 'is-loading')} aria-hidden="true"/>{cachedLabel}</small>
-          </div>
-        </div>
-
-      </header>
+      aria-label="PDF presenter">
       {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
       <div className="page-stage" ref={stage}>
         {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
@@ -467,17 +436,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
         {!loading && !pdfDocument && !showQuickPreview && <div className="page-loading">PDF is not available yet. Cached bytes are preserved.<button className="outline-button" onClick={retry}>Retry PDF ↻</button></div>}
       </div>
       {fullscreenNotice && <div className="viewer-fullscreen-notice" role="status">{fullscreenNotice}</div>}
-        <nav className="viewer-controls viewer-control-pill" aria-label="Presentation controls">
-          <button type="button" disabled={!pdfDocument || page <= 1}
-            onClick={() => go(page - 1)} aria-label="Previous page" title="Previous page (←)">‹</button>
-          <form onSubmit={event => { event.preventDefault(); go(Number(pageInput)); }}>
-            <input aria-label="Page number" type="number" min={1} max={pdfDocument?.numPages ?? 1}
-              value={pageInput} onChange={event => setPageInput(event.target.value)}/>
-            <span>/ {pdfDocument?.numPages ?? '—'}</span>
-          </form>
-          <button type="button" disabled={!pdfDocument || page >= pdfDocument.numPages}
-            onClick={() => go(page + 1)} aria-label="Next page" title="Next page (→)">›</button>
-          <span className="toolbar-divider" aria-hidden="true"/>
+      <PresentationControls page={page} pageCount={pdfDocument?.numPages ?? 0} unit="page"
+        go={go} fullscreen={inFullscreen} onFullscreen={changeFullscreen} close={close}>
           <button type="button" disabled={(!pdfDocument && !showQuickPreview) || zoom <= 0.5}
             onClick={() => setZoom(z => Math.max(.5, +(z - .25).toFixed(2)))}
             aria-label="Zoom out" title="Zoom out">−</button>
@@ -488,19 +448,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
           <button type="button" disabled={(!pdfDocument && !showQuickPreview) || zoom >= 2}
             onClick={() => setZoom(z => Math.min(2, +(z + .25).toFixed(2)))}
             aria-label="Zoom in" title="Zoom in">+</button>
-          <span className="toolbar-divider" aria-hidden="true"/>
-          <button type="button" onClick={changeFullscreen}
-            aria-label={inFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-            title={inFullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}>
-            {inFullscreen
-              ? <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg>
-              : <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg>}
-          </button>
-        </nav>
-      <footer className="viewer-footer">
-        <span className="status-dot"/> {cached?.complete ? 'PDF available offline in this room' : 'Caching PDF in background'}
-        <span>Previously received bytes are reused · Presentation tabs can be closed freely</span>
-      </footer>
+      </PresentationControls>
     </section>
   );
 }

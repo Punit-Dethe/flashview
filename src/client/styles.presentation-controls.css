@@ -1,0 +1,50 @@
+/* Both renderers use this dock, including inside native fullscreen. */
+.presentation-controls {
+  position:absolute; z-index:30;
+  right:max(22px, env(safe-area-inset-right));
+  bottom:max(22px, env(safe-area-inset-bottom));
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end;
+  gap:6px; width:max-content; max-width:calc(100% - 24px); padding:7px;
+  border:1px solid #41434b; border-radius:999px;
+  background:#16181f; color:#e8e9f2; font-size:12px;
+}
+.presentation-controls > div { display:flex; align-items:center; flex:none; gap:2px; }
+.presentation-controls button {
+  display:grid; place-items:center; flex:none; width:37px; height:37px;
+  margin:0; padding:0; border:0; border-radius:999px;
+  background:transparent; color:inherit; cursor:pointer; font:inherit;
+}
+.presentation-controls button:hover:not(:disabled) { background:#30333e; color:#fff; }
+.presentation-controls button:disabled { opacity:.35; cursor:default; }
+.presentation-controls button:focus-visible,
+.presentation-controls input:focus-visible { outline:2px solid #a5a6f5; outline-offset:1px; }
+.presentation-controls svg {
+  width:18px; height:18px; fill:none; stroke:currentColor;
+  stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;
+}
+.presentation-controls form {
+  display:flex; align-items:center; gap:3px; margin:0;
+  font-variant-numeric:tabular-nums; white-space:nowrap;
+}
+.presentation-controls input {
+  width:36px; height:33px; padding:0; margin:0; text-align:center;
+  border:1px solid #16181f; background:#16181f; color:inherit;
+  border-radius:7px; font:inherit; font-variant-numeric:tabular-nums;
+  appearance:textfield; -moz-appearance:textfield;
+}
+.presentation-controls input::-webkit-inner-spin-button,
+.presentation-controls input::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+.presentation-controls .zoom-reset { width:46px; font-size:11px; font-variant-numeric:tabular-nums; }
+.presentation-controls .zoom-reset:disabled { opacity:1; }
+.presentation-controls .presentation-close { width:auto; padding:0 15px; font-weight:600; }
+@media(max-width:580px) {
+  .presentation-controls {
+    right:max(10px, env(safe-area-inset-right));
+    bottom:max(12px, env(safe-area-inset-bottom));
+    max-width:calc(100% - 20px); gap:4px; padding:5px; border-radius:24px;
+    justify-content:space-between;
+  }
+  .presentation-controls button { width:34px; height:36px; }
+  .presentation-controls .zoom-reset { width:42px; }
+  .presentation-controls .presentation-close { padding:0 12px; }
+}

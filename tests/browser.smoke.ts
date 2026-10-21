@@ -49,6 +49,22 @@ async function waitForPresenterPopup(host: Page): Promise<Page> {
   return page;
 }
 
+async function assertPresentationDock(page: Page) {
+  const bounds = await page.locator('.presentation-controls').evaluate(el => {
+    const dock = el.getBoundingClientRect();
+    const children = [...el.querySelectorAll('button, input')].map(child => child.getBoundingClientRect());
+    return { right: dock.right, bottom: dock.bottom, left: dock.left,
+      width: innerWidth, height: innerHeight,
+      fits: children.every(child => child.left >= dock.left && child.right <= dock.right &&
+        child.top >= dock.top && child.bottom <= dock.bottom) };
+  });
+  assert.ok(bounds.left >= 0 && bounds.right <= bounds.width && bounds.bottom <= bounds.height && bounds.fits,
+    'All preview controls must fit the dock and viewport');
+  assert.ok(bounds.right > bounds.width - 38 && bounds.bottom > bounds.height - 38,
+    'Preview controls stay in the bottom-right corner');
+  assert.equal(await page.getByRole('button', { name: 'Close', exact: true }).isVisible(), true);
+}
+
 /** Construct a valid single-page PDF with a realistic (200 KB) byte-range surface. */
 function makePdf(fillerLines = 1400): Buffer {
   const pageCount = 10;
@@ -887,10 +903,8 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     // Teacher's queue remains available while the PDF is projected.
     assert.equal(await host.locator('.document-row').count(), 1);
     // Projector view must be truly black around the actual PDF.
-    const toolbarBlur = await presentation.locator('.viewer-toolbar')
-      .evaluate(element => getComputedStyle(element).backdropFilter);
-    assert.equal(toolbarBlur, 'none',
-      'Full-screen overlay header must not blur PDF pixels on the left side');
+    assert.equal(await presentation.locator('.viewer-toolbar, .viewer-footer, .viewer-filename').count(), 0,
+      'Only the bottom-right controls remain; document identity and cache details are removed');
     const stageColor = await presentation.locator('.page-stage')
       .evaluate(element => getComputedStyle(element).backgroundColor);
     assert.equal(stageColor, 'rgb(0, 0, 0)');
@@ -920,12 +934,12 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     const projectorLayout = await presentation.evaluate(() => {
       const root = document.querySelector('.viewer')!.getBoundingClientRect();
       const slide = document.querySelector('.page-shell canvas')!.getBoundingClientRect();
-      const dock = document.querySelector('.viewer-controls')!.getBoundingClientRect();
+      const dock = document.querySelector('.presentation-controls')!.getBoundingClientRect();
       return {
         windowHeight: innerHeight, windowWidth: innerWidth,
         rootHeight: root.height, slideHeight: slide.height,
         dockRight: dock.right, dockBottom: dock.bottom,
-        roundedDock: getComputedStyle(document.querySelector('.viewer-controls')!).borderRadius,
+        roundedDock: getComputedStyle(document.querySelector('.presentation-controls')!).borderRadius,
         captionCount: document.querySelectorAll('.presentation-caption').length,
       };
     });
@@ -956,18 +970,13 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
         Math.abs(canvas.getBoundingClientRect().height - expected) < 2 &&
         !document.querySelector('.page-overlay');
     }, normalHeight, { timeout: 15000 });
-    // Top-left identity uses the document's curated accent, matching its
-    // teacher-side file card instead of a generic gray back arrow.
-    assert.equal(await presentation.locator('.viewer-file-mark').count(), 1);
-    const identity = await presentation.locator('.viewer-filename').evaluate(el => {
-      const marker = el.querySelector('.viewer-file-mark');
-      return {
-        radius: getComputedStyle(el).borderRadius,
-        accent: marker ? getComputedStyle(marker).color : '',
-      };
+    const pagePaint = await presentation.getByRole('spinbutton', { name: 'Page number' }).evaluate(el => {
+      const input = getComputedStyle(el), pill = getComputedStyle(el.closest('.presentation-controls')!);
+      return { background: input.backgroundColor, border: input.borderTopColor, pill: pill.backgroundColor };
     });
-    assert.equal(identity.radius, '15px');
-    assert.notEqual(identity.accent, '');
+    assert.equal(pagePaint.background, pagePaint.pill);
+    assert.equal(pagePaint.border, pagePaint.pill, 'Editable page number blends into the pill');
+    assert.equal(await presentation.getByRole('button', { name: 'Close', exact: true }).count(), 1);
 
     // Native Fullscreen API should engage from the floating pill AND keep a
     // fully painted PDF on-screen. Merely asserting fullscreenElement existed
@@ -997,9 +1006,9 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
         return ink >= 3 && paper > 200;
       }, null, { timeout: 25000 });
       const immersiveChrome = await presentation.evaluate(() => ({
-        toolbarHidden: getComputedStyle(document.querySelector('.viewer-toolbar')!).display === 'none',
-        footerHidden: getComputedStyle(document.querySelector('.viewer-footer')!).display === 'none',
-        pillVisible: getComputedStyle(document.querySelector('.viewer-control-pill')!).display !== 'none',
+        toolbarHidden: !document.querySelector('.viewer-toolbar'),
+        footerHidden: !document.querySelector('.viewer-footer'),
+        pillVisible: getComputedStyle(document.querySelector('.presentation-controls')!).display !== 'none',
       }));
       assert.deepEqual(immersiveChrome, { toolbarHidden: true, footerHidden: true, pillVisible: true },
         'Fullscreen must hide the top-left info and footer, leaving only the control pill');
@@ -1015,7 +1024,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     if (!process.env.FLASHVIEW_BACKEND) {
       await presentation.screenshot({ path: 'test-artifacts/ui/presentation.png' });
     }
-    assert.match(await presentation.locator('.viewer-filename').innerText(), /direct local rendering/);
+    assert.equal(await presentation.locator('.viewer-filename').count(), 0);
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
     // Regression: moving around the PDF and waiting past the old 30s watchdog
     // must not destroy the successfully opened PDF document.
@@ -1036,7 +1045,12 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await presentation.waitForFunction(() =>
       !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'),
       null, { timeout: 20000 });
-    await presentation.close();
+    await presentation.setViewportSize({ width: 375, height: 812 });
+    await assertPresentationDock(presentation);
+    if (!process.env.FLASHVIEW_BACKEND)
+      await presentation.screenshot({ path: 'test-artifacts/ui/presentation-mobile.png' });
+    await Promise.all([presentation.waitForEvent('close'),
+      presentation.getByRole('button', { name: 'Close', exact: true }).click()]);
     assert.equal(await host.locator('.document-row').count(), 1);
 
     // Simulate exactly what happens when a mobile browser drops the connection.
@@ -1296,7 +1310,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     }, null, { timeout: 22000 });
     assert.notEqual(await row.locator('.cache-ring').getAttribute('aria-valuenow'), '100',
       'The first slide MUST be visible before background downloading finishes');
-    assert.match(await presentation.locator('.viewer-filename').innerText(), /streaming preview/);
+    assert.equal(await presentation.locator('.viewer-filename').count(), 0);
     const image = presentation.locator('img[data-first-page-preview]');
     const earlySlideVisible = await image.count() > 0 ||
       await presentation.locator('canvas[data-rendered-page="1"]').count() > 0;
@@ -2400,7 +2414,7 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
   const root='http://127.0.0.1:'+port;
   let popup:Page|null=null;
   try{
-    const pptx=await makePowerPointFixture();
+    const pptx=await makePowerPointFixture(2);
     await host.goto(root);
     await host.getByRole('button',{name:/Create a room/}).click();
     await host.locator('.connection.connected').waitFor();
@@ -2461,16 +2475,42 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     assert.equal(await presentButton.isEnabled(),true);
     assert.equal(await downloadButton.isEnabled(),true);
     [popup]=await Promise.all([waitForPresenterPopup(host),presentButton.click()]);
-    await popup.locator('.flashview-pptx-controls').waitFor({timeout:45000});
-    assert.equal(await popup.getByText('Slide 1 / 1').count(),1,
-      'Actual PowerPoint rendered from IndexedDB without cloud conversion');
-    assert.equal(await popup.getByRole('button',{name:'Start slideshow'}).count(),1);
+    await popup.getByRole('spinbutton', { name: 'Slide number' }).waitFor({timeout:45000});
+    await popup.waitForFunction(() => !(document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.disabled);
+    assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1');
+    assert.equal(await popup.getByRole('button',{name:'Fullscreen',exact:true}).count(),1);
+    await popup.getByRole('spinbutton', { name: 'Slide number' }).fill('2');
+    await popup.getByRole('spinbutton', { name: 'Slide number' }).press('Enter');
+    await popup.getByText('FlashView PowerPoint Test 2', { exact: true }).waitFor();
+    await popup.getByRole('button', { name: 'Previous slide' }).click();
+    await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '1');
+    await popup.locator('.flashview-pptx-canvas').click();
+    await popup.keyboard.press('ArrowRight');
+    await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '2');
+    await assertPresentationDock(popup);
+    assert.equal(await popup.getByText('Notes', { exact: true }).isVisible(), false, 'No second renderer toolbar');
+    if (!process.env.FLASHVIEW_BACKEND)
+      await popup.screenshot({ path: 'test-artifacts/ui/powerpoint.png' });
+    await popup.setViewportSize({ width: 375, height: 812 });
+    await assertPresentationDock(popup);
+    if (!process.env.FLASHVIEW_BACKEND)
+      await popup.screenshot({ path: 'test-artifacts/ui/powerpoint-mobile.png' });
+    await popup.setViewportSize({ width: 1280, height: 760 });
+    if (await popup.evaluate(() => document.fullscreenEnabled)) {
+      await popup.getByRole('button', { name: 'Fullscreen', exact: true }).click();
+      await popup.waitForFunction(() => document.fullscreenElement?.classList.contains('flashview-pptx-presenter'));
+      await assertPresentationDock(popup);
+      assert.equal(await popup.getByRole('button', { name: 'Exit fullscreen' }).count(), 1);
+    }
     assert.equal(await popup.locator('.flashview-pptx-state').count(),0);
     const [dl]=await Promise.all([host.waitForEvent('download'),downloadButton.click()]);
     const got=await readFile(await dl.path());
     assert.equal(createHash('sha256').update(got).digest('hex'),
       createHash('sha256').update(pptx).digest('hex'),
       'PowerPoint Download must preserve original bytes');
+    await Promise.all([popup.waitForEvent('close'),
+      popup.getByRole('button', { name: 'Close', exact: true }).click()]);
+    assert.equal(await host.locator('.document-row').count(), 1, 'Close returns to the room without ending it');
   }finally{
     await popup?.close().catch(()=>{});
     await host.close();await student.close();await browser.close();child.kill('SIGTERM');

@@ -17,6 +17,8 @@ export interface FileManifest {
   status: 'pending' | 'approved' | 'rejected' | 'offline';
   /** Explicit owner stop: reconnecting must never resume this file ID. */
   revoked?: boolean;
+  /** Host removed this listing; retained as a tombstone against replay. */
+  deleted?: boolean;
   /** Cached bytes last acknowledged by the classroom computer (not sent bytes). */
   cachedBytes?: number;
   /** Metadata transition version; absent in rooms written by older relays. */

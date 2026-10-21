@@ -217,6 +217,29 @@ test('room creation is source-limited with Retry-After and Cloudflare quota surv
   } finally { child.kill(); }
 });
 
+test('only the host can delete a file and sender replay cannot resurrect it', {timeout:30000},async()=>{
+  const {port,child}=await startServer();const peers:TestPeer[]=[];
+  try{
+    const room=await (await fetch('http://127.0.0.1:'+port+'/api/rooms?autoApprove=1',{method:'POST'})).json() as {roomId:string;hostToken:string;joinToken:string};
+    const host=await connect(port,{role:'host',roomId:room.roomId,token:room.hostToken});peers.push(host);await host.wait('room.state');
+    const phone=await connect(port,{role:'student',joinToken:room.joinToken});peers.push(phone);await phone.wait('join.accepted');
+    const offer={type:'file.offer',fileId:'delete-original',name:'file.bin',size:4};
+    phone.send(offer);await phone.wait('file.state');await host.wait('file.announced');
+    phone.send({type:'file.remove',fileId:offer.fileId});phone.send({type:'file.sync'});
+    assert.equal(((await phone.wait('file.manifest')).files as Array<{deleted?:boolean}>)[0].deleted,undefined);
+    host.send({type:'file.remove',fileId:offer.fileId});
+    const removed=await host.wait('file.updated');
+    assert.equal((removed.file as {deleted:boolean}).deleted,true);
+    assert.equal(((await phone.wait('file.state')).file as {deleted:boolean}).deleted,true);
+    phone.send(offer);
+    assert.equal(((await phone.wait('file.state')).file as {deleted:boolean}).deleted,true);
+    host.send({type:'range.request',fileId:offer.fileId,requestId:'deleted-range',begin:0,end:4});
+    assert.equal((await host.wait('range.error')).requestId,'deleted-range');
+    host.send({type:'room.sync'});
+    assert.equal(((await host.wait('room.state')).files as Array<{deleted:boolean}>)[0].deleted,true);
+  }finally{for(const peer of peers)peer.close();child.kill('SIGTERM');}
+});
+
 test('shared file engine versions completion, reset, Stop and private resume consistently across metadata restoration', { timeout: 35000 }, async () => {
   let { port, child } = await startServer();
   const peers: TestPeer[] = [];

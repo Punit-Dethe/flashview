@@ -93,7 +93,7 @@ export function App() {
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
   // Shared-file ownership outlives live sockets, including stopped originals.
   const contributors = [...new Map(documents
-    .filter(file => file.status === 'approved' || file.status === 'offline' || file.revoked)
+    .filter(file => !file.deleted && (file.status === 'approved' || file.status === 'offline' || file.revoked))
     .map(file => [file.ownerId, { id: file.ownerId, name: file.ownerName }])).values()];
   const [participantColors, setParticipantColors] = useState<Record<string,string>>({});
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
@@ -186,7 +186,7 @@ export function App() {
     }
     if (!roomCode) return;
     for (const file of documents) {
-      if (previewLookups.current.has(file.fileId)) continue;
+      if (file.deleted || previewLookups.current.has(file.fileId)) continue;
       previewLookups.current.add(file.fileId);
       void presentation.getPreview(file.fileId).then(url => {
         if (!url || previewRoom.current !== roomCode) return;
@@ -204,7 +204,7 @@ export function App() {
     if (!room || mode !== 'host') return;
     if (thumbnailTransferBusy.current) return;
     for (const file of documents) {
-      if (!isPowerPointName(file.name) || !cacheProgress[file.fileId]?.complete ||
+      if (file.deleted || !isPowerPointName(file.name) || !cacheProgress[file.fileId]?.complete ||
           documentPreviews[file.fileId]) continue;
       const key = room + '/' + file.fileId;
       if (pptxThumbPending.current.has(key) || (pptxThumbAttempts.current.get(key) ?? 0) >= 2) continue;
@@ -217,7 +217,8 @@ export function App() {
           if ('requestIdleCallback' in window) window.requestIdleCallback(() => resolve(), { timeout: 4000 });
           else setTimeout(resolve, 350);
         });
-        if (previewRoom.current !== room || modeRef.current !== 'host' || documentPreviewsRef.current[file.fileId]) return;
+        if (previewRoom.current !== room || modeRef.current !== 'host' || documentPreviewsRef.current[file.fileId] ||
+            !hostFilesRef.current.some(current => current.fileId === file.fileId && !current.deleted)) return;
         if (thumbnailTransferBusy.current) {
           // A fresh upload began while we were waiting for idle time.
           return;
@@ -226,7 +227,7 @@ export function App() {
         pptxThumbAttempts.current.set(key, attempt);
         const original = await readCompletedBlob(room, file);
         if (!original || previewRoom.current !== room) throw Error('Complete PPTX cache unavailable');
-        if (documentPreviewsRef.current[file.fileId]) return;
+        if (documentPreviewsRef.current[file.fileId] || !hostFilesRef.current.some(current => current.fileId === file.fileId && !current.deleted)) return;
         // Reading storage can overlap a fresh upload; recheck before any parsing.
         if (thumbnailTransferBusy.current) {
           pptxThumbAttempts.current.set(key, attempt - 1);
@@ -235,6 +236,7 @@ export function App() {
         const { makePowerPointThumbnail } = await import('./pptx/makeThumbnail');
         const preview = await makePowerPointThumbnail(original);
         if (!preview || previewRoom.current !== room) throw Error('Thumbnail rendering returned no image');
+        if (!hostFilesRef.current.some(current => current.fileId === file.fileId && !current.deleted)) return;
         await presentation.savePreview(file.fileId, preview);
         if (previewRoom.current === room)
           setDocumentPreviews(current => current[file.fileId]
@@ -472,6 +474,7 @@ export function App() {
             setHostSession(previous => previous ? { ...previous, autoApprove: message.autoApprove as boolean } : previous);
           }
           hostFilesRef.current = files;
+          for (const file of files) if (file.deleted) presentation.removeFile(file.fileId);
         }
         setError('');
       }
@@ -486,6 +489,10 @@ export function App() {
         if (!file?.fileId) return;
         setDocuments(existing => [...existing.filter(f => f.fileId !== file.fileId), file]);
         hostFilesRef.current = [...hostFilesRef.current.filter(f => f.fileId !== file.fileId), file];
+        if (file.deleted) {
+          presentation.removeFile(file.fileId);
+          setDocumentPreviews(current => { const next={...current}; delete next[file.fileId]; return next; });
+        }
       }
       if (type === 'cache.progress' && modeRef.current === 'student' &&
           typeof message.fileId === 'string' &&
@@ -546,7 +553,7 @@ export function App() {
         // PDF thumbnails are the only preview format. Unknown binary files
         // must never be interpreted or displayed as active document content.
         if (typeof id !== 'string' ||
-            !hostFilesRef.current.some(f => f.fileId === id && isPdfName(f.name))) return;
+            !hostFilesRef.current.some(f => f.fileId === id && !f.deleted && isPdfName(f.name))) return;
         const part = message.part;
         const total = message.total;
         const data = message.data;
@@ -1241,6 +1248,10 @@ export function App() {
                           catch(e){setError(e instanceof Error?e.message:'Unable to open presentation');}
                         }}
                         onDownload={()=>void downloadFile(file)}
+                        onDelete={()=>{
+                          if(!socket.send({type:'file.remove',fileId:file.fileId}))
+                            setError('Reconnect to delete this file.');
+                        }}
                         saving={Boolean(savingFiles[file.fileId])}/>
                     ))}
                   </div>

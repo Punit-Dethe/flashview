@@ -449,6 +449,17 @@ export class ClassroomRoom extends DurableObject<Env> {
     }
 
     if (peer.role === 'host') {
+      if (msg.type === 'file.remove') {
+        const change = this.fileState.remove(msg.fileId);
+        if (change) {
+          for (const [id, pending] of this.ranges) if (pending.fileId === change.file.fileId) {
+            this.ranges.delete(id);
+            this.sendHost({ type: 'range.error', requestId: id, message: 'File deleted' });
+          }
+          await this.commitFiles([change], ws);
+        }
+        return;
+      }
       if (msg.type === 'cache.progress') {
         const change = this.fileState.cacheProgress(msg.fileId, msg.bytes, msg.snapshot);
         if (change) await this.commitFiles([change], ws);

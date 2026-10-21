@@ -1,8 +1,8 @@
 # PPTX previews and Files toolbar experiment
 
 Branch: `codex/preview-toolbar-experiment`.
-Baseline: `31f1f26` on `codex/header-architecture`. The existing preview and main
-remain unchanged; this experiment uses its own preview deployment.
+Baseline: `31f1f26` on `codex/header-architecture`. Tested first on an isolated
+preview; the user subsequently approved merging the changes to main.
 
 - Experiment: https://warpview-preview-experiment.outlanderwatr.workers.dev/
 - Previous version: https://warpview-join-preview.outlanderwatr.workers.dev/
@@ -51,5 +51,5 @@ included. A specific troublesome PPTX is still needed to confirm its particular
 missing-thumbnail cause.
 
 To return to the previous version, switch to `codex/header-architecture` and
-use the existing join preview. Do not merge this branch into main until the
-experiment is accepted.
+use the existing join preview. Host file deletion was added after the preview
+was accepted; it uses a persisted tombstone and scoped cache cleanup.

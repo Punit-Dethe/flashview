@@ -2510,6 +2510,36 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
       'List mode also omits uploader and file size');
     assert.equal(await card.evaluate(element=>element.querySelector('.document-card-visual')!.getBoundingClientRect().right<=
       element.querySelector('.document-card-info')!.getBoundingClientRect().left),true,'List view keeps the thumbnail before the title');
+    await student.locator('input[type=file]').setInputFiles({name:'keep.bin',mimeType:'application/octet-stream',buffer:Buffer.alloc(8000,7)});
+    const keep=host.locator('.document-card').filter({hasText:'keep.bin'});
+    await keep.getByRole('button',{name:'Download keep.bin',exact:true}).waitFor();
+    await host.waitForFunction(()=>!(document.querySelector('[aria-label="Download keep.bin"]') as HTMLButtonElement)?.disabled);
+    const removedId=await card.getAttribute('data-file-id');
+    const more=card.getByRole('button',{name:'File actions for '+longName,exact:true});
+    await more.click();
+    await card.getByRole('menuitem',{name:'Delete file',exact:true}).waitFor();
+    await host.keyboard.press('Escape');
+    assert.equal(await more.evaluate(el=>el===document.activeElement),true,'Escape restores the file action button');
+    await more.click();
+    const menuBox=await card.getByRole('menu').boundingBox();
+    assert.ok(menuBox&&menuBox.x>=0&&menuBox.x+menuBox.width<=1280&&menuBox.y+menuBox.height<=760,'File menu is not clipped by the list or viewport');
+    await card.getByRole('menuitem',{name:'Delete file',exact:true}).click();
+    await card.waitFor({state:'detached'});
+    await host.waitForFunction(async fileId=>{
+      const room=JSON.parse(sessionStorage.getItem('flashview-host')!).cacheId;
+      const db=await new Promise<IDBDatabase>((resolve,reject)=>{const request=indexedDB.open('flashview-room-cache');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+      try{return await new Promise<boolean>(resolve=>{
+        const tx=db.transaction(['chunks','previews'],'readonly');
+        const chunks=tx.objectStore('chunks').index('document').count(IDBKeyRange.only(room+'/'+fileId));
+        const preview=tx.objectStore('previews').get(room+'/'+fileId);
+        tx.oncomplete=()=>resolve(chunks.result===0&&!preview.result);
+      });}finally{db.close();}
+    },removedId);
+    await student.reload();
+    await host.reload();await host.locator('.connection.connected').waitFor();
+    await keep.waitFor();
+    assert.equal(await host.locator('.document-card').filter({hasText:longName}).count(),0,'Deleted listing stays gone after both ends reconnect');
+    assert.equal(await keep.getByRole('button',{name:'Download keep.bin',exact:true}).isEnabled(),true,'Another file remains cached and available');
     await host.getByRole('button',{name:'End room'}).click();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   }finally{
@@ -2517,6 +2547,42 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
   }
 });
 
+
+test('host deletes an in-flight file without stopping another original or resurrecting late bytes',{timeout:45000},async()=>{
+  const {port,child}=await runningServer(),browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({acceptDownloads:true}),student=await browser.newPage();
+  await transferInit(student,()=>{
+    const original=Blob.prototype.arrayBuffer;
+    Blob.prototype.arrayBuffer=async function(){await new Promise(resolve=>setTimeout(resolve,200));return original.call(this);};
+  });
+  try{
+    const root='http://127.0.0.1:'+port;
+    await host.goto(root);await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    await student.goto(root);await student.locator('#code').fill((await host.locator('.room-code').innerText()).trim());
+    await student.getByRole('button',{name:/Join room/}).click();await student.locator('.student-add-fab:not([disabled])').waitFor();
+    const survivor=Buffer.alloc(8192,71);
+    await student.locator('input[type=file]').setInputFiles([
+      {name:'keep-original.bin',mimeType:'application/octet-stream',buffer:survivor},
+      {name:'delete-receiving.bin',mimeType:'application/octet-stream',buffer:Buffer.alloc(32*1024*1024,11)},
+    ]);
+    const receiving=host.locator('.document-card').filter({hasText:'delete-receiving.bin'});
+    await receiving.waitFor();
+    assert.notEqual(await receiving.getByRole('progressbar').getAttribute('aria-valuenow'),'100');
+    await receiving.getByRole('button',{name:'File actions for delete-receiving.bin',exact:true}).click();
+    await receiving.getByRole('menuitem',{name:'Delete file',exact:true}).click();
+    await receiving.waitFor({state:'detached'});
+    const keep=host.getByRole('button',{name:'Download keep-original.bin',exact:true});
+    await host.waitForFunction(()=>!(document.querySelector('[aria-label="Download keep-original.bin"]') as HTMLButtonElement)?.disabled);
+    const [download]=await Promise.all([host.waitForEvent('download'),keep.click()]);
+    assert.deepEqual(await readFile((await download.path())!),survivor);
+    await delay(500); // Let already-started sender reads finish after deletion.
+    await host.reload();await host.locator('.connection.connected').waitFor();
+    assert.equal(await receiving.count(),0);
+    await keep.waitFor();
+    await host.getByRole('button',{name:'End room'}).click();await host.getByRole('button',{name:/End & clear cache/}).click();
+  }finally{await host.close();await student.close();await browser.close();child.kill('SIGTERM');}
+});
 
 test('phone hosting: join-first homepage, collapsed room setup, approvals and shared files', {timeout:80000}, async()=>{
   const {port,child}=await runningServer();

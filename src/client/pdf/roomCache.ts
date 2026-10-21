@@ -252,6 +252,23 @@ export async function deleteRoomCache(room: string): Promise<void> {
   await withStorageDeadline(pending, 'Clear room cache', 45_000,
     () => { try { tx.abort(); } catch { /* Already settled. */ } });
 }
+/** Scoped deletion after the file's transfer attempt has been aborted. */
+async function deleteFileCache(room: string, fileId: string): Promise<void> {
+  const db = await database();
+  const documentId = room + '/' + fileId;
+  const tx = db.transaction(['chunks','previews'],'readwrite');
+  const pending = new Promise<void>((resolve,reject) => {
+    const request = tx.objectStore('chunks').index('document').openKeyCursor(IDBKeyRange.only(documentId));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor) { tx.objectStore('chunks').delete(cursor.primaryKey); cursor.continue(); }
+    };
+    tx.objectStore('previews').delete(documentId);
+    tx.oncomplete = () => resolve();
+    tx.onabort = tx.onerror = () => reject(tx.error || Error('Cannot delete room file'));
+  });
+  await withStorageDeadline(pending,'Delete room file',45_000,() => { try { tx.abort(); } catch {} });
+}
 export async function cleanExpiredRoomCaches(activeRoom?: string): Promise<void> {
   let rooms: RoomRecord[];
   try {
@@ -276,6 +293,8 @@ export async function cleanExpiredRoomCaches(activeRoom?: string): Promise<void>
  */
 export class RoomPdfCache {
   private stopped = false;
+  private removedFiles = new Set<string>();
+  private removals = new Map<string, Promise<void>>();
   get closed(): boolean { return this.stopped; }
   private inFlight = new Map<string, Promise<Uint8Array>>();
   private attempts = new Map<string, AbortController>();
@@ -531,11 +550,12 @@ export class RoomPdfCache {
     }
   }
   async savePreview(fileId: string, dataUrl: string): Promise<void> {
-    if (this.stopped || !/^[a-zA-Z0-9_-]{6,80}$/.test(fileId) ||
+    if (this.stopped || this.removedFiles.has(fileId) || !/^[a-zA-Z0-9_-]{6,80}$/.test(fileId) ||
         !/^data:image\/jpeg;base64,[a-zA-Z0-9+/=]+$/.test(dataUrl) ||
         dataUrl.length > 390000) return;
     try {
       const db = await database();
+      if (this.stopped || this.removedFiles.has(fileId)) return;
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction('previews', 'readwrite');
         tx.objectStore('previews').put({
@@ -548,6 +568,7 @@ export class RoomPdfCache {
     } catch { this.warning(); }
   }
   async getPreview(fileId: string): Promise<string | null> {
+    if (this.removedFiles.has(fileId)) return null;
     try {
       const db = await database();
       const result = await new Promise<{ dataUrl: string } | undefined>((resolve, reject) => {
@@ -556,7 +577,7 @@ export class RoomPdfCache {
         request.onsuccess = () => resolve(request.result as { dataUrl: string } | undefined);
         request.onerror = () => reject(request.error);
       });
-      return result?.dataUrl ?? null;
+      return this.removedFiles.has(fileId) ? null : result?.dataUrl ?? null;
     } catch { return null; }
   }
   async progress(file: PdfManifest, repair = true): Promise<CacheProgress> {
@@ -733,6 +754,7 @@ export class RoomPdfCache {
   }
 
   async cachedRange(file: PdfManifest, begin: number, end: number, signal?: AbortSignal): Promise<Uint8Array> {
+    if (this.removedFiles.has(file.fileId)) throw Error('File deleted');
     if (!Number.isSafeInteger(begin) || !Number.isSafeInteger(end) ||
         begin < 0 || end <= begin || end > file.size || end - begin > MAX_RANGE_BYTES) {
       throw Error('Invalid PDF byte request');
@@ -742,7 +764,7 @@ export class RoomPdfCache {
     const parts = await Promise.all(
       Array.from({ length: last - first + 1 }, (_, i) => this.cachedChunk(file, first + i, signal)),
     );
-    if (signal?.aborted) throw Error('Presentation range cancelled');
+    if (signal?.aborted || this.removedFiles.has(file.fileId)) throw Error('Presentation range cancelled');
     const result = new Uint8Array(end - begin);
     for (let i = first; i <= last; i++) {
       const offset = i * CHUNK_BYTES;
@@ -780,7 +802,7 @@ export class RoomPdfCache {
 
   /** Queue a file as soon as it is offered, not when the viewer opens. */
   prefetch(file: PdfManifest): void {
-    if (this.stopped || this.storageFailedFiles.has(file.fileId)) return;
+    if (this.stopped || this.removedFiles.has(file.fileId) || this.storageFailedFiles.has(file.fileId)) return;
     if (this.attempts.get(file.fileId)?.signal.aborted) this.attempts.delete(file.fileId);
     if (!this.jobs.has(file.fileId)) {
       perf.mark('cache:' + file.fileId);
@@ -801,6 +823,23 @@ export class RoomPdfCache {
     this.adaptive.delete(fileId);
     this.firstQueuedAt.delete(fileId);
     this.stallReported.delete(fileId);
+  }
+  removeFile(fileId: string): Promise<void> {
+    this.removedFiles.add(fileId);
+    this.pause(fileId);
+    for (const key of this.memory.keys()) if (key.startsWith(this.roomId + '/' + fileId + '/')) this.discardMemory(key,fileId);
+    this.indices.delete(fileId);
+    const pending = this.removals.get(fileId);
+    if (pending) return pending;
+    const removal = deleteFileCache(this.roomId,fileId).then(() => {
+      for (const key of this.memory.keys()) if (key.startsWith(this.roomId + '/' + fileId + '/')) this.discardMemory(key,fileId);
+      this.indices.delete(fileId);
+    }).catch(error => {
+      this.removals.delete(fileId);
+      throw error;
+    });
+    this.removals.set(fileId,removal);
+    return removal;
   }
   resume(): void {
     if (this.stopped) return;

@@ -499,13 +499,29 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .reference-room .document-pdf-symbol svg { display:block; height:60px; width:auto; max-width:75px; }
 .premium-app .reference-room .document-thumb-spinner { border-top-color:#5d6685; border-color:#dce2ed; border-top-color:#15161c; }
 .premium-app .reference-room .document-card-info {
+  position:relative;
   flex:none; width:100%; max-width:100%; min-width:0; box-sizing:border-box;
   height:auto; min-height:0; gap:0; padding:14px 16px 12px;
   background:transparent; border:0; color:#0b1230; }
 .premium-app .reference-room .document-card-info h3 {
   width:100%; font-size:14.5px; line-height:1.3; font-weight:600; letter-spacing:-.01em;
-  color:#0b1230; margin:0; padding:0 14px 0 0; box-sizing:border-box;
+  color:#0b1230; margin:0; padding:0 44px 0 0; box-sizing:border-box;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.premium-app .document-card-more {
+  position:absolute; top:0; right:4px; width:44px; height:44px; display:grid; place-items:center;
+  padding:0; border:0; border-radius:10px; background:transparent; color:#5d6685;
+}
+.premium-app .document-card-more:hover,.premium-app .document-card-more[aria-expanded="true"] { background:#e3eaf3; color:#0b1230; }
+.premium-app .document-card-menu {
+  position:fixed; inset:auto; margin:0; width:160px; padding:6px; border:1px solid #e0e7f5;
+  border-radius:12px; background:#fff; color:#0b1230;
+}
+.premium-app .document-card-menu button {
+  display:block; width:100%; min-height:44px; padding:10px 14px; border:0; border-radius:7px;
+  background:transparent; color:#ad3030; text-align:left; font-size:14px; font-weight:600;
+}
+.premium-app .document-card-menu button:hover { background:#fff0f0; }
+.premium-app .document-grid.is-list .document-card-more { top:50%; transform:translateY(-50%); }
 .premium-app .reference-room .document-card .cache-ring {
   /* Preserve the progressbar for assistive technology and existing transfer tests.
      Reference v8 paints active progress within the action button, not a corner ring. */

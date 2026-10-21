@@ -2,8 +2,6 @@ import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } fro
 import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
 import { SiteHeader } from './SiteHeader';
-import { HomeWordmark } from './HomeWordmark';
-import { HeroAccents } from './HeroAccents';
 import { JoinWelcome } from './JoinWelcome';
 import { invitationFor, invitationUrl, readInvitation, rememberInvitation } from './joinInvitation';
 import { assignParticipantColors } from './participantColors';
@@ -947,11 +945,31 @@ export function App() {
     returnHome();
   }
 
+  function focusRoomForm(action: 'create' | 'join'): void {
+    const panel = document.getElementById(action === 'create' ? 'create-room' : 'join-room');
+    panel?.scrollIntoView({ block: 'center', behavior: 'auto' });
+    const control = panel?.querySelector<HTMLElement>(action === 'join' ? '#code' : '.reference-toggle input');
+    control?.focus({ preventScroll: true });
+  }
+  useEffect(() => {
+    if (mode !== 'welcome') return;
+    const focusHash = () => {
+      if (location.hash === '#create-room' || location.hash === '#join-room') {
+        focusRoomForm(location.hash === '#create-room' ? 'create' : 'join');
+      } else if (location.hash === '#instructions' || location.hash === '#how-it-works') {
+        document.getElementById(location.hash.slice(1))?.scrollIntoView();
+      }
+    };
+    const frame = requestAnimationFrame(focusHash);
+    window.addEventListener('hashchange', focusHash);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('hashchange', focusHash); };
+  }, [mode]);
+
   const joinLink = hostSession ? invitationUrl(window.location.origin, hostSession.joinToken, hostSession.code) : '';
   const showInviteEntry = mode === 'student' && joinState === 'idle' && Boolean(initialInvitation);
 
   return (
-    <div className={'app premium-app' + (showInviteEntry ? ' is-invite-entry' : '') + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
+    <div className={'app premium-app' + (mode === 'welcome' ? ' is-home' : '') + (showInviteEntry ? ' is-invite-entry' : '') + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
       (mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending') ? ' is-student-room' : '')}>
       {mode === 'student' && (joinState === 'idle' || joinState === 'rejected') && (
         <SiteHeader landing={showInviteEntry} onHome={startFresh}/>
@@ -960,12 +978,13 @@ export function App() {
         {mode === 'welcome' && (
           <div className="welcome reference-welcome">
             <section className="reference-sky">
+              <SiteHeader landing publicNavigation onHome={() => window.scrollTo({ top: 0, behavior: 'auto' })}
+                onRoomAction={focusRoomForm}/>
               <div className="reference-hero">
-                <HomeWordmark/>
+                <h1 className="reference-serif home-headline">From your phone,<br/>onto the big screen.</h1>
                 <div className="hero-room-stage">
-                  <HeroAccents/>
                   <div className="reference-actions" id="start-room">
-                    <div className="reference-pane host-card">
+                    <div className="reference-pane host-card" id="create-room">
                       <div className="reference-pane-icon"><PixelIcon kind="folder"/></div>
                       <h2 className="reference-serif">Start a room on the board</h2>
                       <p>Open this on the classroom computer. Students scan the code and share files here.</p>
@@ -982,7 +1001,7 @@ export function App() {
                         </button>
                       </div>
                     </div>
-                    <div className="reference-pane join-card">
+                    <div className="reference-pane join-card" id="join-room">
                       <div className="reference-pane-icon"><PixelIcon kind="doc"/></div>
                       <h2 className="reference-serif">Send from your device</h2>
                       <p>Enter the six digits shown on the board, then choose your files.</p>
@@ -1026,16 +1045,29 @@ export function App() {
                 </div>
               </div>
             </section>
-            <section className="reference-section" id="how">
+            <section className="reference-section" id="instructions">
               <h2 className="reference-serif">Three steps between a phone and a smartboard.</h2>
               <ol className="reference-steps">
-                <li><PixelIcon kind="folder"/><h3>Open the board</h3>
-                  <p>The classroom computer shows a QR code and a six-digit code.</p></li>
-                <li><PixelIcon kind="doc"/><h3>Scan, then pick a file</h3>
-                  <p>Up to a whole class can join one room and send files at once.</p></li>
-                <li><PixelIcon kind="folder"/><h3>Present instantly</h3>
-                  <p>Open PDFs directly while their remaining bytes are still arriving.</p></li>
+                <li><PixelIcon kind="folder"/><h3>Create on the big screen</h3>
+                  <p>Choose whether people need approval, then create a room. Keep this tab open to receive files.</p></li>
+                <li><PixelIcon kind="doc"/><h3>Join from your device</h3>
+                  <p>Scan the QR or enter the six-digit code. Add a name or skip it, then choose your files.</p></li>
+                <li><PixelIcon kind="folder"/><h3>Present, then clear</h3>
+                  <p>Present PDFs and PowerPoint, or download an original. End the room when you are done to remove its room files.</p></li>
               </ol>
+            </section>
+            <section className="reference-section home-how" id="how-it-works">
+              <div className="home-how-heading">
+                <h2 className="reference-serif">A short journey.<br/>A separate place to present.</h2>
+                <p>Your device sends the original through a live relay to the room’s browser cache.
+                  A separate preview tab reads that cache, while transfers keep working in the background.</p>
+              </div>
+              <div className="home-file-path" aria-label="Files travel from your device, through the live relay, to the room browser cache">
+                <span>Your device</span><span className="file-path-arrow" aria-hidden="true">→</span>
+                <span>Live relay</span><span className="file-path-arrow" aria-hidden="true">→</span>
+                <span>Room browser</span>
+              </div>
+              <a className="home-architecture-link" href="/architecture">Explore the architecture <span aria-hidden="true">↗</span></a>
             </section>
             <section className="reference-section" id="privacy">
               <div className="reference-trust">

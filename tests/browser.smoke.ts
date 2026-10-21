@@ -584,44 +584,50 @@ test('room lifecycle: hidden host and visible presenter renew separately; bridge
   } finally { await browser.close(); child.kill(); }
 });
 
-test('home branding and end-room dialog: no header, responsive warning and direct cache cleanup', { timeout: 30000 }, async () => {
+test('home header and end-room dialog: responsive navigation and direct cache cleanup', { timeout: 30000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, reducedMotion: 'reduce' });
   try {
     await page.goto('http://127.0.0.1:' + port);
-    await page.locator('.home-wordmark').waitFor();
-    assert.equal(await page.locator('.site-header, nav, .nav-start').count(), 0);
-    assert.equal(await page.getByRole('heading', { name: 'WarpView', exact: true, level: 1 }).count(), 1);
-    assert.equal(await page.getByText('From your phone, onto the big screen.', { exact: true }).count(), 0);
-    assert.equal(await page.locator('.home-wordmark').innerText(), 'warpview');
-    assert.equal(await page.locator('.home-wordmark').evaluate(el => el.getAnimations({ subtree: true }).length), 0);
-    for (const width of [1440, 1280, 1024, 768, 390, 320]) {
-      await page.setViewportSize({ width, height: 844 });
-      const geometry = await page.evaluate(() => {
-        const brand = document.querySelector('.home-wordmark')!.getBoundingClientRect();
-        const card = document.querySelector('.reference-actions')!.getBoundingClientRect();
-        const sky = document.querySelector('.reference-welcome>.reference-sky')!.getBoundingClientRect();
-        const accents = [...document.querySelectorAll('.hero-accent')].map(el => el.getBoundingClientRect());
-        return { center: brand.x + brand.width / 2, cardCenter: card.x + card.width / 2, gap: card.top - brand.bottom,
-          verticalCenterError: Math.abs(brand.y + brand.height / 2 - (sky.top + card.top) / 2),
-          accentsVisible: accents.some(icon => icon.width > 0 && icon.height > 0),
-          font: parseFloat(getComputedStyle(document.querySelector('.home-wordmark')!).fontSize),
-          overlapping: accents.some(icon => icon.left < card.right && icon.right > card.left && icon.top < card.bottom && icon.bottom > card.top),
-          overflow: document.documentElement.scrollWidth > innerWidth };
+    await page.locator('.reference-nav').waitFor();
+    assert.equal(await page.locator('.hero-accents,.reference-logo-mark').count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'From your phone, onto the big screen.', exact: true, level: 1 }).count(), 1);
+    const header=page.locator('.reference-nav');
+    for (const name of ['Instructions','How it works','Architecture','Join a room','Create a room'])
+      assert.equal(await header.getByRole('link',{name,exact:true}).count(),1);
+    for (const width of [1440,1280,1024,768,390,320]) {
+      await page.setViewportSize({width,height:844});
+      await page.evaluate(()=>window.scrollTo(0,0));
+      const layout=await header.evaluate(element=>{
+        const box=element.getBoundingClientRect();
+        const brand=element.querySelector('.brand')!.getBoundingClientRect();
+        const nav=element.querySelector('nav')!.getBoundingClientRect();
+        const targets=[...element.querySelectorAll('a,button')].map(el=>el.getBoundingClientRect());
+        const card=document.querySelector('.reference-actions')!.getBoundingClientRect();
+        const sky=document.querySelector('.reference-sky')!.getBoundingClientRect();
+        return {overflow:document.documentElement.scrollWidth>innerWidth,
+          cardCenter:card.left+card.width/2,
+          navCenter:nav.left+nav.width/2,
+          brandLeft:brand.left,skyLeft:sky.left,
+          inBounds:targets.every(target=>target.left>=0&&target.right<=innerWidth&&target.top>=0),
+          overlaps:targets.some((target,i)=>targets.slice(i+1).some(other=>
+            target.left<other.right-1&&target.right>other.left+1&&target.top<other.bottom-1&&target.bottom>other.top+1)),
+          headerBottom:box.bottom,titleTop:document.querySelector('.reference-hero h1')!.getBoundingClientRect().top};
       });
-      assert.ok(Math.abs(geometry.center - width / 2) < 2, 'Brand stays centered');
-      assert.ok(Math.abs(geometry.cardCenter - width / 2) < 2, 'Room controls stay centered');
-      assert.ok(geometry.gap >= 32 && geometry.font >= 64, 'Large brand sits clearly above the room card');
-      assert.ok(geometry.verticalCenterError < 2, 'Brand is vertically centered between the sky top and room card at width ' + width);
-      assert.equal(geometry.accentsVisible, width > 760, 'Phone layouts hide illustrations');
-      assert.equal(geometry.overlapping, false, 'Illustrations never cover the room controls at width ' + width);
-      assert.equal(geometry.overflow, false);
+      assert.equal(layout.overflow,false,'No horizontal overflow at '+width);
+      assert.ok(layout.inBounds&&!layout.overlaps,'Header links fit without overlap at '+width);
+      assert.ok(layout.brandLeft>=layout.skyLeft+12,'Header respects the rounded hero inset');
+      assert.ok(layout.headerBottom<=layout.titleTop,'Header does not overlap the hero title');
+      assert.ok(Math.abs(layout.cardCenter-width/2)<2,'Room controls remain centered');
+      if(width>=1280)assert.ok(Math.abs(layout.navCenter-width/2)<2,'Desktop menu is centered independently of side widths');
     }
-    assert.equal(await page.locator('.home-wordmark').evaluate(el => getComputedStyle(el).color), 'rgb(255, 255, 255)');
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
-    assert.equal(await page.locator('.home-wordmark').evaluate(el => el.getAnimations({ subtree: true }).length), 0);
-    await page.setViewportSize({ width: 1280, height: 844 });
+    await header.getByRole('link',{name:'Join a room',exact:true}).click();
+    assert.equal(await page.locator('#code').evaluate(el=>el===document.activeElement),true,'Join action focuses the room code');
+    await header.getByRole('link',{name:'Create a room',exact:true}).click();
+    assert.equal(await page.locator('.room-code').count(),0,'Header Create reveals setup without starting a room');
+    await page.setViewportSize({width:1280,height:844});
+    await page.evaluate(()=>window.scrollTo(0,0));
     await page.getByRole('button', { name: /Create a room/ }).click();
     await page.locator('.connection.connected').waitFor();
     await seedLifecycleCache(page);
@@ -647,6 +653,46 @@ test('home branding and end-room dialog: no header, responsive warning and direc
   } finally { await browser.close(); child.kill(); }
 });
 
+test('architecture page: public diagrams, deep links and no room connection', {timeout:40000}, async()=>{
+  const {port,child}=await runningServer(), browser=await browserEngine.launch({headless:true});
+  const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
+  const root='http://127.0.0.1:'+port, sockets:string[]=[];
+  page.on('websocket',socket=>sockets.push(socket.url()));
+  try{
+    await page.goto(root+'/architecture');
+    await page.locator('.architecture-page').waitFor();
+    assert.match(await page.title(),/Architecture/i);
+    assert.equal(await page.locator('h1').count(),1);
+    assert.equal(await page.locator('.reference-nav .reference-logo-mark,.hero-accents').count(),0);
+    assert.ok(await page.locator('.architecture-page figure').count()>=3,'Architecture is explained with multiple diagrams');
+    const body=await page.locator('.architecture-page').innerText();
+    for(const fact of [/IndexedDB/i,/Durable Object/i,/BroadcastChannel/i,/PDF/i,/PowerPoint|PPTX/i,/200\s*MiB/i,/end.to.end/i])
+      assert.match(body,fact);
+    assert.equal(sockets.length,0,'Documentation never opens a room connection');
+    await page.locator('.arch-journey-stages').getByRole('button',{name:/Commit/}).click();
+    await page.getByRole('heading',{name:'Received is only counted after it is saved.',exact:true}).waitFor();
+    assert.equal(await page.locator('.arch-journey-stages').getByRole('button',{name:/Commit/}).getAttribute('aria-pressed'),'true');
+    const remembered=JSON.stringify({roomId:'sentinel-room',code:'999999',hostToken:'sentinel-private-token'});
+    await page.evaluate(value=>sessionStorage.setItem('flashview-host',value),remembered);
+    await page.reload();await page.locator('.architecture-page').waitFor();
+    assert.equal(await page.evaluate(()=>sessionStorage.getItem('flashview-host')),remembered,'Docs preserve an existing private session');
+    assert.equal(sockets.length,0,'Docs do not resume the saved room');
+    await page.evaluate(()=>sessionStorage.removeItem('flashview-host'));
+    await mkdir('test-artifacts/ui',{recursive:true});
+    for(const width of [1440,768,390,320]){
+      await page.setViewportSize({width,height:1000});
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Architecture fits '+width);
+      if(width===1440||width===390)
+        await page.screenshot({path:'test-artifacts/ui/architecture-'+width+'.png',fullPage:true});
+    }
+    await page.locator('.reference-nav').getByRole('link',{name:'Join a room',exact:true}).click();
+    await page.locator('#code').waitFor();
+    assert.equal(await page.locator('#code').evaluate(el=>el===document.activeElement),true,'Architecture Join returns to focused home join form');
+    await page.locator('.reference-nav').getByRole('link',{name:'Instructions',exact:true}).click();
+    assert.equal(new URL(page.url()).hash,'#instructions');
+  }finally{await browser.close();child.kill();}
+});
+
 test('real browser: explicit room start, pinned invite, scrolling documents and room switch', { timeout: 70000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
@@ -659,10 +705,11 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.equal(await first.locator('.room-code').count(), 0,
       'Visiting the homepage must not create a classroom automatically');
     await first.reload();
+    await first.locator('.reference-nav').waitFor();
     assert.equal(await first.locator('.room-code').count(), 0,
       'Reloading the welcome page must not create a classroom either');
 
-    assert.equal(await first.locator('.site-header').count(), 0, 'Homepage has no header');
+    assert.equal(await first.locator('.site-header').count(), 1, 'Homepage has the public navigation header');
     const background = await first.locator('.reference-sky').evaluate(el => getComputedStyle(el).backgroundImage);
     assert.match(background, /31, 79, 232|#1f4fe8/i,
       'The supplied cobalt-to-pastel sky gradient should remain intact');

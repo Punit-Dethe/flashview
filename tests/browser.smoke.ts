@@ -49,6 +49,14 @@ async function waitForPresenterPopup(host: Page): Promise<Page> {
   return page;
 }
 
+async function assertPowerPointFits(page: Page) {
+  await page.waitForFunction(() => {
+    const slide = document.querySelector('.pptxv-stage')?.getBoundingClientRect();
+    return slide && (Math.abs(slide.width - innerWidth) < 3 || Math.abs(slide.height - innerHeight) < 3) &&
+      slide.width <= innerWidth + 3 && slide.height <= innerHeight + 3;
+  });
+}
+
 async function assertPresentationDock(page: Page) {
   const bounds = await page.locator('.presentation-controls').evaluate(el => {
     const dock = el.getBoundingClientRect();
@@ -2294,6 +2302,9 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
         metadataVisible:Boolean(element.querySelector('.document-file-meta,.document-file-owner,.document-file-size')),
         bezel:parseFloat(getComputedStyle(visual).marginLeft),
         previewBorder:parseFloat(getComputedStyle(visual).borderTopWidth),
+        cardBackground:getComputedStyle(element).backgroundColor,
+        panelBackground:getComputedStyle(element.closest('.workspace-right')!).backgroundColor,
+        panelBlur:getComputedStyle(element.closest('.workspace-right')!).backdropFilter,
       };
     });
     assert.equal(check.filename,longName,'Long original filename remains intact');
@@ -2304,6 +2315,9 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     assert.equal(check.metadataVisible,false,'Cards omit uploader, color dot and file size');
     assert.equal(check.bezel,6,'The existing preview bezel stays the same width');
     assert.equal(check.previewBorder,1,'The preview has a thin visible outline');
+    assert.equal(check.cardBackground,'rgb(240, 244, 249)');
+    assert.equal(check.panelBackground,'rgb(255, 255, 255)');
+    assert.equal(check.panelBlur,'none','The gallery is solid white');
     await mkdir('test-artifacts/ui',{recursive:true});
     await host.waitForFunction(()=>[...document.querySelectorAll('.document-row')]
       .every(element=>Number(getComputedStyle(element).opacity)>.99));
@@ -2487,11 +2501,25 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     await popup.locator('.flashview-pptx-canvas').click();
     await popup.keyboard.press('ArrowRight');
     await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '2');
+    await popup.setViewportSize({ width: 1660, height: 1016 });
+    await assertPowerPointFits(popup);
+    const fitted = await popup.locator('.pptxv-stage').boundingBox();
+    await popup.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    await popup.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    assert.equal(await popup.getByRole('button', { name: 'Reset zoom to fit' }).innerText(), '150%');
+    await popup.waitForFunction(width => document.querySelector('.pptxv-stage')!.getBoundingClientRect().width > width * 1.48, fitted!.width);
+    await popup.getByRole('button', { name: 'Reset zoom to fit' }).click();
+    await assertPowerPointFits(popup);
+    await popup.getByRole('button', { name: 'Zoom out', exact: true }).click();
+    assert.equal(await popup.getByRole('button', { name: 'Reset zoom to fit' }).innerText(), '75%');
+    await popup.getByRole('button', { name: 'Reset zoom to fit' }).click();
+    await assertPowerPointFits(popup);
     await assertPresentationDock(popup);
     assert.equal(await popup.getByText('Notes', { exact: true }).isVisible(), false, 'No second renderer toolbar');
     if (!process.env.FLASHVIEW_BACKEND)
       await popup.screenshot({ path: 'test-artifacts/ui/powerpoint.png' });
     await popup.setViewportSize({ width: 375, height: 812 });
+    await assertPowerPointFits(popup);
     await assertPresentationDock(popup);
     if (!process.env.FLASHVIEW_BACKEND)
       await popup.screenshot({ path: 'test-artifacts/ui/powerpoint-mobile.png' });
@@ -2499,6 +2527,7 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     if (await popup.evaluate(() => document.fullscreenEnabled)) {
       await popup.getByRole('button', { name: 'Fullscreen', exact: true }).click();
       await popup.waitForFunction(() => document.fullscreenElement?.classList.contains('flashview-pptx-presenter'));
+      await assertPowerPointFits(popup);
       await assertPresentationDock(popup);
       assert.equal(await popup.getByRole('button', { name: 'Exit fullscreen' }).count(), 1);
     }

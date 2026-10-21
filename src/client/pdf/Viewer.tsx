@@ -7,7 +7,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PdfManifest } from '../../shared/protocol';
 import type { PdfRangeSource } from '../presentation';
 import { readCompletedPdf, type CacheProgress } from './roomCache';
-import { PresentationControls } from '../PresentationControls';
+import { PresentationControls, PresentationZoomControls } from '../PresentationControls';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const REQUEST_CHUNK = 65_536;
@@ -438,16 +438,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
       {fullscreenNotice && <div className="viewer-fullscreen-notice" role="status">{fullscreenNotice}</div>}
       <PresentationControls page={page} pageCount={pdfDocument?.numPages ?? 0} unit="page"
         go={go} fullscreen={inFullscreen} onFullscreen={changeFullscreen} close={close}>
-          <button type="button" disabled={(!pdfDocument && !showQuickPreview) || zoom <= 0.5}
-            onClick={() => setZoom(z => Math.max(.5, +(z - .25).toFixed(2)))}
-            aria-label="Zoom out" title="Zoom out">−</button>
-          <button type="button" className="zoom-reset" disabled={zoom === 1}
-            onClick={() => setZoom(1)} aria-label="Reset zoom to fit" title="Reset to fit">
-            {Math.round(zoom * 100)}%
-          </button>
-          <button type="button" disabled={(!pdfDocument && !showQuickPreview) || zoom >= 2}
-            onClick={() => setZoom(z => Math.min(2, +(z + .25).toFixed(2)))}
-            aria-label="Zoom in" title="Zoom in">+</button>
+        <PresentationZoomControls zoom={zoom} disabled={!pdfDocument && !showQuickPreview} onChange={setZoom}/>
       </PresentationControls>
     </section>
   );

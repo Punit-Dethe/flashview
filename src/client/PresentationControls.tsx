@@ -12,6 +12,25 @@ type Props = {
   children?: ReactNode;
 };
 
+export function PresentationZoomControls({ zoom, disabled, onChange }: {
+  zoom: number;
+  disabled: boolean;
+  onChange: (zoom: number) => void;
+}) {
+  return <>
+    <button type="button" disabled={disabled || zoom <= .5}
+      onClick={() => onChange(Math.max(.5, +(zoom - .25).toFixed(2)))}
+      aria-label="Zoom out" title="Zoom out">−</button>
+    <button type="button" className="zoom-reset" disabled={zoom === 1}
+      onClick={() => onChange(1)} aria-label="Reset zoom to fit" title="Reset to fit">
+      {Math.round(zoom * 100)}%
+    </button>
+    <button type="button" disabled={disabled || zoom >= 2}
+      onClick={() => onChange(Math.min(2, +(zoom + .25).toFixed(2)))}
+      aria-label="Zoom in" title="Zoom in">+</button>
+  </>;
+}
+
 /** Shared chrome; each renderer retains its own navigation and rendering. */
 export function PresentationControls({ page, pageCount, unit, go, fullscreen,
   onFullscreen, close, children }: Props) {

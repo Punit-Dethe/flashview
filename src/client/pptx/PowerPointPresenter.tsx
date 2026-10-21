@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PdfManifest } from '../../shared/protocol';
 import { readCompletedFile } from '../pdf/roomCache';
 import { inspectPptx } from './inspect';
-import { PresentationControls } from '../PresentationControls';
+import { PresentationControls, PresentationZoomControls } from '../PresentationControls';
 
 type Engine = ReturnType<typeof import('pptx-vanilla-viewer').createPptxViewer>;
 
@@ -20,14 +20,35 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
   const wrapperRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Engine | null>(null);
+  const canvasSize = useRef({ width: 1, height: 1 });
   const firstVisible = useRef(false);
   const [stage, setStage] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
   const [slideIndex, setSlideIndex] = useState(0);
   const [slideCount, setSlideCount] = useState(0);
+  const [zoom, setZoom] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
   const [immersiveFallback, setImmersiveFallback] = useState(false);
   const [fullscreenNotice, setFullscreenNotice] = useState('');
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || stage !== 'ready') return;
+    const resize = () => {
+      const viewer = viewerRef.current;
+      if (!viewer || !host.clientWidth || !host.clientHeight) return;
+      // The engine's numeric zoom is an absolute canvas scale. Our 100% is
+      // fit-to-window, just like PDF, and stays fitted across window changes.
+      const fit = Math.min(host.clientWidth / canvasSize.current.width,
+        host.clientHeight / canvasSize.current.height);
+      if (zoom === 1) viewer.zoomToFit();
+      else viewer.setZoom(fit * zoom);
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [stage, zoom]);
 
   useEffect(() => {
     const sync = () => setFullscreen(document.fullscreenElement === wrapperRef.current);
@@ -58,6 +79,7 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
     setStage('loading');
     setSlideIndex(0);
     setSlideCount(0);
+    setZoom(1);
     firstVisible.current = false;
 
     const fail = (message: string) => {
@@ -87,14 +109,17 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
         editable: false,
         showToolbar: false,
         showThumbnails: false,
+        fitPadding: 0,
+        maxFitScale: null,
         customization: { hiddenPanels: ['titleBar', 'statusBar', 'notes'] },
         showCompatibilityToasts: false,
         fileName: file.name,
-        onLoad: ({ slideCount: count }) => {
+        onLoad: ({ slideCount: count, canvasSize: size }) => {
           if (cancelled) return;
           if (watchdog) clearTimeout(watchdog);
           setSlideCount(count);
           setSlideIndex(0);
+          canvasSize.current = size;
           setStage('ready');
           if (!firstVisible.current) {
             firstVisible.current = true;
@@ -152,7 +177,9 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
     </div>}
     <PresentationControls page={slideIndex + 1} pageCount={stage === 'ready' ? slideCount : 0} unit="slide"
       go={page => viewerRef.current?.goToSlide(page - 1)} fullscreen={fullscreen || immersiveFallback}
-      onFullscreen={changeFullscreen} close={close}/>
+      onFullscreen={changeFullscreen} close={close}>
+      <PresentationZoomControls zoom={zoom} disabled={stage !== 'ready'} onChange={setZoom}/>
+    </PresentationControls>
     {fullscreenNotice && <div className="viewer-fullscreen-notice" role="status">{fullscreenNotice}</div>}
     {error && stage === 'ready' && <div className="flashview-pptx-warning" role="alert">{error}</div>}
   </div>;

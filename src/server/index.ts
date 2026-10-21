@@ -223,6 +223,11 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     return;
   }
   if (peer.role === 'host') {
+    if (msg.type === 'participant.color' && typeof msg.studentId === 'string' &&
+        typeof msg.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(msg.color)) {
+      send(room.students.get(msg.studentId)?.ws, {type:'participant.color',color:msg.color});
+      return;
+    }
     if (msg.type === 'file.remove') {
       const change = room.fileState.remove(msg.fileId);
       if (change) {

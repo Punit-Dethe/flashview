@@ -4,7 +4,7 @@ import { PixelIcon } from './PixelIcon';
 import { SiteHeader } from './SiteHeader';
 import { JoinWelcome } from './JoinWelcome';
 import { invitationFor, invitationUrl, readInvitation, rememberInvitation } from './joinInvitation';
-import { assignParticipantColors } from './participantColors';
+import { assignParticipantColors, participantForeground } from './participantColors';
 import { MAX_FILE_BYTES, MAX_STUDENT_FILES, type PdfManifest, type StudentInfo } from '../shared/protocol';
 import { hostCacheIdentity } from '../shared/roomCacheIdentity';
 import { isPdfName, isPowerPointName, safeDownloadName } from '../shared/fileTypes';
@@ -32,7 +32,8 @@ function retainNewestProgress(previous: CacheProgress | undefined, incoming: Cac
 
 type Mode = 'welcome' | 'host' | 'student';
 type HostSession = { roomId: string; code: string; joinToken: string; hostToken: string; autoApprove?: boolean;
-  roomGeneration?: string; leaseToken?: string; cacheId?: string; closeRequested?: boolean; serverClosed?: boolean };
+  roomGeneration?: string; leaseToken?: string; cacheId?: string; closeRequested?: boolean; serverClosed?: boolean;
+  participantColors?: Record<string,string> };
 type ShareStatus = 'announcing' | 'pending' | 'approved' | 'rejected' | 'offline';
 type SharedFile = { file: File; status: ShareStatus };
 
@@ -95,7 +96,11 @@ export function App() {
   const contributors = [...new Map(documents
     .filter(file => !file.deleted && (file.status === 'approved' || file.status === 'offline' || file.revoked))
     .map(file => [file.ownerId, { id: file.ownerId, name: file.ownerName }])).values()];
-  const [participantColors, setParticipantColors] = useState<Record<string,string>>({});
+  const [participantColors, setParticipantColors] = useState<Record<string,string>>(() =>
+    Object.fromEntries(Object.entries(initialSession?.participantColors ?? {}).filter(
+      ([,color]) => typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color))));
+  const [senderColor, setSenderColor] = useState<string>();
+  const deliveredColors = useRef(new Map<string, {student: StudentInfo; color: string}>());
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
   const [busy, setBusy] = useState(false);
   const [autoApprove, setAutoApprove] = useState(true);
@@ -138,6 +143,27 @@ export function App() {
       ...documents.map(file => file.ownerId)];
     setParticipantColors(current => assignParticipantColors(current, ids));
   }, [mode, students, documents]);
+  useEffect(() => {
+    const session = hostSessionRef.current;
+    if (mode !== 'host' || !session) return;
+    // Keep ownership colors stable when the host refreshes after someone leaves.
+    const updated = {...session,participantColors};
+    hostSessionRef.current = updated;
+    try { sessionStorage.setItem('flashview-host',JSON.stringify(updated)); } catch { /* Cosmetic only. */ }
+  }, [mode, participantColors]);
+  // Cosmetic metadata travels on membership/reconnect changes, never per chunk.
+  useEffect(() => {
+    if (mode !== 'host' || socketStatus !== 'connected') {
+      deliveredColors.current.clear();
+      return;
+    }
+    for (const student of students) {
+      const color = participantColors[student.id], previous = deliveredColors.current.get(student.id);
+      if (color && (previous?.student !== student || previous.color !== color) &&
+          socket.send({type:'participant.color',studentId:student.id,color}))
+        deliveredColors.current.set(student.id,{student,color});
+    }
+  }, [mode, students, participantColors, socketStatus, socket]);
   // The host confirms whole files, not incremental byte counts.
   useEffect(() => {
     if (mode !== 'student' || !transferSummary.complete) {
@@ -447,6 +473,9 @@ export function App() {
         socket.send({ type: modeRef.current === 'host' ? 'room.sync' : 'file.sync' });
       // Authenticate/upgrade the host session independently of an old list snapshot.
       if (!metadata.accept && (type !== 'room.state' || !metadata.scopeMatches)) return;
+      if (type === 'participant.color' && modeRef.current === 'student' &&
+          typeof message.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(message.color))
+        setSenderColor(message.color);
       if (type === 'room.state') {
         const session = hostSessionRef.current;
         if (session && typeof message.roomGeneration === 'string' && typeof message.leaseToken === 'string' &&
@@ -722,6 +751,7 @@ export function App() {
     roomVersions.reset();
     setError('');
     setJoinState('connecting');
+    setSenderColor(undefined);
     filesOnPhone.current.clear();
     firstPageImages.current.clear();
     previewRendering.current.clear();
@@ -1149,12 +1179,14 @@ export function App() {
                 <section className="room-card premium-invite" aria-label="Live room QR code">
                   <div className="qr-side">
                     <div className="qr-plate">
-                      <QRCodeSVG value={joinLink} size={244} marginSize={1} bgColor="#ffffff" fgColor="#0e0f14"/>
+                      <QRCodeSVG value={joinLink} size={320} marginSize={4} bgColor="#ffffff" fgColor="#0e0f14"/>
                     </div>
                   </div>
                   <div className="invite-content">
+                    <div className="invite-code">
                     <div className="room-code-label">Or enter this code on WarpView</div>
                     <div className="room-code">{hostSession.code}</div>
+                    </div>
                     <div className="invite-actions">
                       <button type="button" className="outline-button reference-pill"
                         onClick={()=>void copyInvite()}>{copied?'Link copied':'Copy link'}</button>
@@ -1177,7 +1209,7 @@ export function App() {
                     {students.filter(s=>!s.approved).map(s=>(
                       <div className="approval sidebar-approval" data-participant-id={s.id} key={s.id}>
                         <span className="participant-avatar" aria-hidden="true"
-                          style={participantColors[s.id]?{'--participant-color':participantColors[s.id]} as CSSProperties:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
+                          style={participantColors[s.id]?{'--participant-color':participantColors[s.id],'--participant-ink':participantForeground(participantColors[s.id])} as CSSProperties:undefined}>{Array.from(s.name.trim())[0]?.toUpperCase()||'?'}</span>
                         <span className="participant-info"><strong>{s.name}</strong><small>Waiting for approval</small></span>
                         <div className="participant-actions">
                           <button className="mini-accept" onClick={()=>socket.send({type:'student.accept',studentId:s.id})}>Allow</button>
@@ -1186,13 +1218,15 @@ export function App() {
                         </div>
                       </div>
                     ))}
+                    <div className="contributor-chips">
                     {contributors.map(s=>(
                       <div className="participant-row" data-participant-id={s.id} key={s.id}>
                         <span className="participant-avatar" aria-hidden="true"
-                          style={participantColors[s.id]?{'--participant-color':participantColors[s.id]} as CSSProperties:undefined}>{s.name.trim().charAt(0).toUpperCase()||'?'}</span>
-                        <span className="participant-info"><strong>{s.name}</strong></span>
+                          style={participantColors[s.id]?{'--participant-color':participantColors[s.id],'--participant-ink':participantForeground(participantColors[s.id])} as CSSProperties:undefined}>{Array.from(s.name.trim())[0]?.toUpperCase()||'?'}</span>
+                        <span className="participant-info"><strong title={s.name}>{s.name}</strong></span>
                       </div>
                     ))}
+                    </div>
                   </div>
                 </section>
                 </div>
@@ -1327,6 +1361,7 @@ export function App() {
                       <div className="student-transfer-actions">
                         {transferPhase && <TransferPill phase={transferPhase}/>}
                         <button type="button" className="student-add-fab" onClick={browseFiles}
+                          style={senderColor?{'--participant-color':senderColor,'--participant-ink':participantForeground(senderColor)} as CSSProperties:undefined}
                           disabled={joinState !== 'accepted'}
                           aria-label="Add files" title="Add files"><span aria-hidden="true">+</span><span>New</span></button>
                       </div>

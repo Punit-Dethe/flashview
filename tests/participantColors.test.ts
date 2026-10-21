@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assignParticipantColors, PARTICIPANT_SWATCHES, tintParticipantColor } from '../src/client/participantColors';
+import { assignParticipantColors, participantForeground, PARTICIPANT_SWATCHES, tintParticipantColor } from '../src/client/participantColors';
 
 test('first five people retain their hues with amber replacing pink',()=>{
   const ids=['student-a','student-b','student-c','student-d','student-e'];
@@ -29,4 +29,14 @@ test('tints match the reference lighten / darken math',()=>{
   assert.equal(tintParticipantColor('#ec4e8a',-1),'#000000');
   assert.equal(tintParticipantColor('#2f7de1',0.5),'#97bef0');
   assert.equal(tintParticipantColor('#2f7de1',-0.3),'#21589e');
+});
+
+test('participant initials and New labels have readable contrast on all thirty colors',()=>{
+  for(const swatch of PARTICIPANT_SWATCHES) {
+    const [r,g,b]=swatch.slice(1).match(/../g)!.map(hex=>parseInt(hex,16)/255)
+      .map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);
+    const lightness=.2126*r+.7152*g+.0722*b;
+    const contrast=participantForeground(swatch)==='#ffffff'?1.05/(lightness+.05):(lightness+.05)/.05;
+    assert.ok(contrast>=4.5,swatch+' must meet normal-text contrast');
+  }
 });

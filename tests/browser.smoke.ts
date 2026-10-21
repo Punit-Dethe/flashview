@@ -2367,6 +2367,8 @@ test('reference UI assigns one color per real participant, including two student
         name:card.querySelector('h3')?.textContent,
         ownerId:card.dataset.ownerId,
         metadataVisible:Boolean(card.querySelector('.document-file-meta')),
+        avatarColor:card.querySelector<HTMLElement>('.document-uploader-avatar')?.style.getPropertyValue('--participant-color'),
+        avatarLabel:card.querySelector('.document-uploader-avatar')?.getAttribute('aria-label'),
         gradient:card.querySelector('linearGradient stop')?.getAttribute('stop-color'),
       }));
       return {avatars,cards};
@@ -2379,6 +2381,8 @@ test('reference UI assigns one color per real participant, including two student
     for(const card of ui.cards){
       const color=colorFor(card.ownerId);
       assert.ok(color,'Every file must refer to a real participant');
+      assert.equal(card.avatarColor,color,'File action avatar matches its uploader chip');
+      assert.equal(card.avatarLabel,'Uploaded by Student');
       assert.equal(card.metadataVisible,false,'Cards omit the uploader and size row');
       assert.ok(card.gradient && card.gradient!=='#4a5062','The pixel icon must not be gray');
     }
@@ -2388,6 +2392,10 @@ test('reference UI assigns one color per real participant, including two student
     assert.equal(a.gradient,b.gradient,'Every icon from one student has an identical gradient');
     assert.notEqual(a.ownerId,c.ownerId);
     assert.notEqual(a.gradient,c.gradient,'Different students get different icon gradients');
+    for(const [page,ownerId] of [[first,a.ownerId],[second,c.ownerId]] as const) {
+      await page.waitForFunction(color=>document.querySelector<HTMLElement>('.student-add-fab')?.style
+        .getPropertyValue('--participant-color')===color,colorFor(ownerId));
+    }
     await host.locator('.document-row .cache-ring[aria-valuenow="100"]').nth(2).waitFor();
     await first.close();
     // Ask for an authoritative snapshot after the sender has left. Its name
@@ -2395,6 +2403,16 @@ test('reference UI assigns one color per real participant, including two student
     await host.reload();
     await host.locator('.connection.connected').waitFor();
     await host.locator('.participant-row').nth(1).waitFor();
+    const secondColor=await host.locator('.participant-row')
+      .evaluateAll((rows,ownerId)=>rows.find(row=>(row as HTMLElement).dataset.participantId===ownerId)
+        ?.querySelector<HTMLElement>('.participant-avatar')?.style.getPropertyValue('--participant-color'),c.ownerId);
+    assert.equal(secondColor,colorFor(c.ownerId),'Colors survive host refresh after another sender leaves');
+    await second.waitForFunction(color=>document.querySelector<HTMLElement>('.student-add-fab')?.style
+      .getPropertyValue('--participant-color')===color,secondColor);
+    await second.reload();
+    await second.locator('.student-add-fab:not([disabled])').waitFor();
+    await second.waitForFunction(color=>document.querySelector<HTMLElement>('.student-add-fab')?.style
+      .getPropertyValue('--participant-color')===color,secondColor);
     assert.equal(await host.locator('.participant-info small').count(), 0,
       'Contributors must not be labelled Connected');
     assert.equal(await host.locator('.participant-row').count(), 2);
@@ -2402,6 +2420,33 @@ test('reference UI assigns one color per real participant, including two student
       .every(element => Number(getComputedStyle(element).opacity) > 0.99));
     await mkdir('test-artifacts/ui', { recursive: true });
     await host.screenshot({ path: 'test-artifacts/ui/shared-by-desktop.png', fullPage: true });
+    // Layout stress only: clone chips to inspect wrapping and scrolling at 30 names.
+    await host.locator('.contributor-chips').evaluate(element=>{
+      for(let index=2;index<30;index++) {
+        const chip=element.firstElementChild!.cloneNode(true) as HTMLElement;
+        chip.dataset.layoutFixture='true';
+        chip.querySelector('strong')!.textContent=['Asha','Maya Patel','Christopher Alexander'][index%3];
+        element.appendChild(chip);
+      }
+    });
+    const wrapping=await host.locator('.contributor-chips').evaluate(element=>{
+      const chips=[...element.children].map(child=>child.getBoundingClientRect());
+      const scroll=element.closest('.sidebar-participants-scroll')!;
+      return {rows:new Set(chips.map(chip=>Math.round(chip.top))).size,
+        fits:scroll.scrollWidth<=scroll.clientWidth+1,
+        scrolls:scroll.scrollHeight>scroll.clientHeight};
+    });
+    assert.ok(wrapping.rows>1&&wrapping.rows<30&&wrapping.fits&&wrapping.scrolls,
+      'Thirty uploader chips wrap inline and scroll without widening the sidebar');
+    await host.screenshot({path:'test-artifacts/ui/shared-by-thirty-layout.png',fullPage:true});
+    await host.locator('[data-layout-fixture]').evaluateAll(elements=>elements.forEach(element=>element.remove()));
+    await host.setViewportSize({width:390,height:844});
+    assert.equal(await host.locator('.document-card-actions').evaluateAll(rows=>rows.every(row=>{
+      const outer=row.getBoundingClientRect();
+      return [...row.children].every(child=>{const box=child.getBoundingClientRect();return box.left>=outer.left&&box.right<=outer.right+1;});
+    })),true,'Uploader, Download and Present fit together on a phone');
+    await host.getByRole('button',{name:'Configure'}).click();
+    await host.screenshot({path:'test-artifacts/ui/shared-by-identity-mobile.png',fullPage:true});
     await host.getByRole('button',{name:/End room/}).click();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   } finally {
@@ -2482,7 +2527,7 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     assert.equal(check.titleHasOverflow,true,'Long file name visually ends in ellipsis');
     assert.ok(check.titleRightPadding>=12,'File name gets breathing room on the right');
     assert.ok(check.cardRightEdge-check.titleRightEdge>=12,'Text should not touch the card edge');
-    assert.equal(check.metadataVisible,false,'Cards omit uploader, color dot and file size');
+    assert.equal(check.metadataVisible,false,'Cards omit the old uploader and size metadata row');
     assert.equal(check.bezel,6,'The existing preview bezel stays the same width');
     assert.equal(check.previewBorder,1,'The preview has a thin visible outline');
     assert.equal(check.cardBackground,'rgb(240, 244, 249)');

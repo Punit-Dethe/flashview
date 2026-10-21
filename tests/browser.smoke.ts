@@ -2353,8 +2353,8 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     assert.equal(check.metadataVisible,false,'Cards omit uploader, color dot and file size');
     assert.equal(check.bezel,6,'The existing preview bezel stays the same width');
     assert.equal(check.previewBorder,1,'The preview has a thin visible outline');
-    assert.equal(check.cardBackground,'rgb(255, 255, 255)');
-    assert.equal(check.panelBackground,'rgb(240, 244, 249)');
+    assert.equal(check.cardBackground,'rgb(240, 244, 249)');
+    assert.equal(check.panelBackground,'rgb(255, 255, 255)');
     assert.equal(check.panelBlur,'none','The Files section has a solid background');
     await mkdir('test-artifacts/ui',{recursive:true});
     await host.waitForFunction(()=>[...document.querySelectorAll('.document-row')]

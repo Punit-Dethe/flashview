@@ -49,6 +49,17 @@ async function waitForPresenterPopup(host: Page): Promise<Page> {
   return page;
 }
 
+async function closePresenter(page: Page): Promise<void> {
+  await Promise.all([
+    page.waitForEvent('close'),
+    page.getByRole('button', { name: 'Close', exact: true }).click().catch(error => {
+      // Firefox can close the popup before Playwright finishes its click.
+      // Only accept that error when the expected window has actually closed.
+      if (!page.isClosed() || !/Target page, context or browser has been closed/.test(String(error))) throw error;
+    }),
+  ]);
+}
+
 async function swipePreview(page: Page, selector: string, dx: number, dy = 0) {
   const box = await page.locator(selector).boundingBox();
   assert.ok(box);
@@ -1095,8 +1106,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await assertPresentationDock(presentation);
     if (!process.env.FLASHVIEW_BACKEND)
       await presentation.screenshot({ path: 'test-artifacts/ui/presentation-mobile.png' });
-    await Promise.all([presentation.waitForEvent('close'),
-      presentation.getByRole('button', { name: 'Close', exact: true }).click()]);
+    await closePresenter(presentation);
     assert.equal(await host.locator('.document-row').count(), 1);
 
     // Simulate exactly what happens when a mobile browser drops the connection.
@@ -2617,8 +2627,7 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     assert.equal(createHash('sha256').update(got).digest('hex'),
       createHash('sha256').update(pptx).digest('hex'),
       'PowerPoint Download must preserve original bytes');
-    await Promise.all([popup.waitForEvent('close'),
-      popup.getByRole('button', { name: 'Close', exact: true }).click()]);
+    await closePresenter(popup);
     assert.equal(await host.locator('.document-row').count(), 1, 'Close returns to the room without ending it');
   }finally{
     await popup?.close().catch(()=>{});

@@ -636,9 +636,10 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
       assert.ok(Math.abs(layout.cardCenter-width/2)<2,'Room controls remain centered');
       if(width>=1280)assert.ok(Math.abs(layout.navCenter-width/2)<2,'Desktop menu is centered independently of side widths');
       assert.equal(await header.locator('nav').evaluate(el=>getComputedStyle(el).backgroundColor),width<=940?'rgb(255, 255, 255)':'rgba(0, 0, 0, 0)');
-      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(39, 49, 76)');
-      assert.equal(layout.top,0,'Header is fixed at the very top');
-      assert.equal(layout.background,'rgb(255, 255, 255)');
+      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),width<=940?'rgb(39, 49, 76)':'rgb(255, 255, 255)');
+      assert.ok(layout.top>=20&&layout.top<=34,'Header begins near the top of the hero');
+      assert.equal(layout.background,'rgba(0, 0, 0, 0)');
+      if(width===1440||width===390)await page.screenshot({path:'test-artifacts/ui/header-transparent-'+width+'.png'});
       await page.evaluate(()=>window.scrollTo(0,350));
       const compact=await header.evaluate(element=>{
         const targets=[...element.querySelectorAll('a,button')].filter(el=>getComputedStyle(el).visibility==='visible')
@@ -654,10 +655,10 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
       assert.equal(compact.width,layout.headerWidth);
       assert.equal(compact.brandLeft,layout.brandLeft);
       assert.equal(compact.actionRight,layout.actionRight);
-      assert.equal(compact.top,0);
+      assert.equal(compact.top,layout.top-await page.evaluate(()=>window.scrollY),'Header scrolls away with the page');
       assert.equal(compact.background,layout.background,'Scrolling does not change the header appearance');
       assert.ok(compact.fits&&!compact.overlaps,'Compact header controls fit at '+width);
-      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(39, 49, 76)');
+      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),width<=940?'rgb(39, 49, 76)':'rgb(255, 255, 255)');
       if(width===1440||width===390){
         await mkdir('test-artifacts/ui',{recursive:true});
         await page.screenshot({path:'test-artifacts/ui/header-compact-'+width+'.png'});

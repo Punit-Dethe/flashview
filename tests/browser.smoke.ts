@@ -599,6 +599,7 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
     for (const width of [1440,1280,1024,768,390,320]) {
       await page.setViewportSize({width,height:844});
       await page.evaluate(()=>window.scrollTo(0,0));
+      await page.waitForFunction(()=>!document.querySelector('.reference-nav')!.classList.contains('is-scrolled'));
       const layout=await header.evaluate(element=>{
         const box=element.getBoundingClientRect();
         const brand=element.querySelector('.brand')!.getBoundingClientRect();
@@ -608,6 +609,8 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
         const sky=document.querySelector('.reference-sky')!.getBoundingClientRect();
         return {overflow:document.documentElement.scrollWidth>innerWidth,
           cardCenter:card.left+card.width/2,
+          headerWidth:box.width,
+          actionRight:element.querySelector('.reference-nav-actions')!.getBoundingClientRect().right,
           navCenter:nav.left+nav.width/2,
           brandLeft:brand.left,skyLeft:sky.left,
           inBounds:targets.every(target=>target.left>=0&&target.right<=innerWidth&&target.top>=0),
@@ -621,6 +624,27 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
       assert.ok(layout.headerBottom<=layout.titleTop,'Header does not overlap the hero title');
       assert.ok(Math.abs(layout.cardCenter-width/2)<2,'Room controls remain centered');
       if(width>=1280)assert.ok(Math.abs(layout.navCenter-width/2)<2,'Desktop menu is centered independently of side widths');
+      assert.equal(await header.locator('nav').evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)','The center menu has no pill background');
+      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(255, 255, 255)');
+      await page.evaluate(()=>window.scrollTo(0,350));
+      await page.waitForFunction(()=>document.querySelector('.reference-nav')!.classList.contains('is-scrolled'));
+      const compact=await header.evaluate(element=>{
+        const targets=[...element.querySelectorAll('a,button')].map(el=>el.getBoundingClientRect());
+        return {width:element.getBoundingClientRect().width,
+          brandLeft:element.querySelector('.brand')!.getBoundingClientRect().left,
+          actionRight:element.querySelector('.reference-nav-actions')!.getBoundingClientRect().right,
+          fits:targets.every(box=>box.left>=0&&box.right<=innerWidth),
+          overlaps:targets.some((box,i)=>targets.slice(i+1).some(other=>
+            box.left<other.right-1&&box.right>other.left+1&&box.top<other.bottom-1&&box.bottom>other.top+1))};
+      });
+      assert.ok(compact.width<layout.headerWidth&&compact.brandLeft>layout.brandLeft&&compact.actionRight<layout.actionRight,
+        'Scrolling gently moves the header edges and content inward at '+width);
+      assert.ok(compact.fits&&!compact.overlaps,'Compact header controls fit at '+width);
+      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(39, 49, 76)');
+      if(width===1440||width===390){
+        await mkdir('test-artifacts/ui',{recursive:true});
+        await page.screenshot({path:'test-artifacts/ui/header-compact-'+width+'.png'});
+      }
     }
     await header.getByRole('link',{name:'Join a room',exact:true}).click();
     assert.equal(await page.locator('#code').evaluate(el=>el===document.activeElement),true,'Join action focuses the room code');

@@ -1063,11 +1063,32 @@ export function App() {
                   A separate preview tab reads that cache, while transfers keep working in the background.</p>
               </div>
               <div className="home-file-path" aria-label="Files travel from your device, through the live relay, to the room browser cache">
-                <span>Your device</span><span className="file-path-arrow" aria-hidden="true">→</span>
-                <span>Live relay</span><span className="file-path-arrow" aria-hidden="true">→</span>
-                <span>Room browser</span>
+                <div className="home-path-device">
+                  <div className="home-device-screen"><PixelIcon kind="doc"/></div>
+                  <strong>Your device</strong><span>The original file</span>
+                </div>
+                <svg className="file-path-arrow" viewBox="0 0 64 24" fill="none" aria-hidden="true">
+                  <path d="M2 12h58m-8-8 8 8-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <div className="home-path-relay">
+                  <PixelIcon kind="transfer"/>
+                  <strong>Live relay</strong><span>No server file storage</span>
+                </div>
+                <svg className="file-path-arrow" viewBox="0 0 64 24" fill="none" aria-hidden="true">
+                  <path d="M2 12h58m-8-8 8 8-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <div className="home-path-room">
+                  <div className="home-browser-frame">
+                    <div className="home-browser-bar"><span aria-hidden="true"><i/><i/><i/></span><span>Room browser</span></div>
+                    <div className="home-browser-files"><PixelIcon kind="pdf"/><PixelIcon kind="ppt"/></div>
+                    <span className="home-browser-caption">Room files</span>
+                  </div>
+                  <div className="home-preview-branch"><strong>A separate preview tab</strong><span>Transfers keep working while you present.</span></div>
+                </div>
               </div>
-              <a className="home-architecture-link" href="/architecture">Explore the architecture <span aria-hidden="true">↗</span></a>
+              <a className="home-architecture-link" href="/architecture">Explore the architecture
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </a>
             </section>
             <section className="reference-section" id="privacy">
               <div className="reference-trust">

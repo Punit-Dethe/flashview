@@ -596,21 +596,32 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
     const header=page.locator('.reference-nav');
     for (const name of ['Instructions','How it works','Architecture','Join a room','Create a room'])
       assert.equal(await header.getByRole('link',{name,exact:true}).count(),1);
-    for (const width of [1440,1280,1024,768,390,320]) {
+    for (const width of [1440,1280,1024,960,941,940,768,390,320]) {
       await page.setViewportSize({width,height:844});
       await page.evaluate(()=>window.scrollTo(0,0));
       await page.waitForFunction(()=>!document.querySelector('.reference-nav')!.classList.contains('is-scrolled'));
+      if(width<=940){
+        const toggle=header.getByRole('button',{name:/menu/});
+        if(await toggle.getAttribute('aria-expanded')==='true')await toggle.click();
+        assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).count(),0,'Closed mobile links are hidden from accessibility navigation');
+        assert.equal(await header.locator('nav').evaluate(el=>el.hasAttribute('inert')),true);
+        assert.equal(await header.locator('.reference-nav-actions').isVisible(),false,'Mobile header has no room action buttons');
+        if(width===390)await page.screenshot({path:'test-artifacts/ui/header-mobile-closed.png'});
+        await toggle.click();
+        assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+      }
       const layout=await header.evaluate(element=>{
         const box=element.getBoundingClientRect();
         const brand=element.querySelector('.brand')!.getBoundingClientRect();
         const nav=element.querySelector('nav')!.getBoundingClientRect();
-        const targets=[...element.querySelectorAll('a,button')].map(el=>el.getBoundingClientRect());
+        const targets=[...element.querySelectorAll('a,button')].filter(el=>getComputedStyle(el).visibility==='visible')
+          .map(el=>el.getBoundingClientRect()).filter(box=>box.width>0&&box.height>0);
         const card=document.querySelector('.reference-actions')!.getBoundingClientRect();
         const sky=document.querySelector('.reference-sky')!.getBoundingClientRect();
         return {overflow:document.documentElement.scrollWidth>innerWidth,
           cardCenter:card.left+card.width/2,
           headerWidth:box.width,
-          actionRight:element.querySelector('.reference-nav-actions')!.getBoundingClientRect().right,
+          actionRight:element.querySelector(innerWidth<=940?'.reference-menu-toggle':'.reference-nav-actions')!.getBoundingClientRect().right,
           navCenter:nav.left+nav.width/2,
           brandLeft:brand.left,skyLeft:sky.left,
           inBounds:targets.every(target=>target.left>=0&&target.right<=innerWidth&&target.top>=0),
@@ -624,15 +635,16 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
       assert.ok(layout.headerBottom<=layout.titleTop,'Header does not overlap the hero title');
       assert.ok(Math.abs(layout.cardCenter-width/2)<2,'Room controls remain centered');
       if(width>=1280)assert.ok(Math.abs(layout.navCenter-width/2)<2,'Desktop menu is centered independently of side widths');
-      assert.equal(await header.locator('nav').evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)','The center menu has no pill background');
-      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(255, 255, 255)');
+      assert.equal(await header.locator('nav').evaluate(el=>getComputedStyle(el).backgroundColor),width<=940?'rgb(255, 255, 255)':'rgba(0, 0, 0, 0)');
+      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),width<=940?'rgb(39, 49, 76)':'rgb(255, 255, 255)');
       await page.evaluate(()=>window.scrollTo(0,350));
       await page.waitForFunction(()=>document.querySelector('.reference-nav')!.classList.contains('is-scrolled'));
       const compact=await header.evaluate(element=>{
-        const targets=[...element.querySelectorAll('a,button')].map(el=>el.getBoundingClientRect());
+        const targets=[...element.querySelectorAll('a,button')].filter(el=>getComputedStyle(el).visibility==='visible')
+          .map(el=>el.getBoundingClientRect()).filter(box=>box.width>0&&box.height>0);
         return {width:element.getBoundingClientRect().width,
           brandLeft:element.querySelector('.brand')!.getBoundingClientRect().left,
-          actionRight:element.querySelector('.reference-nav-actions')!.getBoundingClientRect().right,
+          actionRight:element.querySelector(innerWidth<=940?'.reference-menu-toggle':'.reference-nav-actions')!.getBoundingClientRect().right,
           fits:targets.every(box=>box.left>=0&&box.right<=innerWidth),
           overlaps:targets.some((box,i)=>targets.slice(i+1).some(other=>
             box.left<other.right-1&&box.right>other.left+1&&box.top<other.bottom-1&&box.bottom>other.top+1))};
@@ -646,6 +658,23 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
         await page.screenshot({path:'test-artifacts/ui/header-compact-'+width+'.png'});
       }
     }
+    const toggle=header.locator('.reference-menu-toggle');
+    await page.keyboard.press('Escape');
+    assert.equal(await toggle.getAttribute('aria-expanded'),'false');
+    assert.equal(await toggle.evaluate(el=>el===document.activeElement),true,'Escape returns focus to the menu toggle');
+    await toggle.click();
+    await page.evaluate(()=>window.scrollTo(0,0));
+    await page.mouse.click(5,300);
+    assert.equal(await toggle.getAttribute('aria-expanded'),'false','Tapping outside closes the dropdown');
+    await toggle.click();
+    await header.getByRole('link',{name:'Instructions',exact:true}).click();
+    assert.equal(new URL(page.url()).hash,'#instructions');
+    assert.equal(await toggle.getAttribute('aria-expanded'),'false','Choosing a menu link closes it');
+    await toggle.click();
+    await page.setViewportSize({width:1280,height:844});
+    await page.waitForFunction(()=>document.querySelector('.reference-menu-toggle')!.getAttribute('aria-expanded')==='false');
+    assert.equal(await toggle.getAttribute('aria-expanded'),'false','Resizing to desktop resets the mobile menu');
+    assert.equal(await toggle.isVisible(),false);
     await header.getByRole('link',{name:'Join a room',exact:true}).click();
     assert.equal(await page.locator('#code').evaluate(el=>el===document.activeElement),true,'Join action focuses the room code');
     await header.getByRole('link',{name:'Create a room',exact:true}).click();
@@ -709,6 +738,10 @@ test('architecture page: public diagrams, deep links and no room connection', {t
       if(width===1440||width===390)
         await page.screenshot({path:'test-artifacts/ui/architecture-'+width+'.png',fullPage:true});
     }
+    await page.getByRole('button',{name:'Open menu',exact:true}).click();
+    assert.equal(await page.locator('.reference-nav').getByRole('link',{name:'Architecture',exact:true}).getAttribute('aria-current'),'page');
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({width:1440,height:1000});
     await page.locator('.reference-nav').getByRole('link',{name:'Join a room',exact:true}).click();
     await page.locator('#code').waitFor();
     assert.equal(await page.locator('#code').evaluate(el=>el===document.activeElement),true,'Architecture Join returns to focused home join form');

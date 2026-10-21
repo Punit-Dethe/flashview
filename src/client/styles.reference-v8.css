@@ -38,7 +38,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .reference-nav-links { display:flex; align-items:center; justify-content:center; gap:4px;
   padding:5px; background:transparent; }
 .premium-app .reference-nav-links a { display:block; padding:10px 15px;
-  color:#fff; font-size:15px; font-weight:700; text-decoration:none; white-space:nowrap; }
+  color:#fff; font-size:16px; font-weight:700; text-decoration:none; white-space:nowrap; }
 .premium-app .reference-nav-links a:hover,.premium-app .reference-nav-links a[aria-current] {
   text-decoration:underline; text-underline-offset:7px; text-decoration-thickness:1px; }
 .premium-app .reference-nav-actions { display:flex; justify-self:end; align-items:center; gap:8px; }
@@ -261,7 +261,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 
 @media(max-width:1100px) {
   .premium-app .site-header.reference-nav.public-header { inset:32px 38px auto; gap:12px; }
-  .premium-app .reference-nav-links a { padding:10px; font-size:14px; }
+  .premium-app .reference-nav-links a { padding:10px; font-size:15px; }
   .premium-app .reference-nav-actions a { padding:10px 13px; font-size:12px; }
   .premium-app .public-header .brand { font-size:30px; }
 }
@@ -278,7 +278,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   .premium-app .site-header.reference-nav.public-header.is-scrolled { inset:12px 30px auto; padding:10px 0; border-radius:18px; }
   .premium-app .public-header .brand { font-size:28px; }
   .premium-app .reference-nav-links { padding:3px; gap:0; }
-  .premium-app .reference-nav-links a { min-height:40px; padding:12px 14px; font-size:13px; }
+  .premium-app .reference-nav-links a { min-height:40px; padding:12px; font-size:14px; }
   .premium-app .reference-nav-actions { gap:6px; }
   .premium-app .reference-nav-actions a { min-height:40px; padding:8px 11px; font-size:11px; }
   .premium-app .reference-hero { padding-top:174px; gap:34px; }
@@ -295,7 +295,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   .premium-app .public-header .brand { font-size:25px; }
   .premium-app .reference-nav-actions { gap:4px; }
   .premium-app .reference-nav-actions a { padding:8px 8px; font-size:10px; }
-  .premium-app .reference-nav-links a { padding:12px 8px; font-size:12px; }
+  .premium-app .reference-nav-links a { padding:12px 6px; font-size:13px; }
   .premium-app .site-header.reference-nav.public-header.is-scrolled { inset:10px 24px auto; }
   .premium-app .public-header.is-scrolled .reference-nav-actions a { padding:8px 6px; }
   .premium-app .home-file-path { flex-direction:column; gap:12px; }

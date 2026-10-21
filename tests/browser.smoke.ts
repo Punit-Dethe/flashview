@@ -2337,6 +2337,12 @@ test('reference UI assigns one color per real participant, including two student
     await host.getByRole('button',{name:'Copy code',exact:true}).click();
     assert.equal(await host.locator('html').getAttribute('data-copied-room-code'),code,
       'Copy code copies the six digits');
+    await host.waitForFunction(()=>getComputedStyle(document.querySelector('.invite-actions .reference-pill')!).color==='rgb(14, 15, 20)');
+    await host.getByRole('button',{name:'End room',exact:true}).hover();
+    await host.waitForFunction(()=>{
+      const style=getComputedStyle(document.querySelector('.end-room-button')!);
+      return style.color==='rgb(180, 35, 24)'&&style.borderTopColor==='rgb(180, 35, 24)';
+    });
     for(const page of [first,second]) {
       await page.goto(root);
       await page.locator('#code').fill(code);

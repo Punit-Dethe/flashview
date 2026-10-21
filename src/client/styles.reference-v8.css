@@ -400,6 +400,12 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   background:#0e0f14; border-radius:99px; white-space:nowrap; }
 .premium-app .reference-room .invite-actions .end-room-button {
   background:#fff; border-color:#d5dce8; color:#0b1230; }
+.premium-app .reference-room .invite-actions .reference-pill:is(:hover,:focus-visible):not(:disabled) {
+  background:#f6f7fa; border-color:#0e0f14; color:#0e0f14;
+}
+.premium-app .reference-room .invite-actions .end-room-button:is(:hover,:focus-visible):not(:disabled) {
+  background:#fff7f6; border-color:#b42318; color:#b42318;
+}
 .premium-app .reference-room .sidebar-participants {
   display:flex; flex:1 1 auto; min-height:0; flex-direction:column; padding:0;
   max-height:136px; margin:0; border:0; background:transparent; }

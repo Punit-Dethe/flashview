@@ -2332,7 +2332,7 @@ test('reference UI assigns one color per real participant, including two student
     await host.getByRole('button',{name:/Create a room/}).click();
     await host.locator('.connection.connected').waitFor();
     const code=(await host.locator('.room-code').innerText()).trim();
-    assert.equal(await host.locator('.room-code-label').count(),0);
+    assert.equal(await host.locator('.room-code-label').innerText(),'Room code');
     await host.evaluate("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{document.documentElement.dataset.copiedRoomCode=value;}}})");
     await host.getByRole('button',{name:'Copy code',exact:true}).click();
     assert.equal(await host.locator('html').getAttribute('data-copied-room-code'),code,

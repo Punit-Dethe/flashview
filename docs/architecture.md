@@ -129,6 +129,13 @@ storage isolation or independence from a terminated dashboard.
 - **PPTX/PPSX:** waits until the complete file is cached, then loads the local OOXML bytes into `pptx-vanilla-viewer`. `.ppt` and other general formats are download-only.
 - A viewer tab can be closed without deleting the room cache or interrupting the background scheduler.
 
+Hosts can delete one file through its card's action menu. Both relays retain a
+versioned deletion tombstone, preventing re-offers or reconnects from restoring
+the listing. The receiver cancels that file's transfer, deletes only its cached
+chunks and preview, and retires its presenter tabs. Other files continue normally;
+the sender's original is untouched. Retained tombstones still count toward the
+room's existing admission budgets until the room ends.
+
 ## Room lifetime and cleanup
 
 Room sessions have a **two-hour renewable idle lifetime**. Host activity or a

@@ -584,44 +584,103 @@ test('room lifecycle: hidden host and visible presenter renew separately; bridge
   } finally { await browser.close(); child.kill(); }
 });
 
-test('home branding and end-room dialog: no header, responsive warning and direct cache cleanup', { timeout: 30000 }, async () => {
+test('home header and end-room dialog: responsive navigation and direct cache cleanup', { timeout: 30000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, reducedMotion: 'reduce' });
   try {
     await page.goto('http://127.0.0.1:' + port);
-    await page.locator('.home-wordmark').waitFor();
-    assert.equal(await page.locator('.site-header, nav, .nav-start').count(), 0);
-    assert.equal(await page.getByRole('heading', { name: 'WarpView', exact: true, level: 1 }).count(), 1);
-    assert.equal(await page.getByText('From your phone, onto the big screen.', { exact: true }).count(), 0);
-    assert.equal(await page.locator('.home-wordmark').innerText(), 'warpview');
-    assert.equal(await page.locator('.home-wordmark').evaluate(el => el.getAnimations({ subtree: true }).length), 0);
-    for (const width of [1440, 1280, 1024, 768, 390, 320]) {
-      await page.setViewportSize({ width, height: 844 });
-      const geometry = await page.evaluate(() => {
-        const brand = document.querySelector('.home-wordmark')!.getBoundingClientRect();
-        const card = document.querySelector('.reference-actions')!.getBoundingClientRect();
-        const sky = document.querySelector('.reference-welcome>.reference-sky')!.getBoundingClientRect();
-        const accents = [...document.querySelectorAll('.hero-accent')].map(el => el.getBoundingClientRect());
-        return { center: brand.x + brand.width / 2, cardCenter: card.x + card.width / 2, gap: card.top - brand.bottom,
-          verticalCenterError: Math.abs(brand.y + brand.height / 2 - (sky.top + card.top) / 2),
-          accentsVisible: accents.some(icon => icon.width > 0 && icon.height > 0),
-          font: parseFloat(getComputedStyle(document.querySelector('.home-wordmark')!).fontSize),
-          overlapping: accents.some(icon => icon.left < card.right && icon.right > card.left && icon.top < card.bottom && icon.bottom > card.top),
-          overflow: document.documentElement.scrollWidth > innerWidth };
+    await page.locator('.reference-nav').waitFor();
+    assert.equal(await page.locator('.hero-accents,.reference-logo-mark').count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'From your phone, onto the big screen.', exact: true, level: 1 }).count(), 1);
+    const header=page.locator('.reference-nav');
+    for (const name of ['Instructions','How it works','Architecture','Join a room','Create a room'])
+      assert.equal(await header.getByRole('link',{name,exact:true}).count(),1);
+    for (const width of [1440,1280,1024,960,941,940,768,390,320]) {
+      await page.setViewportSize({width,height:844});
+      await page.evaluate(()=>window.scrollTo(0,0));
+      await page.waitForFunction(()=>!document.querySelector('.reference-nav')!.classList.contains('is-scrolled'));
+      if(width<=940){
+        const toggle=header.getByRole('button',{name:/menu/});
+        if(await toggle.getAttribute('aria-expanded')==='true')await toggle.click();
+        assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).count(),0,'Closed mobile links are hidden from accessibility navigation');
+        assert.equal(await header.locator('nav').evaluate(el=>el.hasAttribute('inert')),true);
+        assert.equal(await header.locator('.reference-nav-actions').isVisible(),false,'Mobile header has no room action buttons');
+        if(width===390)await page.screenshot({path:'test-artifacts/ui/header-mobile-closed.png'});
+        await toggle.click();
+        assert.equal(await toggle.getAttribute('aria-expanded'),'true');
+      }
+      const layout=await header.evaluate(element=>{
+        const box=element.getBoundingClientRect();
+        const brand=element.querySelector('.brand')!.getBoundingClientRect();
+        const nav=element.querySelector('nav')!.getBoundingClientRect();
+        const targets=[...element.querySelectorAll('a,button')].filter(el=>getComputedStyle(el).visibility==='visible')
+          .map(el=>el.getBoundingClientRect()).filter(box=>box.width>0&&box.height>0);
+        const card=document.querySelector('.reference-actions')!.getBoundingClientRect();
+        const sky=document.querySelector('.reference-sky')!.getBoundingClientRect();
+        return {overflow:document.documentElement.scrollWidth>innerWidth,
+          cardCenter:card.left+card.width/2,
+          headerWidth:box.width,
+          actionRight:element.querySelector(innerWidth<=940?'.reference-menu-toggle':'.reference-nav-actions')!.getBoundingClientRect().right,
+          navCenter:nav.left+nav.width/2,
+          brandLeft:brand.left,skyLeft:sky.left,
+          inBounds:targets.every(target=>target.left>=0&&target.right<=innerWidth&&target.top>=0),
+          overlaps:targets.some((target,i)=>targets.slice(i+1).some(other=>
+            target.left<other.right-1&&target.right>other.left+1&&target.top<other.bottom-1&&target.bottom>other.top+1)),
+          headerBottom:box.bottom,titleTop:document.querySelector('.reference-hero h1')!.getBoundingClientRect().top};
       });
-      assert.ok(Math.abs(geometry.center - width / 2) < 2, 'Brand stays centered');
-      assert.ok(Math.abs(geometry.cardCenter - width / 2) < 2, 'Room controls stay centered');
-      assert.ok(geometry.gap >= 32 && geometry.font >= 64, 'Large brand sits clearly above the room card');
-      assert.ok(geometry.verticalCenterError < 2, 'Brand is vertically centered between the sky top and room card at width ' + width);
-      assert.equal(geometry.accentsVisible, width > 760, 'Phone layouts hide illustrations');
-      assert.equal(geometry.overlapping, false, 'Illustrations never cover the room controls at width ' + width);
-      assert.equal(geometry.overflow, false);
+      assert.equal(layout.overflow,false,'No horizontal overflow at '+width);
+      assert.ok(layout.inBounds&&!layout.overlaps,'Header links fit without overlap at '+width);
+      assert.ok(layout.brandLeft>=layout.skyLeft+12,'Header respects the rounded hero inset');
+      assert.ok(layout.headerBottom<=layout.titleTop,'Header does not overlap the hero title');
+      assert.ok(Math.abs(layout.cardCenter-width/2)<2,'Room controls remain centered');
+      if(width>=1280)assert.ok(Math.abs(layout.navCenter-width/2)<2,'Desktop menu is centered independently of side widths');
+      assert.equal(await header.locator('nav').evaluate(el=>getComputedStyle(el).backgroundColor),width<=940?'rgb(255, 255, 255)':'rgba(0, 0, 0, 0)');
+      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),width<=940?'rgb(39, 49, 76)':'rgb(255, 255, 255)');
+      await page.evaluate(()=>window.scrollTo(0,350));
+      await page.waitForFunction(()=>document.querySelector('.reference-nav')!.classList.contains('is-scrolled'));
+      const compact=await header.evaluate(element=>{
+        const targets=[...element.querySelectorAll('a,button')].filter(el=>getComputedStyle(el).visibility==='visible')
+          .map(el=>el.getBoundingClientRect()).filter(box=>box.width>0&&box.height>0);
+        return {width:element.getBoundingClientRect().width,
+          brandLeft:element.querySelector('.brand')!.getBoundingClientRect().left,
+          actionRight:element.querySelector(innerWidth<=940?'.reference-menu-toggle':'.reference-nav-actions')!.getBoundingClientRect().right,
+          fits:targets.every(box=>box.left>=0&&box.right<=innerWidth),
+          overlaps:targets.some((box,i)=>targets.slice(i+1).some(other=>
+            box.left<other.right-1&&box.right>other.left+1&&box.top<other.bottom-1&&box.bottom>other.top+1))};
+      });
+      assert.ok(compact.width<layout.headerWidth&&compact.brandLeft>layout.brandLeft&&compact.actionRight<layout.actionRight,
+        'Scrolling gently moves the header edges and content inward at '+width);
+      assert.ok(compact.fits&&!compact.overlaps,'Compact header controls fit at '+width);
+      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(39, 49, 76)');
+      if(width===1440||width===390){
+        await mkdir('test-artifacts/ui',{recursive:true});
+        await page.screenshot({path:'test-artifacts/ui/header-compact-'+width+'.png'});
+      }
     }
-    assert.equal(await page.locator('.home-wordmark').evaluate(el => getComputedStyle(el).color), 'rgb(255, 255, 255)');
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
-    assert.equal(await page.locator('.home-wordmark').evaluate(el => el.getAnimations({ subtree: true }).length), 0);
-    await page.setViewportSize({ width: 1280, height: 844 });
+    const toggle=header.locator('.reference-menu-toggle');
+    await page.keyboard.press('Escape');
+    assert.equal(await toggle.getAttribute('aria-expanded'),'false');
+    assert.equal(await toggle.evaluate(el=>el===document.activeElement),true,'Escape returns focus to the menu toggle');
+    await toggle.click();
+    await page.evaluate(()=>window.scrollTo(0,0));
+    await page.mouse.click(5,300);
+    assert.equal(await toggle.getAttribute('aria-expanded'),'false','Tapping outside closes the dropdown');
+    await toggle.click();
+    await header.getByRole('link',{name:'Instructions',exact:true}).click();
+    assert.equal(new URL(page.url()).hash,'#instructions');
+    assert.equal(await toggle.getAttribute('aria-expanded'),'false','Choosing a menu link closes it');
+    await toggle.click();
+    await page.setViewportSize({width:1280,height:844});
+    await page.waitForFunction(()=>document.querySelector('.reference-menu-toggle')!.getAttribute('aria-expanded')==='false');
+    assert.equal(await toggle.getAttribute('aria-expanded'),'false','Resizing to desktop resets the mobile menu');
+    assert.equal(await toggle.isVisible(),false);
+    await header.getByRole('link',{name:'Join a room',exact:true}).click();
+    assert.equal(await page.locator('#code').evaluate(el=>el===document.activeElement),true,'Join action focuses the room code');
+    await header.getByRole('link',{name:'Create a room',exact:true}).click();
+    assert.equal(await page.locator('.room-code').count(),0,'Header Create reveals setup without starting a room');
+    await page.setViewportSize({width:1280,height:844});
+    await page.evaluate(()=>window.scrollTo(0,0));
     await page.getByRole('button', { name: /Create a room/ }).click();
     await page.locator('.connection.connected').waitFor();
     await seedLifecycleCache(page);
@@ -647,6 +706,50 @@ test('home branding and end-room dialog: no header, responsive warning and direc
   } finally { await browser.close(); child.kill(); }
 });
 
+test('architecture page: public diagrams, deep links and no room connection', {timeout:40000}, async()=>{
+  const {port,child}=await runningServer(), browser=await browserEngine.launch({headless:true});
+  const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
+  const root='http://127.0.0.1:'+port, sockets:string[]=[];
+  page.on('websocket',socket=>sockets.push(socket.url()));
+  try{
+    await page.goto(root+'/architecture');
+    await page.locator('.architecture-page').waitFor();
+    assert.match(await page.title(),/Architecture/i);
+    assert.equal(await page.locator('h1').count(),1);
+    assert.equal(await page.locator('.reference-nav .reference-logo-mark,.hero-accents').count(),0);
+    assert.ok(await page.locator('.architecture-page figure').count()>=3,'Architecture is explained with multiple diagrams');
+    const body=await page.locator('.architecture-page').innerText();
+    for(const fact of [/IndexedDB/i,/Durable Object/i,/BroadcastChannel/i,/PDF/i,/PowerPoint|PPTX/i,/200\s*MiB/i,/end.to.end/i])
+      assert.match(body,fact);
+    assert.equal(sockets.length,0,'Documentation never opens a room connection');
+    await page.locator('.arch-journey-stages').getByRole('button',{name:/Commit/}).click();
+    await page.getByRole('heading',{name:'Received is only counted after it is saved.',exact:true}).waitFor();
+    assert.equal(await page.locator('.arch-journey-stages').getByRole('button',{name:/Commit/}).getAttribute('aria-pressed'),'true');
+    const remembered=JSON.stringify({roomId:'sentinel-room',code:'999999',hostToken:'sentinel-private-token'});
+    await page.evaluate(value=>sessionStorage.setItem('flashview-host',value),remembered);
+    await page.reload();await page.locator('.architecture-page').waitFor();
+    assert.equal(await page.evaluate(()=>sessionStorage.getItem('flashview-host')),remembered,'Docs preserve an existing private session');
+    assert.equal(sockets.length,0,'Docs do not resume the saved room');
+    await page.evaluate(()=>sessionStorage.removeItem('flashview-host'));
+    await mkdir('test-artifacts/ui',{recursive:true});
+    for(const width of [1440,768,390,320]){
+      await page.setViewportSize({width,height:1000});
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Architecture fits '+width);
+      if(width===1440||width===390)
+        await page.screenshot({path:'test-artifacts/ui/architecture-'+width+'.png',fullPage:true});
+    }
+    await page.getByRole('button',{name:'Open menu',exact:true}).click();
+    assert.equal(await page.locator('.reference-nav').getByRole('link',{name:'Architecture',exact:true}).getAttribute('aria-current'),'page');
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({width:1440,height:1000});
+    await page.locator('.reference-nav').getByRole('link',{name:'Join a room',exact:true}).click();
+    await page.locator('#code').waitFor();
+    assert.equal(await page.locator('#code').evaluate(el=>el===document.activeElement),true,'Architecture Join returns to focused home join form');
+    await page.locator('.reference-nav').getByRole('link',{name:'Instructions',exact:true}).click();
+    assert.equal(new URL(page.url()).hash,'#instructions');
+  }finally{await browser.close();child.kill();}
+});
+
 test('real browser: explicit room start, pinned invite, scrolling documents and room switch', { timeout: 70000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
@@ -659,10 +762,11 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.equal(await first.locator('.room-code').count(), 0,
       'Visiting the homepage must not create a classroom automatically');
     await first.reload();
+    await first.locator('.reference-nav').waitFor();
     assert.equal(await first.locator('.room-code').count(), 0,
       'Reloading the welcome page must not create a classroom either');
 
-    assert.equal(await first.locator('.site-header').count(), 0, 'Homepage has no header');
+    assert.equal(await first.locator('.site-header').count(), 1, 'Homepage has the public navigation header');
     const background = await first.locator('.reference-sky').evaluate(el => getComputedStyle(el).backgroundImage);
     assert.match(background, /31, 79, 232|#1f4fe8/i,
       'The supplied cobalt-to-pastel sky gradient should remain intact');
@@ -2315,6 +2419,16 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
     assert.equal(await host.getByRole('heading',{name:/^Files/}).count(),1);
     assert.equal(await host.locator('.reference-room-tools button').count(),2,
       'Top-right toolbar must contain only Grid/List controls');
+    const toolbar=await host.locator('.list-heading').evaluate(el=>{
+      const title=el.querySelector('h1')!.getBoundingClientRect();
+      const tools=el.querySelector('.reference-room-tools')!.getBoundingClientRect();
+      const count=el.querySelector('sup')!.getBoundingClientRect();
+      return {divider:getComputedStyle(el).borderBottomWidth,
+        aligned:Math.abs(title.top+title.height/2-tools.top-tools.height/2)<2,
+        countAligned:Math.abs(title.top+title.height/2-count.top-count.height/2)<2};
+    });
+    assert.equal(toolbar.divider,'0px','The file toolbar has no inherited divider');
+    assert.ok(toolbar.aligned&&toolbar.countAligned,'Files, count and view controls share one center line');
     assert.equal(await host.locator('.reference-live').count(),0,
       'The relay status pill must no longer occupy the top-right toolbar');
     assert.equal(await host.locator('.sidebar-participants-heading .connection.connected').count(),1,
@@ -2396,6 +2510,36 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
       'List mode also omits uploader and file size');
     assert.equal(await card.evaluate(element=>element.querySelector('.document-card-visual')!.getBoundingClientRect().right<=
       element.querySelector('.document-card-info')!.getBoundingClientRect().left),true,'List view keeps the thumbnail before the title');
+    await student.locator('input[type=file]').setInputFiles({name:'keep.bin',mimeType:'application/octet-stream',buffer:Buffer.alloc(8000,7)});
+    const keep=host.locator('.document-card').filter({hasText:'keep.bin'});
+    await keep.getByRole('button',{name:'Download keep.bin',exact:true}).waitFor();
+    await host.waitForFunction(()=>!(document.querySelector('[aria-label="Download keep.bin"]') as HTMLButtonElement)?.disabled);
+    const removedId=await card.getAttribute('data-file-id');
+    const more=card.getByRole('button',{name:'File actions for '+longName,exact:true});
+    await more.click();
+    await card.getByRole('menuitem',{name:'Delete file',exact:true}).waitFor();
+    await host.keyboard.press('Escape');
+    assert.equal(await more.evaluate(el=>el===document.activeElement),true,'Escape restores the file action button');
+    await more.click();
+    const menuBox=await card.getByRole('menu').boundingBox();
+    assert.ok(menuBox&&menuBox.x>=0&&menuBox.x+menuBox.width<=1280&&menuBox.y+menuBox.height<=760,'File menu is not clipped by the list or viewport');
+    await card.getByRole('menuitem',{name:'Delete file',exact:true}).click();
+    await card.waitFor({state:'detached'});
+    await host.waitForFunction(async fileId=>{
+      const room=JSON.parse(sessionStorage.getItem('flashview-host')!).cacheId;
+      const db=await new Promise<IDBDatabase>((resolve,reject)=>{const request=indexedDB.open('flashview-room-cache');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+      try{return await new Promise<boolean>(resolve=>{
+        const tx=db.transaction(['chunks','previews'],'readonly');
+        const chunks=tx.objectStore('chunks').index('document').count(IDBKeyRange.only(room+'/'+fileId));
+        const preview=tx.objectStore('previews').get(room+'/'+fileId);
+        tx.oncomplete=()=>resolve(chunks.result===0&&!preview.result);
+      });}finally{db.close();}
+    },removedId);
+    await student.reload();
+    await host.reload();await host.locator('.connection.connected').waitFor();
+    await keep.waitFor();
+    assert.equal(await host.locator('.document-card').filter({hasText:longName}).count(),0,'Deleted listing stays gone after both ends reconnect');
+    assert.equal(await keep.getByRole('button',{name:'Download keep.bin',exact:true}).isEnabled(),true,'Another file remains cached and available');
     await host.getByRole('button',{name:'End room'}).click();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   }finally{
@@ -2403,6 +2547,42 @@ test('refined file cards hide metadata, truncate long names and keep phone contr
   }
 });
 
+
+test('host deletes an in-flight file without stopping another original or resurrecting late bytes',{timeout:45000},async()=>{
+  const {port,child}=await runningServer(),browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({acceptDownloads:true}),student=await browser.newPage();
+  await transferInit(student,()=>{
+    const original=Blob.prototype.arrayBuffer;
+    Blob.prototype.arrayBuffer=async function(){await new Promise(resolve=>setTimeout(resolve,200));return original.call(this);};
+  });
+  try{
+    const root='http://127.0.0.1:'+port;
+    await host.goto(root);await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    await student.goto(root);await student.locator('#code').fill((await host.locator('.room-code').innerText()).trim());
+    await student.getByRole('button',{name:/Join room/}).click();await student.locator('.student-add-fab:not([disabled])').waitFor();
+    const survivor=Buffer.alloc(8192,71);
+    await student.locator('input[type=file]').setInputFiles([
+      {name:'keep-original.bin',mimeType:'application/octet-stream',buffer:survivor},
+      {name:'delete-receiving.bin',mimeType:'application/octet-stream',buffer:Buffer.alloc(32*1024*1024,11)},
+    ]);
+    const receiving=host.locator('.document-card').filter({hasText:'delete-receiving.bin'});
+    await receiving.waitFor();
+    assert.notEqual(await receiving.getByRole('progressbar').getAttribute('aria-valuenow'),'100');
+    await receiving.getByRole('button',{name:'File actions for delete-receiving.bin',exact:true}).click();
+    await receiving.getByRole('menuitem',{name:'Delete file',exact:true}).click();
+    await receiving.waitFor({state:'detached'});
+    const keep=host.getByRole('button',{name:'Download keep-original.bin',exact:true});
+    await host.waitForFunction(()=>!(document.querySelector('[aria-label="Download keep-original.bin"]') as HTMLButtonElement)?.disabled);
+    const [download]=await Promise.all([host.waitForEvent('download'),keep.click()]);
+    assert.deepEqual(await readFile((await download.path())!),survivor);
+    await delay(500); // Let already-started sender reads finish after deletion.
+    await host.reload();await host.locator('.connection.connected').waitFor();
+    assert.equal(await receiving.count(),0);
+    await keep.waitFor();
+    await host.getByRole('button',{name:'End room'}).click();await host.getByRole('button',{name:/End & clear cache/}).click();
+  }finally{await host.close();await student.close();await browser.close();child.kill('SIGTERM');}
+});
 
 test('phone hosting: join-first homepage, collapsed room setup, approvals and shared files', {timeout:80000}, async()=>{
   const {port,child}=await runningServer();
@@ -2412,6 +2592,7 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
   const root='http://127.0.0.1:'+port;
   try{
     await host.goto(root);
+    await host.locator('.reference-actions .join-card').waitFor();
     const order=await host.evaluate(()=>{
       const join=document.querySelector('.reference-actions .join-card')!.getBoundingClientRect();
       const create=document.querySelector('.reference-actions .host-card')!.getBoundingClientRect();
@@ -2476,8 +2657,69 @@ test('phone hosting: join-first homepage, collapsed room setup, approvals and sh
   }
 });
 
+test('PowerPoint saved thumbnails work without loading the presentation renderer', {timeout:45000}, async t=>{
+  const {port,child}=await runningServer(),browser=await browserEngine.launch({headless:true});
+  const host=await browser.newPage({viewport:{width:1280,height:760}}),student=await browser.newPage();
+  let popup:Page|null=null;
+  const heavyRequests:string[]=[];
+  await host.route('**/assets/PresentationBuilder-*.js',route=>{
+    heavyRequests.push(route.request().url());
+    return route.abort();
+  });
+  try{
+    await host.goto('http://127.0.0.1:'+port);
+    await host.getByRole('button',{name:/Create a room/}).click();
+    await host.locator('.connection.connected').waitFor();
+    const code=(await host.locator('.room-code').innerText()).trim();
+    const saved=await host.evaluate(()=>{
+      const canvas=document.createElement('canvas');canvas.width=160;canvas.height=90;
+      const context=canvas.getContext('2d')!;context.fillStyle='#1f4fe8';context.fillRect(0,0,160,90);
+      return {png:canvas.toDataURL('image/png').split(',')[1],jpeg:canvas.toDataURL('image/jpeg').split(',')[1]};
+    });
+    await student.goto('http://127.0.0.1:'+port);
+    await student.locator('#code').fill(code);
+    await student.getByRole('button',{name:/Join room/}).click();
+    await student.locator('.student-add-fab:not([disabled])').waitFor();
+    const files=await Promise.all((['png','jpeg'] as const).map(async extension=>({
+      name:'saved-'+extension+'.pptx',mimeType:'application/octet-stream',
+      buffer:await makePowerPointFixture(3,{bytes:Buffer.from(saved[extension],'base64'),extension}),
+    })));
+    const started=performance.now();
+    await student.locator('input[type=file]').setInputFiles(files);
+    for(const file of files){
+      const card=host.locator('.document-card').filter({hasText:file.name});
+      const thumb=card.locator('.document-thumb-image.is-visible');
+      await thumb.waitFor({timeout:15000});
+      const pixels=await thumb.evaluate(el=>{
+        const image=el as HTMLImageElement,canvas=document.createElement('canvas');
+        canvas.width=1;canvas.height=1;
+        const context=canvas.getContext('2d')!;context.drawImage(image,0,0,1,1);
+        return {width:image.naturalWidth,height:image.naturalHeight,color:[...context.getImageData(0,0,1,1).data]};
+      });
+      assert.equal(pixels.width,360);assert.equal(pixels.height,203);
+      assert.ok(Math.abs(pixels.color[0]-31)<5&&Math.abs(pixels.color[1]-79)<5&&Math.abs(pixels.color[2]-232)<5,
+        'The actual saved preview is decoded and re-encoded');
+      assert.equal(await card.getByRole('button',{name:'Present '+file.name}).isEnabled(),true);
+    }
+    t.diagnostic('PPTX fixtures: upload two files through relay to visible saved thumbnails '+Math.round(performance.now()-started)+' ms');
+    assert.equal(heavyRequests.length,0,'Saved previews do not fetch or mount the full PPTX renderer on the host');
+    assert.equal(await host.locator('.pptxv-stage').count(),0);
+    await host.reload();await host.locator('.connection.connected').waitFor();
+    for(const file of files)await host.locator('.document-card').filter({hasText:file.name}).locator('.document-thumb-image.is-visible').waitFor();
+    assert.equal(heavyRequests.length,0,'Room recovery reuses saved thumbnails');
+    const presentStarted=performance.now();
+    [popup]=await Promise.all([waitForPresenterPopup(host),host.getByRole('button',{name:'Present '+files[0].name}).click()]);
+    await popup.getByText('FlashView PowerPoint Test',{exact:true}).waitFor();
+    await popup.locator('.presentation-transition').waitFor({state:'hidden'});
+    t.diagnostic('PPTX fixture: cold presenter click to visible slide '+Math.round(performance.now()-presentStarted)+' ms');
+    await closePresenter(popup);
+    await host.getByRole('button',{name:'End room'}).click();
+    await host.getByRole('button',{name:/End & clear cache/}).click();
+  }finally{await popup?.close().catch(()=>{});await host.close();await student.close();await browser.close();child.kill('SIGTERM');}
+});
+
 test('complete PowerPoint uses lazy browser-only presenter with independent Download and Present actions',
-  {timeout:130000}, async()=>{
+  {timeout:130000}, async t=>{
   const {port,child}=await runningServer();
   const browser=await browserEngine.launch({headless:true});
   const host=await browser.newPage({viewport:{width:1280,height:760},acceptDownloads:true});
@@ -2535,7 +2777,9 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
       const rgb=paint.backgroundColor.match(/[0-9]+/g)?.map(Number)??[];
       return rgb.length>=3 && rgb.slice(0,3).every(value=>value>=245);
     },null,{timeout:3000});
+    const thumbnailStarted=performance.now();
     await card.locator('img.document-thumb-image.is-visible').waitFor({timeout:45000});
+    t.diagnostic('PPTX fixture: complete cache to visible thumbnail '+Math.round(performance.now()-thumbnailStarted)+' ms');
     const thumb=await card.locator('img.document-thumb-image').evaluate(el=>({
       width:(el as HTMLImageElement).naturalWidth,
       height:(el as HTMLImageElement).naturalHeight,
@@ -2566,10 +2810,12 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
     assert.doesNotMatch(await popup.locator('body').innerText(), /Loading PowerPoint|Opening PowerPoint|Opening presentation/);
     if (!process.env.FLASHVIEW_BACKEND)
       await popup.screenshot({ path:'test-artifacts/ui/preview-transition.png' });
+    const presentStarted=performance.now();
     releaseImport();
     await popup.getByRole('spinbutton', { name: 'Slide number' }).waitFor({timeout:45000});
     await popup.waitForFunction(() => !(document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.disabled);
     await popup.locator('.presentation-transition').waitFor({state:'hidden'});
+    t.diagnostic('PPTX fixture: released presenter import to visible slide '+Math.round(performance.now()-presentStarted)+' ms');
     assert.equal(await brand.evaluate(element => element.isConnected), true, 'One branded layer survives both loading stages');
     assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1');
     await swipePreview(popup, '.flashview-pptx-canvas', -160);

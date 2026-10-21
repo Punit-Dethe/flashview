@@ -1,7 +1,8 @@
-import { ZipWriter, Uint8ArrayWriter, TextReader } from '@zip.js/zip.js';
+import { ZipWriter, Uint8ArrayWriter, TextReader, Uint8ArrayReader } from '@zip.js/zip.js';
 
 /** Minimal genuine OOXML slideshow. No network fixture or third-party Office converter. */
-export async function makePowerPointFixture(slideCount = 1): Promise<Buffer> {
+export async function makePowerPointFixture(slideCount = 1,
+  thumbnail?: { bytes: Uint8Array; extension: 'png' | 'jpeg' }): Promise<Buffer> {
   const ct='application/vnd.openxmlformats-officedocument.presentationml.';
   const relns='http://schemas.openxmlformats.org/package/2006/relationships';
   const presns='http://schemas.openxmlformats.org/presentationml/2006/main';
@@ -72,6 +73,7 @@ hlink="hlink" folHlink="folHlink" bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2"/>
   }
   const archive = new ZipWriter(new Uint8ArrayWriter());
   for(const [name,xml] of Object.entries(parts)) await archive.add(name,new TextReader(xml));
+  if(thumbnail)await archive.add('docProps/thumbnail.'+thumbnail.extension,new Uint8ArrayReader(thumbnail.bytes));
   const bytes=await archive.close();
   return Buffer.from(bytes);
 }

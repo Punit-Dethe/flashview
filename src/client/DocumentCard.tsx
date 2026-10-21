@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import type { PdfManifest } from '../shared/protocol';
 import { isPdfName, isPowerPointName } from '../shared/fileTypes';
 import type { CacheProgress } from './pdf/roomCache';
@@ -13,13 +13,26 @@ type Props = {
   bytesPerSecond?: number;
   onPresent: () => void;
   onDownload: () => void;
+  onDelete: () => void;
   saving?: boolean;
 };
 
 const CIRCUMFERENCE = 2 * Math.PI * 16;
 
 /** Responsive file card with a framed preview and independent file actions. */
-export function DocumentCard({file,participantColor,previewUrl,progress,bytesPerSecond=0,onPresent,onDownload,saving=false}:Props) {
+export function DocumentCard({file,participantColor,previewUrl,progress,bytesPerSecond=0,onPresent,onDownload,onDelete,saving=false}:Props) {
+  const menuId=useId();
+  const menuRef=useRef<HTMLDivElement>(null);
+  const menuButtonRef=useRef<HTMLButtonElement>(null);
+  const deleteRef=useRef<HTMLButtonElement>(null);
+  const [menuOpen,setMenuOpen]=useState(false);
+  useEffect(()=>{
+    if(!menuOpen)return;
+    const close=()=>menuRef.current?.hidePopover();
+    window.addEventListener('resize',close);
+    document.addEventListener('scroll',close,true);
+    return()=>{window.removeEventListener('resize',close);document.removeEventListener('scroll',close,true);};
+  },[menuOpen]);
   const [imageState,setImageState]=useState({url:'',ready:false,failed:false,portrait:false});
   const [fallbackTimeout,setFallbackTimeout]=useState(false);
   const pdf=isPdfName(file.name);
@@ -38,9 +51,32 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
   const showIcon=!(pdf||powerpoint)||imageFailed||(!previewUrl&&(fallbackTimeout||file.status==='offline'||powerpoint));
   const progressLabel=cached?'Fully cached':Math.round(percent)+'% cached'+
     (bytesPerSecond>0?' · '+formatBytes(bytesPerSecond)+'/s':'');
-  return <article className="document-row document-card" data-owner-id={file.ownerId}>
+  return <article className="document-row document-card" data-owner-id={file.ownerId} data-file-id={file.fileId}>
     <div className="document-card-info">
       <h3 title={file.name}>{file.name}</h3>
+      <button ref={menuButtonRef} type="button" className="document-card-more" aria-label={'File actions for '+file.name}
+        aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuId} onClick={event=>{
+          const menu=menuRef.current;
+          if(!menu)return;
+          if(menu.matches(':popover-open')){menu.hidePopover();return;}
+          const box=event.currentTarget.getBoundingClientRect();
+          menu.style.left=Math.max(8,Math.min(innerWidth-168,box.right-160))+'px';
+          menu.style.top=Math.max(8,box.bottom+62>innerHeight?box.top-62:box.bottom+4)+'px';
+          menu.showPopover();deleteRef.current?.focus({preventScroll:true});
+        }}>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+          <circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>
+        </svg>
+      </button>
+      <div ref={menuRef} id={menuId} popover="auto" role="menu" aria-label={'Actions for '+file.name}
+        onKeyDown={event=>{
+          if(event.key==='Escape'){event.preventDefault();menuRef.current?.hidePopover();menuButtonRef.current?.focus({preventScroll:true});}
+        }} onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))menuRef.current?.hidePopover();}}
+        className="document-card-menu" onToggle={event=>setMenuOpen((event.nativeEvent as ToggleEvent).newState==='open')}>
+        <button ref={deleteRef} type="button" role="menuitem" onClick={()=>{
+          menuRef.current?.hidePopover();menuButtonRef.current?.focus({preventScroll:true});onDelete();
+        }}>Delete file</button>
+      </div>
     </div>
     <div className="document-card-visual">
       <div className="document-thumb" aria-hidden="true">

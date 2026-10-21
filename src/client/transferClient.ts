@@ -51,6 +51,10 @@ export class RoomTransferClient {
           if (typeof event.message.resumeToken === 'string' && this.identity?.role === 'student')
             this.identity.resumeToken = event.message.resumeToken;
           if (event.message.type === 'file.rejected' && event.message.code) this.sources.delete(String(event.message.fileId));
+          if (event.message.type === 'file.state' && (event.message.file as PdfManifest)?.deleted) {
+            const id=(event.message.file as PdfManifest).fileId;
+            this.sources.delete(id); this.stoppedSources.add(id);
+          }
           this.onMessage(event.message);
         } else if (event.type === 'status') { this.status = event.status; this.onStatus(event.status); }
         else if (event.type === 'progress') this.onProgress(event.progress);

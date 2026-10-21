@@ -2,8 +2,6 @@ import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } fro
 import { QRCodeSVG } from 'qrcode.react';
 import { PixelIcon } from './PixelIcon';
 import { SiteHeader } from './SiteHeader';
-import { HomeWordmark } from './HomeWordmark';
-import { HeroAccents } from './HeroAccents';
 import { JoinWelcome } from './JoinWelcome';
 import { invitationFor, invitationUrl, readInvitation, rememberInvitation } from './joinInvitation';
 import { assignParticipantColors } from './participantColors';
@@ -18,7 +16,7 @@ import { DocumentCard } from './DocumentCard';
 import { StudentTransferCard } from './StudentTransferCard';
 import { TransferPill } from './TransferPill';
 import { summarizeTransfers } from './transferProgress';
-import { cleanExpiredRoomCaches, readCompletedBlob, readCompletedFile, type CacheProgress } from './pdf/roomCache';
+import { cleanExpiredRoomCaches, readCompletedBlob, type CacheProgress } from './pdf/roomCache';
 import { PerfPanel } from './PerfPanel';
 import { fileAccentStyle } from './fileAccent';
 import { perf } from './perf';
@@ -95,7 +93,7 @@ export function App() {
   const [documents, setDocuments] = useState<PdfManifest[]>([]);
   // Shared-file ownership outlives live sockets, including stopped originals.
   const contributors = [...new Map(documents
-    .filter(file => file.status === 'approved' || file.status === 'offline' || file.revoked)
+    .filter(file => !file.deleted && (file.status === 'approved' || file.status === 'offline' || file.revoked))
     .map(file => [file.ownerId, { id: file.ownerId, name: file.ownerName }])).values()];
   const [participantColors, setParticipantColors] = useState<Record<string,string>>({});
   const [sentFiles, setSentFiles] = useState<Array<{ fileId: string; name: string; size: number; status: ShareStatus }>>([]);
@@ -108,12 +106,15 @@ export function App() {
   const [hostAvailable, setHostAvailable] = useState(true);
   const hostFilesRef = useRef<PdfManifest[]>([]);
   const [documentPreviews, setDocumentPreviews] = useState<Record<string, string>>({});
+  const documentPreviewsRef = useRef(documentPreviews);
+  documentPreviewsRef.current = documentPreviews;
   const previewLookups = useRef(new Set<string>());
   const activeCacheId = hostSession ? hostCacheIdentity(hostSession) : '';
   const previewRoom = useRef(initialSession ? hostCacheIdentity(initialSession) : '');
   // PPTX thumbnails are host-only, complete-file-only cosmetic work.
   // Serialize idle jobs and never run alongside a background file transfer.
   const pptxThumbAttempts = useRef(new Map<string, number>());
+  const pptxThumbPending = useRef(new Set<string>());
   const pptxThumbQueue = useRef<Promise<void>>(Promise.resolve());
   const [pptxThumbnailRetryTick, triggerPptxThumbnailRetry] = useState(0);
   const thumbnailTransferBusy = useRef(false);
@@ -185,7 +186,7 @@ export function App() {
     }
     if (!roomCode) return;
     for (const file of documents) {
-      if (previewLookups.current.has(file.fileId)) continue;
+      if (file.deleted || previewLookups.current.has(file.fileId)) continue;
       previewLookups.current.add(file.fileId);
       void presentation.getPreview(file.fileId).then(url => {
         if (!url || previewRoom.current !== roomCode) return;
@@ -203,12 +204,12 @@ export function App() {
     if (!room || mode !== 'host') return;
     if (thumbnailTransferBusy.current) return;
     for (const file of documents) {
-      if (!isPowerPointName(file.name) || !cacheProgress[file.fileId]?.complete ||
+      if (file.deleted || !isPowerPointName(file.name) || !cacheProgress[file.fileId]?.complete ||
           documentPreviews[file.fileId]) continue;
       const key = room + '/' + file.fileId;
-      const attempt = pptxThumbAttempts.current.get(key) ?? 0;
-      if (attempt >= 2) continue;
-      pptxThumbAttempts.current.set(key, attempt + 1);
+      if (pptxThumbPending.current.has(key) || (pptxThumbAttempts.current.get(key) ?? 0) >= 2) continue;
+      pptxThumbPending.current.add(key);
+      let attempt = 0;
       pptxThumbQueue.current = pptxThumbQueue.current.catch(() => {}).then(async () => {
         // Yield both parsing and JPEG encoding until the browser has breathing
         // room. Never initiate PPTX thumbnail work from the phone.
@@ -216,17 +217,26 @@ export function App() {
           if ('requestIdleCallback' in window) window.requestIdleCallback(() => resolve(), { timeout: 4000 });
           else setTimeout(resolve, 350);
         });
-        if (previewRoom.current !== room || modeRef.current !== 'host') return;
+        if (previewRoom.current !== room || modeRef.current !== 'host' || documentPreviewsRef.current[file.fileId] ||
+            !hostFilesRef.current.some(current => current.fileId === file.fileId && !current.deleted)) return;
         if (thumbnailTransferBusy.current) {
           // A fresh upload began while we were waiting for idle time.
-          pptxThumbAttempts.current.delete(key);
           return;
         }
-        const bytes = await readCompletedFile(room, file);
-        if (!bytes || previewRoom.current !== room) throw Error('Complete PPTX cache unavailable');
+        attempt = (pptxThumbAttempts.current.get(key) ?? 0) + 1;
+        pptxThumbAttempts.current.set(key, attempt);
+        const original = await readCompletedBlob(room, file);
+        if (!original || previewRoom.current !== room) throw Error('Complete PPTX cache unavailable');
+        if (documentPreviewsRef.current[file.fileId] || !hostFilesRef.current.some(current => current.fileId === file.fileId && !current.deleted)) return;
+        // Reading storage can overlap a fresh upload; recheck before any parsing.
+        if (thumbnailTransferBusy.current) {
+          pptxThumbAttempts.current.set(key, attempt - 1);
+          return;
+        }
         const { makePowerPointThumbnail } = await import('./pptx/makeThumbnail');
-        const preview = await makePowerPointThumbnail(bytes);
+        const preview = await makePowerPointThumbnail(original);
         if (!preview || previewRoom.current !== room) throw Error('Thumbnail rendering returned no image');
+        if (!hostFilesRef.current.some(current => current.fileId === file.fileId && !current.deleted)) return;
         await presentation.savePreview(file.fileId, preview);
         if (previewRoom.current === room)
           setDocumentPreviews(current => current[file.fileId]
@@ -235,13 +245,13 @@ export function App() {
         // Don't permanently silence a transient browser/image decode failure.
         // Only one delayed retry; never let retries affect the transfer queue.
         console.warn('[WarpView] PPTX thumbnail attempt failed:', error);
-        if (attempt === 0 && previewRoom.current === room) {
+        if (attempt === 1 && previewRoom.current === room) {
           setTimeout(() => {
             if (previewRoom.current === room)
               triggerPptxThumbnailRetry(value => value + 1);
           }, 8_000);
         }
-      });
+      }).finally(() => pptxThumbPending.current.delete(key));
     }
   }, [activeCacheId, mode, documents, cacheProgress, documentPreviews, presentation, pptxThumbnailRetryTick]);
 
@@ -464,6 +474,7 @@ export function App() {
             setHostSession(previous => previous ? { ...previous, autoApprove: message.autoApprove as boolean } : previous);
           }
           hostFilesRef.current = files;
+          for (const file of files) if (file.deleted) presentation.removeFile(file.fileId);
         }
         setError('');
       }
@@ -478,6 +489,10 @@ export function App() {
         if (!file?.fileId) return;
         setDocuments(existing => [...existing.filter(f => f.fileId !== file.fileId), file]);
         hostFilesRef.current = [...hostFilesRef.current.filter(f => f.fileId !== file.fileId), file];
+        if (file.deleted) {
+          presentation.removeFile(file.fileId);
+          setDocumentPreviews(current => { const next={...current}; delete next[file.fileId]; return next; });
+        }
       }
       if (type === 'cache.progress' && modeRef.current === 'student' &&
           typeof message.fileId === 'string' &&
@@ -538,7 +553,7 @@ export function App() {
         // PDF thumbnails are the only preview format. Unknown binary files
         // must never be interpreted or displayed as active document content.
         if (typeof id !== 'string' ||
-            !hostFilesRef.current.some(f => f.fileId === id && isPdfName(f.name))) return;
+            !hostFilesRef.current.some(f => f.fileId === id && !f.deleted && isPdfName(f.name))) return;
         const part = message.part;
         const total = message.total;
         const data = message.data;
@@ -947,11 +962,31 @@ export function App() {
     returnHome();
   }
 
+  function focusRoomForm(action: 'create' | 'join'): void {
+    const panel = document.getElementById(action === 'create' ? 'create-room' : 'join-room');
+    panel?.scrollIntoView({ block: 'center', behavior: 'auto' });
+    const control = panel?.querySelector<HTMLElement>(action === 'join' ? '#code' : '.reference-toggle input');
+    control?.focus({ preventScroll: true });
+  }
+  useEffect(() => {
+    if (mode !== 'welcome') return;
+    const focusHash = () => {
+      if (location.hash === '#create-room' || location.hash === '#join-room') {
+        focusRoomForm(location.hash === '#create-room' ? 'create' : 'join');
+      } else if (location.hash === '#instructions' || location.hash === '#how-it-works') {
+        document.getElementById(location.hash.slice(1))?.scrollIntoView();
+      }
+    };
+    const frame = requestAnimationFrame(focusHash);
+    window.addEventListener('hashchange', focusHash);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('hashchange', focusHash); };
+  }, [mode]);
+
   const joinLink = hostSession ? invitationUrl(window.location.origin, hostSession.joinToken, hostSession.code) : '';
   const showInviteEntry = mode === 'student' && joinState === 'idle' && Boolean(initialInvitation);
 
   return (
-    <div className={'app premium-app' + (showInviteEntry ? ' is-invite-entry' : '') + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
+    <div className={'app premium-app' + (mode === 'welcome' ? ' is-home' : '') + (showInviteEntry ? ' is-invite-entry' : '') + (mode === 'host' && hostSession ? ' is-host-workspace' : '') +
       (mode === 'student' && (joinState === 'connecting' || joinState === 'accepted' || joinState === 'pending') ? ' is-student-room' : '')}>
       {mode === 'student' && (joinState === 'idle' || joinState === 'rejected') && (
         <SiteHeader landing={showInviteEntry} onHome={startFresh}/>
@@ -960,12 +995,13 @@ export function App() {
         {mode === 'welcome' && (
           <div className="welcome reference-welcome">
             <section className="reference-sky">
+              <SiteHeader landing publicNavigation onHome={() => window.scrollTo({ top: 0, behavior: 'auto' })}
+                onRoomAction={focusRoomForm}/>
               <div className="reference-hero">
-                <HomeWordmark/>
+                <h1 className="reference-serif home-headline">From your phone,<br/>onto the big screen.</h1>
                 <div className="hero-room-stage">
-                  <HeroAccents/>
                   <div className="reference-actions" id="start-room">
-                    <div className="reference-pane host-card">
+                    <div className="reference-pane host-card" id="create-room">
                       <div className="reference-pane-icon"><PixelIcon kind="folder"/></div>
                       <h2 className="reference-serif">Start a room on the board</h2>
                       <p>Open this on the classroom computer. Students scan the code and share files here.</p>
@@ -982,7 +1018,7 @@ export function App() {
                         </button>
                       </div>
                     </div>
-                    <div className="reference-pane join-card">
+                    <div className="reference-pane join-card" id="join-room">
                       <div className="reference-pane-icon"><PixelIcon kind="doc"/></div>
                       <h2 className="reference-serif">Send from your device</h2>
                       <p>Enter the six digits shown on the board, then choose your files.</p>
@@ -1026,16 +1062,50 @@ export function App() {
                 </div>
               </div>
             </section>
-            <section className="reference-section" id="how">
+            <section className="reference-section" id="instructions">
               <h2 className="reference-serif">Three steps between a phone and a smartboard.</h2>
               <ol className="reference-steps">
-                <li><PixelIcon kind="folder"/><h3>Open the board</h3>
-                  <p>The classroom computer shows a QR code and a six-digit code.</p></li>
-                <li><PixelIcon kind="doc"/><h3>Scan, then pick a file</h3>
-                  <p>Up to a whole class can join one room and send files at once.</p></li>
-                <li><PixelIcon kind="folder"/><h3>Present instantly</h3>
-                  <p>Open PDFs directly while their remaining bytes are still arriving.</p></li>
+                <li><PixelIcon kind="folder"/><h3>Create on the big screen</h3>
+                  <p>Choose whether people need approval, then create a room. Keep this tab open to receive files.</p></li>
+                <li><PixelIcon kind="doc"/><h3>Join from your device</h3>
+                  <p>Scan the QR or enter the six-digit code. Add a name or skip it, then choose your files.</p></li>
+                <li><PixelIcon kind="folder"/><h3>Present, then clear</h3>
+                  <p>Present PDFs and PowerPoint, or download an original. End the room when you are done to remove its room files.</p></li>
               </ol>
+            </section>
+            <section className="reference-section home-how" id="how-it-works">
+              <div className="home-how-heading">
+                <h2 className="reference-serif">A short journey.<br/>A separate place to present.</h2>
+                <p>Your device sends the original through a live relay to the room’s browser cache.
+                  A separate preview tab reads that cache, while transfers keep working in the background.</p>
+              </div>
+              <div className="home-file-path" aria-label="Files travel from your device, through the live relay, to the room browser cache">
+                <div className="home-path-device">
+                  <div className="home-device-screen"><PixelIcon kind="doc"/></div>
+                  <strong>Your device</strong><span>The original file</span>
+                </div>
+                <svg className="file-path-arrow" viewBox="0 0 64 24" fill="none" aria-hidden="true">
+                  <path d="M2 12h58m-8-8 8 8-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <div className="home-path-relay">
+                  <PixelIcon kind="transfer"/>
+                  <strong>Live relay</strong><span>No server file storage</span>
+                </div>
+                <svg className="file-path-arrow" viewBox="0 0 64 24" fill="none" aria-hidden="true">
+                  <path d="M2 12h58m-8-8 8 8-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <div className="home-path-room">
+                  <div className="home-browser-frame">
+                    <div className="home-browser-bar"><span aria-hidden="true"><i/><i/><i/></span><span>Room browser</span></div>
+                    <div className="home-browser-files"><PixelIcon kind="pdf"/><PixelIcon kind="ppt"/></div>
+                    <span className="home-browser-caption">Room files</span>
+                  </div>
+                  <div className="home-preview-branch"><strong>A separate preview tab</strong><span>Transfers keep working while you present.</span></div>
+                </div>
+              </div>
+              <a className="home-architecture-link" href="/architecture">Explore the architecture
+                <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </a>
             </section>
             <section className="reference-section" id="privacy">
               <div className="reference-trust">
@@ -1178,6 +1248,10 @@ export function App() {
                           catch(e){setError(e instanceof Error?e.message:'Unable to open presentation');}
                         }}
                         onDownload={()=>void downloadFile(file)}
+                        onDelete={()=>{
+                          if(!socket.send({type:'file.remove',fileId:file.fileId}))
+                            setError('Reconnect to delete this file.');
+                        }}
                         saving={Boolean(savingFiles[file.fileId])}/>
                     ))}
                   </div>

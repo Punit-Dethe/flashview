@@ -223,6 +223,17 @@ function handleControl(ws: WebSocket, msg: Record<string, unknown>): void {
     return;
   }
   if (peer.role === 'host') {
+    if (msg.type === 'file.remove') {
+      const change = room.fileState.remove(msg.fileId);
+      if (change) {
+        for (const [id, pending] of room.outstanding) if (pending.fileId === change.file.fileId) {
+          room.outstanding.delete(id);
+          notifyHost(room, { type: 'range.error', requestId: id, message: 'File deleted' });
+        }
+        publishFiles(room, [change], ws);
+      }
+      return;
+    }
     if (msg.type === 'cache.progress') {
       const change = room.fileState.cacheProgress(msg.fileId, msg.bytes, msg.snapshot);
       if (change) publishFiles(room, [change], ws);

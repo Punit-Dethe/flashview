@@ -101,17 +101,20 @@ export default function PowerPointPresenter({ file, roomId, close, onFirstSlideR
         fail('The classroom cache is unavailable. Reopen this presentation from the host.');
         return;
       }
-      const bytes = await readCompletedFile(roomId, file);
+      // Fetch/compile the lazy viewer while IndexedDB reconstructs and validates
+      // the complete local archive. Neither step depends on the other.
+      const [bytes, { createPptxViewer }] = await Promise.all([
+        readCompletedFile(roomId, file).then(async data => {
+          if (data && !cancelled) await inspectPptx(data);
+          return data;
+        }),
+        import('pptx-vanilla-viewer'),
+      ]);
       if (cancelled) return;
       if (!bytes) {
         fail('This PowerPoint is not fully downloaded yet. Retry after the transfer completes.');
         return;
       }
-      // Inspect the full local archive using zip.js. The presentation renderer
-      // remains a separate, lazily loaded dependency with its own PPTX parser.
-      await inspectPptx(bytes);
-      if (cancelled) return;
-      const { createPptxViewer } = await import('pptx-vanilla-viewer');
       if (cancelled || !hostRef.current) return;
       viewer = createPptxViewer(hostRef.current, {
         editable: false,

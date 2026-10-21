@@ -162,6 +162,14 @@ export class PresentationHost {
     }
   }
 
+  removeFile(fileId: string): void {
+    for (const [key,entry] of this.tabs) if (entry.file.fileId === fileId) {
+      entry.channel.postMessage({ type:'closed' });
+      for (const request of entry.requests.values()) request.cancel();
+      entry.channel.close();
+      this.tabs.delete(key);
+    }
+  }
   closeAll(): void {
     for (const entry of this.tabs.values()) {
       entry.channel.postMessage({ type: 'closed' });

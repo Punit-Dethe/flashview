@@ -4,7 +4,7 @@ import type { FileManifest } from './protocol';
 type Owner = { id: string; name: string; approved: boolean };
 export type FileTransition = {
   file: FileManifest; changed: boolean;
-  kind: 'created' | 'updated' | 'replayed' | 'revoked' | 'progress' | 'lifecycle';
+  kind: 'created' | 'updated' | 'replayed' | 'revoked' | 'deleted' | 'progress' | 'lifecycle';
 };
 export type FileEffect = { to: 'host' | 'actor' | 'owner'; ownerId?: string; message: Record<string, unknown> };
 
@@ -42,13 +42,20 @@ export class RoomFileEngine {
   }
   revoke(ownerId: string, fileId: unknown): FileTransition | null {
     const file = typeof fileId === 'string' ? this.files.get(fileId) : undefined;
-    if (!file || file.ownerId !== ownerId) return null;
+    if (!file || file.ownerId !== ownerId || file.deleted) return null;
     const changed = file.status !== 'offline' || file.revoked !== true;
     return { kind: 'revoked', changed, file: changed ? this.change(file, { status: 'offline', revoked: true }) : file };
   }
+  /** Only authenticated host adapters may call this transition. */
+  remove(fileId: unknown): FileTransition | null {
+    const file = typeof fileId === 'string' ? this.files.get(fileId) : undefined;
+    if (!file) return null;
+    return { kind: 'deleted', changed: !file.deleted, file: file.deleted ? file :
+      this.change(file, { deleted: true, revoked: true, status: 'rejected', cachedBytes: 0 }) };
+  }
   cacheProgress(fileId: unknown, bytes: unknown, snapshot: unknown): FileTransition | null {
     const file = typeof fileId === 'string' ? this.files.get(fileId) : undefined;
-    if (!file || !Number.isSafeInteger(bytes) ||
+    if (!file || file.deleted || !Number.isSafeInteger(bytes) ||
         (bytes !== file.size && !(snapshot === true && bytes === 0))) return null;
     const changed = file.cachedBytes !== bytes;
     return { kind: 'progress', changed, file: changed ? this.change(file, { cachedBytes: Number(bytes) }) : file };
@@ -95,6 +102,8 @@ export class RoomFileEngine {
     if (transition.kind === 'created') effects.push({ to: 'actor', message: { type: 'file.approved', fileId: file.fileId } });
     if (['created', 'updated', 'replayed'].includes(transition.kind))
       effects.push({ to: 'actor', message: { type: 'file.state', file: metadata } });
+    if (transition.kind === 'deleted') effects.push({ to: 'owner', ownerId: file.ownerId,
+      message: { type: 'file.state', file: metadata } });
     return effects;
   }
 }

@@ -68,7 +68,10 @@ function setRoom(roomId: string): void {
 }
 function queue(file: PdfManifest): void {
   manifests.set(file.fileId, file);
-  if (file.status === 'approved' && !file.revoked) cache?.prefetch(file);
+  if (file.deleted) {
+    receipts.delete(file.fileId); receiptSent.delete(file.fileId);
+    void cache?.removeFile(file.fileId).catch(() => emit('warning', { type:'warning', message:'A deleted file could not be cleared from browser storage. Refresh to retry.' }));
+  } else if (file.status === 'approved' && !file.revoked) cache?.prefetch(file);
   else cache?.pause(file.fileId);
 }
 function offer(fileId: string): void {
@@ -80,6 +83,7 @@ function reconcile(files: PdfManifest[]): void {
   const known = new Map(files.map(file => [file.fileId, file]));
   for (const [id, source] of sources) {
     const file = known.get(id);
+    if (file?.deleted) { sources.delete(id); stoppedSources.add(id); continue; }
     if (file) { source.known = true; source.approved = file.status === 'approved' && !file.revoked; source.stopped ||= file.revoked === true || file.status === 'rejected'; }
     else { source.known = false; offer(id); }
   }
@@ -147,6 +151,7 @@ function initialize(): void {
       if (message.type === 'host.online') socket.send({ type: 'file.sync' });
       if (message.type === 'file.state') {
         const file = message.file as PdfManifest, source = sources.get(file.fileId);
+        if (file.deleted) { sources.delete(file.fileId); stoppedSources.add(file.fileId); }
         if (source) { source.known = true; source.approved = file.status === 'approved' && !file.revoked; source.stopped ||= file.revoked === true || file.status === 'rejected'; }
       }
       const source = sources.get(String(message.fileId));
@@ -172,7 +177,7 @@ async function rpc(command: Extract<WorkerCommand, { type: 'rpc' }>): Promise<vo
     if (localReads.size >= 128) throw Error('Too many local cache reads');
     localReads.set(command.id, controller);
     const file = command.file && manifests.get(command.file.fileId);
-    if (command.file && (!file || file.size !== command.file.size)) throw Error('Local file metadata changed');
+    if (command.file && (!file || file.deleted || file.size !== command.file.size)) throw Error('Local file metadata changed');
     let value: unknown;
     if (command.method === 'progress' && file) value = await currentCache.progress(file, false);
     else if (command.method === 'preview' && command.fileId) value = await currentCache.getPreview(command.fileId);

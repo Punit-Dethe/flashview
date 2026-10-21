@@ -47,6 +47,24 @@ test('completion is idempotent, invalid progress is inert, and delayed completio
   assert.equal(notices.length, 1); assert.equal(notices[0].message.bytes, 0); assert.equal(notices[0].message.complete, false);
 });
 
+test('host deletion persists a terminal tombstone and cannot be undone by replay, Stop or completion',()=>{
+  const engine=new RoomFileEngine(),created=offered(engine);
+  const done=engine.cacheProgress(offer.fileId,4,false)!;
+  const removed=engine.remove(offer.fileId)!;
+  assert.equal(removed.file.deleted,true);
+  assert.equal(removed.file.status,'rejected');
+  assert.equal(removed.file.cachedBytes,0);
+  assert.equal(engine.remove(offer.fileId)!.changed,false);
+  assert.equal(engine.revoke(owner.id,offer.fileId),null);
+  assert.equal(engine.cacheProgress(offer.fileId,4,false),null);
+  assert.deepEqual(engine.effects(done),[]);
+  assert.equal((engine.effects(created)[0].message.file as FileManifest).deleted,true);
+  assert.deepEqual(engine.effects(removed).map(effect=>effect.to),['host','owner']);
+  const restored=new RoomFileEngine(engine.checkpoint().files);
+  assert.equal(offered(restored).file.deleted,true);
+  assert.deepEqual(restored.ownerStatus(owner.id,'resume'),[]);
+});
+
 test('late disconnect effects cannot mark a resumed file offline, including after metadata restoration', () => {
   const engine = new RoomFileEngine(); offered(engine);
   const disconnected = engine.ownerStatus(owner.id, 'disconnect');

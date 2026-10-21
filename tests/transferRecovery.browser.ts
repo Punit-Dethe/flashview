@@ -162,7 +162,6 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
       'Losing the first join acknowledgement must not create a ghost participant');
     t.diagnostic('Initial picker recovery events: ' + JSON.stringify(trace.slice(0, 18)));
     await host.getByRole('button', { name: /End (room|session)/ }).click();
-    await host.getByRole('checkbox', { name: /I understand/ }).check();
     await host.getByRole('button', { name: 'End & clear cache' }).click();
     // A separate room keeps hash verification independent of earlier files.
     await host.getByRole('button', { name: /Create a room/ }).click();
@@ -252,7 +251,6 @@ test('suspended file picker and repeated mid-file disconnects recover promptly w
   } finally {
     if (remote && await host.getByRole('button', { name: 'End room', exact: true }).isVisible().catch(() => false)) {
       await host.getByRole('button', { name: 'End room', exact: true }).click().then(async () => {
-        await host.getByRole('checkbox', { name: /I understand/ }).check();
         await host.getByRole('button', { name: 'End & clear cache' }).click();
         await host.getByRole('button', { name: /Create a room/ }).waitFor({ timeout: 5000 });
       }).catch(() => {});

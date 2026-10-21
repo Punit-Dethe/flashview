@@ -49,6 +49,68 @@ async function waitForPresenterPopup(host: Page): Promise<Page> {
   return page;
 }
 
+async function closePresenter(page: Page): Promise<void> {
+  await Promise.all([
+    page.waitForEvent('close'),
+    page.getByRole('button', { name: 'Close', exact: true }).click().catch(error => {
+      // Firefox can close the popup before Playwright finishes its click.
+      // Only accept that error when the expected window has actually closed.
+      if (!page.isClosed() || !/Target page, context or browser has been closed/.test(String(error))) throw error;
+    }),
+  ]);
+}
+
+async function swipePreview(page: Page, selector: string, dx: number, dy = 0) {
+  const box = await page.locator(selector).boundingBox();
+  assert.ok(box);
+  const x = box.x + box.width / 2 - dx / 2, y = box.y + box.height / 2 - dy / 2;
+  if (process.env.FLASHVIEW_BROWSER === 'firefox') {
+    await page.evaluate(({ selector, x, y, dx, dy }) => {
+      const surface = document.querySelector(selector)!;
+      for (const [type, touches, changed] of [
+        ['touchstart', [{clientX:x,clientY:y}], []],
+        ['touchend', [], [{clientX:x+dx,clientY:y+dy}]],
+      ] as const) {
+        const event = new Event(type, { bubbles:true });
+        Object.defineProperties(event, { touches:{value:touches}, changedTouches:{value:changed} });
+        surface.dispatchEvent(event);
+      }
+    }, { selector, x, y, dx, dy });
+    return;
+  }
+  const client = await page.context().newCDPSession(page);
+  try {
+    await client.send('Input.dispatchTouchEvent', { type:'touchStart', touchPoints:[{x,y}] });
+    for (let step = 1; step <= 5; step++)
+      await client.send('Input.dispatchTouchEvent', { type:'touchMove', touchPoints:[{x:x+dx*step/5,y:y+dy*step/5}] });
+    await client.send('Input.dispatchTouchEvent', { type:'touchEnd', touchPoints:[] });
+  } finally { await client.detach(); }
+}
+
+async function assertPowerPointFits(page: Page) {
+  await page.waitForFunction(() => {
+    const slide = document.querySelector('.pptxv-stage')?.getBoundingClientRect();
+    return slide && (Math.abs(slide.width - innerWidth) < 3 || Math.abs(slide.height - innerHeight) < 3) &&
+      slide.width <= innerWidth + 3 && slide.height <= innerHeight + 3;
+  });
+}
+
+async function assertPresentationDock(page: Page) {
+  const bounds = await page.locator('.presentation-controls').evaluate(el => {
+    const dock = el.getBoundingClientRect();
+    const children = [...el.querySelectorAll('button, input')].map(child => child.getBoundingClientRect());
+    return { right: dock.right, bottom: dock.bottom, left: dock.left,
+      width: innerWidth, height: innerHeight,
+      fits: children.every(child => child.left >= dock.left && child.right <= dock.right &&
+        child.top >= dock.top && child.bottom <= dock.bottom) };
+  });
+  assert.ok(bounds.left >= 0 && bounds.right <= bounds.width && bounds.bottom <= bounds.height && bounds.fits,
+    'All preview controls must fit the dock and viewport');
+  assert.ok(bounds.right > bounds.width - 38 && bounds.bottom > bounds.height - 38,
+    'Preview controls stay in the bottom-right corner');
+  assert.equal(await page.getByRole('button', { name: 'Close', exact: true }).isVisible(), true);
+}
+
 /** Construct a valid single-page PDF with a realistic (200 KB) byte-range surface. */
 function makePdf(fillerLines = 1400): Buffer {
   const pageCount = 10;
@@ -174,7 +236,7 @@ test('QR welcome: optional name, explicit skip, clean URLs and private refresh r
     await legacy.locator('.invite-card').waitFor(); await legacy.getByRole('button', { name: 'Skip for now', exact: true }).click();
     await legacy.locator('.student-add-fab:not([disabled])').waitFor();
     await legacy.waitForURL(value => value.pathname === '/join/' + session.code && !value.search && !value.hash);
-    await host.getByRole('button', { name: 'End room', exact: true }).click(); await host.locator('.end-check input').check();
+    await host.getByRole('button', { name: 'End room', exact: true }).click();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click(); await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }
 });
@@ -260,7 +322,6 @@ test('room cache identity: reused code cannot inherit bytes or previews and clea
       createHash('sha256').update(original).digest('hex'));
     assert.equal(await host.locator('.document-thumb-image[src="old-room-preview"]').count(), 0);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
     assert.equal(await lifecycleCacheCount(host, session.cacheId), 0);
@@ -323,7 +384,6 @@ test('room cache identity: legacy rooms keep original bytes when lease metadata 
     assert.deepEqual(await readFile((await download.path())!), original);
     assert.equal(await lifecycleCacheCount(host, saved.code), 1);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
     assert.equal(await lifecycleCacheCount(host, saved.code), 0);
@@ -347,7 +407,6 @@ test('room lifecycle: failed/lost end responses preserve cache and resume intent
     stage = 'failed initial close';
     await host.route('**/api/rooms/**/end', route => route.abort());
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.getByRole('button', { name: 'Retry end & cleanup', exact: true }).waitFor();
     await host.getByText(/Could not confirm classroom closure/).waitFor();
@@ -414,7 +473,6 @@ test('room lifecycle: failed cache deletion retains its handle and confirmed clo
       };
     });
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.getByText(/classroom is closed.*cache could not be cleared/).waitFor();
     assert.equal(await lifecycleCacheCount(host, cacheId), 1);
@@ -456,7 +514,6 @@ test('room lifecycle: legacy host sessions upgrade in place and confirmed cleanu
       };
     });
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.getByText(/classroom is closed.*cache could not be cleared/).waitFor();
     assert.equal(await host.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).serverClosed), true);
@@ -527,6 +584,69 @@ test('room lifecycle: hidden host and visible presenter renew separately; bridge
   } finally { await browser.close(); child.kill(); }
 });
 
+test('home branding and end-room dialog: no header, responsive warning and direct cache cleanup', { timeout: 30000 }, async () => {
+  const { port, child } = await runningServer();
+  const browser = await browserEngine.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, reducedMotion: 'reduce' });
+  try {
+    await page.goto('http://127.0.0.1:' + port);
+    await page.locator('.home-wordmark').waitFor();
+    assert.equal(await page.locator('.site-header, nav, .nav-start').count(), 0);
+    assert.equal(await page.getByRole('heading', { name: 'WarpView', exact: true, level: 1 }).count(), 1);
+    assert.equal(await page.getByText('From your phone, onto the big screen.', { exact: true }).count(), 0);
+    assert.equal(await page.locator('.home-wordmark').innerText(), 'warpview');
+    assert.equal(await page.locator('.home-wordmark').evaluate(el => el.getAnimations({ subtree: true }).length), 0);
+    for (const width of [1440, 1280, 1024, 768, 390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      const geometry = await page.evaluate(() => {
+        const brand = document.querySelector('.home-wordmark')!.getBoundingClientRect();
+        const card = document.querySelector('.reference-actions')!.getBoundingClientRect();
+        const sky = document.querySelector('.reference-welcome>.reference-sky')!.getBoundingClientRect();
+        const accents = [...document.querySelectorAll('.hero-accent')].map(el => el.getBoundingClientRect());
+        return { center: brand.x + brand.width / 2, cardCenter: card.x + card.width / 2, gap: card.top - brand.bottom,
+          verticalCenterError: Math.abs(brand.y + brand.height / 2 - (sky.top + card.top) / 2),
+          accentsVisible: accents.some(icon => icon.width > 0 && icon.height > 0),
+          font: parseFloat(getComputedStyle(document.querySelector('.home-wordmark')!).fontSize),
+          overlapping: accents.some(icon => icon.left < card.right && icon.right > card.left && icon.top < card.bottom && icon.bottom > card.top),
+          overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      assert.ok(Math.abs(geometry.center - width / 2) < 2, 'Brand stays centered');
+      assert.ok(Math.abs(geometry.cardCenter - width / 2) < 2, 'Room controls stay centered');
+      assert.ok(geometry.gap >= 32 && geometry.font >= 64, 'Large brand sits clearly above the room card');
+      assert.ok(geometry.verticalCenterError < 2, 'Brand is vertically centered between the sky top and room card at width ' + width);
+      assert.equal(geometry.accentsVisible, width > 760, 'Phone layouts hide illustrations');
+      assert.equal(geometry.overlapping, false, 'Illustrations never cover the room controls at width ' + width);
+      assert.equal(geometry.overflow, false);
+    }
+    assert.equal(await page.locator('.home-wordmark').evaluate(el => getComputedStyle(el).color), 'rgb(255, 255, 255)');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    assert.equal(await page.locator('.home-wordmark').evaluate(el => el.getAnimations({ subtree: true }).length), 0);
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await page.getByRole('button', { name: /Create a room/ }).click();
+    await page.locator('.connection.connected').waitFor();
+    await seedLifecycleCache(page);
+    const room = await page.evaluate(() => JSON.parse(sessionStorage.getItem('flashview-host')!).cacheId as string);
+    await page.getByRole('button', { name: 'End room', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Room files will be deleted.' });
+    await dialog.waitFor();
+    assert.equal(await dialog.getByRole('checkbox').count(), 0);
+    assert.equal(await dialog.getByRole('button', { name: 'End & clear cache', exact: true }).isEnabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Keep room open', exact: true }).evaluate(el => el === document.activeElement), true);
+    for (const width of [390, 1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      const box = await dialog.boundingBox();
+      assert.ok(box && box.x >= 16 && box.x + box.width <= width - 16 && box.y >= 16 && box.y + box.height <= 828);
+    }
+    await dialog.getByRole('button', { name: 'Keep room open', exact: true }).click();
+    assert.equal(await dialog.count(), 0);
+    assert.equal(await lifecycleCacheCount(page, room), 1, 'Cancel keeps cached files');
+    await page.getByRole('button', { name: 'End room', exact: true }).click();
+    await dialog.getByRole('button', { name: 'End & clear cache', exact: true }).click();
+    await page.locator('.welcome').waitFor();
+    assert.equal(await lifecycleCacheCount(page, room), 0, 'Direct confirmation clears cached files');
+  } finally { await browser.close(); child.kill(); }
+});
+
 test('real browser: explicit room start, pinned invite, scrolling documents and room switch', { timeout: 70000 }, async () => {
   const { port, child } = await runningServer();
   const browser = await browserEngine.launch({ headless: true });
@@ -542,32 +662,10 @@ test('real browser: explicit room start, pinned invite, scrolling documents and 
     assert.equal(await first.locator('.room-code').count(), 0,
       'Reloading the welcome page must not create a classroom either');
 
-    // The supplied v8 HTML places its 60px nav in normal flow before 76px
-    // headline padding. The React nav floats, so its headline must compensate.
-    const heroGeometry = await first.evaluate(() => {
-      const nav = document.querySelector('.reference-nav')!.getBoundingClientRect();
-      const title = document.querySelector('.reference-hero h1')!.getBoundingClientRect();
-      const sky = document.querySelector('.reference-sky')!;
-      return {
-        gap: title.top - nav.bottom,
-        background: getComputedStyle(sky).backgroundImage,
-      };
-    });
-    assert.ok(heroGeometry.gap >= 65 && heroGeometry.gap <= 95,
-      'Landing title should retain the original generous 76px gap below nav');
-    assert.match(heroGeometry.background, /linear-gradient/);
-    assert.match(heroGeometry.background, /31, 79, 232|#1f4fe8/i,
+    assert.equal(await first.locator('.site-header').count(), 0, 'Homepage has no header');
+    const background = await first.locator('.reference-sky').evaluate(el => getComputedStyle(el).backgroundImage);
+    assert.match(background, /31, 79, 232|#1f4fe8/i,
       'The supplied cobalt-to-pastel sky gradient should remain intact');
-
-    await first.setViewportSize({ width: 390, height: 844 });
-    const mobileHeroGap = await first.evaluate(() => {
-      const nav = document.querySelector('.reference-nav')!.getBoundingClientRect();
-      const title = document.querySelector('.reference-hero h1')!.getBoundingClientRect();
-      return title.top - nav.bottom;
-    });
-    assert.ok(mobileHeroGap >= 68,
-      'On phones the hero title should not crowd the floating nav');
-    await first.setViewportSize({ width: 1280, height: 760 });
 
     await first.getByRole('button', { name: /Create a room/ }).click();
     await first.locator('.connection.connected').waitFor();
@@ -782,19 +880,23 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       buffer: makePdf(),
     });
     await host.locator('.document-row').filter({ hasText: 'smoke.pdf' }).waitFor();
-    // Reference v8 uses a fixed 118px preview tile, separate filename and
-    // a rounded action footer. The PDF JPEG must not resize that fixed tile.
+    // Previews have a stable ratio and a card-colored bezel. Loading a JPEG
+    // must not change the reserved preview space.
     const card = host.locator('.document-row').filter({ hasText: 'smoke.pdf' });
     const tile = await card.boundingBox();
     const swatch = await card.evaluate(element => {
       const visual=element.querySelector('.document-card-visual')!;
       return {
         height: visual.getBoundingClientRect().height,
+        ratio: getComputedStyle(visual).aspectRatio,
+        bezel: getComputedStyle(visual).marginLeft,
         background: getComputedStyle(element.querySelector('.document-thumb')!).backgroundColor,
       };
     });
     assert.ok(tile && tile.width > 170 && tile.height > 170, 'Reference gallery cards need readable dimensions');
-    assert.ok(Math.abs(swatch.height - 118) < 2, 'Reference HTML preview height is 118px');
+    assert.ok(swatch.height >= 128, 'Preview remains large enough to read');
+    assert.equal(swatch.ratio, '16 / 10');
+    assert.equal(swatch.bezel, '6px');
     assert.notEqual(swatch.background, 'rgba(0, 0, 0, 0)');
     // Rendering on the sender is independent: diagnose phone rendering
     // before checking delivery to the host, especially on Firefox.
@@ -847,10 +949,8 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     // Teacher's queue remains available while the PDF is projected.
     assert.equal(await host.locator('.document-row').count(), 1);
     // Projector view must be truly black around the actual PDF.
-    const toolbarBlur = await presentation.locator('.viewer-toolbar')
-      .evaluate(element => getComputedStyle(element).backdropFilter);
-    assert.equal(toolbarBlur, 'none',
-      'Full-screen overlay header must not blur PDF pixels on the left side');
+    assert.equal(await presentation.locator('.viewer-toolbar, .viewer-footer, .viewer-filename').count(), 0,
+      'Only the bottom-right controls remain; document identity and cache details are removed');
     const stageColor = await presentation.locator('.page-stage')
       .evaluate(element => getComputedStyle(element).backgroundColor);
     assert.equal(stageColor, 'rgb(0, 0, 0)');
@@ -859,6 +959,17 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
       return Boolean(canvas && canvas.width >= 500 && canvas.height >= 700 &&
         canvas.dataset.renderedPage === '1' && !document.querySelector('.viewer-alert'));
     }, null, { timeout: 20000 });
+    await presentation.locator('.presentation-transition').waitFor({state:'hidden'});
+    const initialFit = await presentation.locator('.page-shell canvas').evaluate(element => {
+      const canvas = element.getBoundingClientRect(), stage = document.querySelector('.page-stage')!;
+      return Math.abs(canvas.width - (stage.clientWidth - 24)) < 3 ||
+        Math.abs(canvas.height - (stage.clientHeight - 12)) < 3;
+    });
+    assert.equal(initialFit, true, 'The first visible PDF page is already fitted');
+    await swipePreview(presentation, '.page-stage', -160);
+    await presentation.waitForFunction(() => document.querySelector('canvas[data-rendered-page="2"]'));
+    await swipePreview(presentation, '.page-stage', 160);
+    await presentation.waitForFunction(() => document.querySelector('canvas[data-rendered-page="1"]'));
     const renderedDarkPixels = await presentation.locator('.page-shell canvas').evaluate(canvas => {
       const context = (canvas as HTMLCanvasElement).getContext('2d');
       if (!context) return 0;
@@ -880,12 +991,12 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     const projectorLayout = await presentation.evaluate(() => {
       const root = document.querySelector('.viewer')!.getBoundingClientRect();
       const slide = document.querySelector('.page-shell canvas')!.getBoundingClientRect();
-      const dock = document.querySelector('.viewer-controls')!.getBoundingClientRect();
+      const dock = document.querySelector('.presentation-controls')!.getBoundingClientRect();
       return {
         windowHeight: innerHeight, windowWidth: innerWidth,
         rootHeight: root.height, slideHeight: slide.height,
         dockRight: dock.right, dockBottom: dock.bottom,
-        roundedDock: getComputedStyle(document.querySelector('.viewer-controls')!).borderRadius,
+        roundedDock: getComputedStyle(document.querySelector('.presentation-controls')!).borderRadius,
         captionCount: document.querySelectorAll('.presentation-caption').length,
       };
     });
@@ -916,18 +1027,13 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
         Math.abs(canvas.getBoundingClientRect().height - expected) < 2 &&
         !document.querySelector('.page-overlay');
     }, normalHeight, { timeout: 15000 });
-    // Top-left identity uses the document's curated accent, matching its
-    // teacher-side file card instead of a generic gray back arrow.
-    assert.equal(await presentation.locator('.viewer-file-mark').count(), 1);
-    const identity = await presentation.locator('.viewer-filename').evaluate(el => {
-      const marker = el.querySelector('.viewer-file-mark');
-      return {
-        radius: getComputedStyle(el).borderRadius,
-        accent: marker ? getComputedStyle(marker).color : '',
-      };
+    const pagePaint = await presentation.getByRole('spinbutton', { name: 'Page number' }).evaluate(el => {
+      const input = getComputedStyle(el), pill = getComputedStyle(el.closest('.presentation-controls')!);
+      return { background: input.backgroundColor, border: input.borderTopColor, pill: pill.backgroundColor };
     });
-    assert.equal(identity.radius, '15px');
-    assert.notEqual(identity.accent, '');
+    assert.equal(pagePaint.background, pagePaint.pill);
+    assert.equal(pagePaint.border, pagePaint.pill, 'Editable page number blends into the pill');
+    assert.equal(await presentation.getByRole('button', { name: 'Close', exact: true }).count(), 1);
 
     // Native Fullscreen API should engage from the floating pill AND keep a
     // fully painted PDF on-screen. Merely asserting fullscreenElement existed
@@ -957,9 +1063,9 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
         return ink >= 3 && paper > 200;
       }, null, { timeout: 25000 });
       const immersiveChrome = await presentation.evaluate(() => ({
-        toolbarHidden: getComputedStyle(document.querySelector('.viewer-toolbar')!).display === 'none',
-        footerHidden: getComputedStyle(document.querySelector('.viewer-footer')!).display === 'none',
-        pillVisible: getComputedStyle(document.querySelector('.viewer-control-pill')!).display !== 'none',
+        toolbarHidden: !document.querySelector('.viewer-toolbar'),
+        footerHidden: !document.querySelector('.viewer-footer'),
+        pillVisible: getComputedStyle(document.querySelector('.presentation-controls')!).display !== 'none',
       }));
       assert.deepEqual(immersiveChrome, { toolbarHidden: true, footerHidden: true, pillVisible: true },
         'Fullscreen must hide the top-left info and footer, leaving only the control pill');
@@ -975,7 +1081,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     if (!process.env.FLASHVIEW_BACKEND) {
       await presentation.screenshot({ path: 'test-artifacts/ui/presentation.png' });
     }
-    assert.match(await presentation.locator('.viewer-filename').innerText(), /direct local rendering/);
+    assert.equal(await presentation.locator('.viewer-filename').count(), 0);
     assert.equal(await presentation.locator('.viewer-alert').count(), 0);
     // Regression: moving around the PDF and waiting past the old 30s watchdog
     // must not destroy the successfully opened PDF document.
@@ -996,7 +1102,11 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     await presentation.waitForFunction(() =>
       !document.querySelector('.page-overlay') && !document.querySelector('.viewer-alert'),
       null, { timeout: 20000 });
-    await presentation.close();
+    await presentation.setViewportSize({ width: 375, height: 812 });
+    await assertPresentationDock(presentation);
+    if (!process.env.FLASHVIEW_BACKEND)
+      await presentation.screenshot({ path: 'test-artifacts/ui/presentation-mobile.png' });
+    await closePresenter(presentation);
     assert.equal(await host.locator('.document-row').count(), 1);
 
     // Simulate exactly what happens when a mobile browser drops the connection.
@@ -1102,8 +1212,7 @@ test('real browser: QR-equivalent room flow renders PDF.js page through WebSocke
     }), cachedRoom);
     assert.ok(await countRoomChunks() >= 3, 'Expected cached PDF chunks');
     await host.getByRole('button', { name: /End room/ }).click();
-    await host.getByRole('button', { name: /End & clear cache/ }).isDisabled().then(x => assert.equal(x, true));
-    await host.getByRole('checkbox', { name: /I understand/ }).check();
+    await host.getByRole('button', { name: /End & clear cache/ }).isEnabled().then(x => assert.equal(x, true));
     await host.getByRole('button', { name: /End & clear cache/ }).click();
     await host.getByRole('button', { name: /Create a room/ }).waitFor();
     assert.equal(await countRoomChunks(), 0, 'Ending the room must purge its IndexedDB bytes');
@@ -1257,7 +1366,7 @@ test('PDF renders first page while a multi-megabyte PDF is still transferring', 
     }, null, { timeout: 22000 });
     assert.notEqual(await row.locator('.cache-ring').getAttribute('aria-valuenow'), '100',
       'The first slide MUST be visible before background downloading finishes');
-    assert.match(await presentation.locator('.viewer-filename').innerText(), /streaming preview/);
+    assert.equal(await presentation.locator('.viewer-filename').count(), 0);
     const image = presentation.locator('img[data-first-page-preview]');
     const earlySlideVisible = await image.count() > 0 ||
       await presentation.locator('canvas[data-rendered-page="1"]').count() > 0;
@@ -1643,7 +1752,6 @@ test('room engine: stale snapshots, pending approvals and foreign closure cannot
     const exported = await exporting;
     assert.deepEqual(await readFile((await exported.path())!), original);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }
@@ -1896,7 +2004,6 @@ test('transfer worker: offline Stop retires source bytes and is replayed after p
     try {
       if (remote && await host.getByRole('button', { name: 'End room', exact: true }).isVisible().catch(() => false)) {
         await host.getByRole('button', { name: 'End room', exact: true }).click();
-        await host.locator('.end-check input').check();
         await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
         await host.locator('.welcome').waitFor();
       }
@@ -2010,7 +2117,6 @@ test('QR joins open the upload workspace after the name choice; leaving or endin
     // A room ended by the teacher should instantly leave the student's
     // workspace, clear its QR URL and restore an EMPTY join-code input.
     await host.getByRole('button',{name:/End room/}).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
     await student.locator('.welcome').waitFor({timeout:20000});
     assert.equal(new URL(student.url()).search,'','Expired invite must be removed from URL');
@@ -2095,7 +2201,6 @@ test('universal binary transfer preserves APK, EXE, PPTX, XLSX, GIF, ZIP, DEB, S
     // A room still has the original 256 KiB packet default.
     assert.equal(await host.evaluate(()=>new URLSearchParams(location.search).get('packet')),null);
     await host.getByRole('button',{name:/End room/}).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
     await student.locator('.welcome').waitFor({timeout:20000});
   } finally {
@@ -2140,8 +2245,7 @@ test('reference UI assigns one color per real participant, including two student
       const avatars=[...document.querySelectorAll<HTMLElement>('.participant-row .participant-avatar')];
       const cards=[...document.querySelectorAll<HTMLElement>('.document-row')];
       return avatars.length===2 && avatars.every(a=>a.style.getPropertyValue('--participant-color')) &&
-        cards.length===3 && cards.every(c=>Boolean(c.querySelector('.document-owner-dot')) &&
-          Boolean(c.querySelector('.document-pdf-symbol svg linearGradient stop')));
+        cards.length===3 && cards.every(c=>Boolean(c.querySelector('.document-pdf-symbol svg linearGradient stop')));
     });
     const ui=await host.evaluate(()=>{
       const avatars=[...document.querySelectorAll<HTMLElement>('.participant-row')].map(row=>({
@@ -2152,8 +2256,7 @@ test('reference UI assigns one color per real participant, including two student
       const cards=[...document.querySelectorAll<HTMLElement>('.document-row')].map(card=>({
         name:card.querySelector('h3')?.textContent,
         ownerId:card.dataset.ownerId,
-        displayName:card.querySelector('.document-file-owner')?.textContent?.trim(),
-        dot:getComputedStyle(card.querySelector('.document-owner-dot')!).backgroundColor,
+        metadataVisible:Boolean(card.querySelector('.document-file-meta')),
         gradient:card.querySelector('linearGradient stop')?.getAttribute('stop-color'),
       }));
       return {avatars,cards};
@@ -2163,15 +2266,10 @@ test('reference UI assigns one color per real participant, including two student
     assert.notEqual(ui.avatars[0].id,ui.avatars[1].id);
     assert.notEqual(ui.avatars[0].color,ui.avatars[1].color,'Different people must get different hues');
     const colorFor=(id:string|undefined)=>ui.avatars.find(a=>a.id===id)?.color;
-    const rgb=(hex:string)=>{
-      const num=Number.parseInt(hex.slice(1),16);
-      return 'rgb('+((num>>16)&255)+', '+((num>>8)&255)+', '+(num&255)+')';
-    };
     for(const card of ui.cards){
       const color=colorFor(card.ownerId);
       assert.ok(color,'Every file must refer to a real participant');
-      assert.equal(card.displayName,'Student');
-      assert.equal(card.dot,rgb(color!),'The owner dot must match the avatar color');
+      assert.equal(card.metadataVisible,false,'Cards omit the uploader and size row');
       assert.ok(card.gradient && card.gradient!=='#4a5062','The pixel icon must not be gray');
     }
     const [a,b,c]=['slides-one.pptx','archive-one.zip','installer-two.apk'].map(
@@ -2195,7 +2293,6 @@ test('reference UI assigns one color per real participant, including two student
     await mkdir('test-artifacts/ui', { recursive: true });
     await host.screenshot({ path: 'test-artifacts/ui/shared-by-desktop.png', fullPage: true });
     await host.getByRole('button',{name:/End room/}).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   } finally {
     await host.close();await first.close();await second.close();await browser.close();
@@ -2204,7 +2301,7 @@ test('reference UI assigns one color per real participant, including two student
 });
 
 
-test('refined file cards align owner dots, truncate long names and keep phone controls readable', {timeout:80000}, async()=>{
+test('refined file cards hide metadata, truncate long names and keep phone controls readable', {timeout:80000}, async()=>{
   const {port,child}=await runningServer();
   const browser=await browserEngine.launch({headless:true});
   const host=await browser.newPage({viewport:{width:1280,height:760}});
@@ -2240,17 +2337,9 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     await card.waitFor({timeout:25000});
     const check=await card.evaluate(element=>{
       const title=element.querySelector<HTMLElement>('.document-card-info h3')!;
-      const line=element.querySelector<HTMLElement>('.document-file-meta')!;
-      const owner=element.querySelector<HTMLElement>('.document-file-owner')!;
-      const name=element.querySelector<HTMLElement>('.document-owner-name')!;
-      const dot=element.querySelector<HTMLElement>('.document-owner-dot')!;
-      const size=element.querySelector<HTMLElement>('.document-file-size')!;
       const titleRect=title.getBoundingClientRect();
       const cardRect=element.getBoundingClientRect();
-      const dotRect=dot.getBoundingClientRect();
-      const nameRect=name.getBoundingClientRect();
-      const sizeRect=size.getBoundingClientRect();
-      const lineRect=line.getBoundingClientRect();
+      const visual=element.querySelector<HTMLElement>('.document-card-visual')!;
       return {
         filename: title.textContent,
         titleEllipsis:getComputedStyle(title).textOverflow,
@@ -2258,13 +2347,14 @@ test('refined file cards align owner dots, truncate long names and keep phone co
         titleRightPadding:parseFloat(getComputedStyle(title).paddingRight),
         titleRightEdge:titleRect.right,
         cardRightEdge:cardRect.right,
-        ownerDisplay:getComputedStyle(owner).display,
-        metaWrap:getComputedStyle(line).flexWrap,
-        nameHasOverflow:name.scrollWidth>name.clientWidth,
-        dotCenter:(dotRect.top+dotRect.bottom)/2,
-        nameCenter:(nameRect.top+nameRect.bottom)/2,
-        sizeRightEdge:sizeRect.right,
-        metaRightEdge:lineRect.right,
+        metadataVisible:Boolean(element.querySelector('.document-file-meta,.document-file-owner,.document-file-size')),
+        bezel:parseFloat(getComputedStyle(visual).marginLeft),
+        previewBorder:parseFloat(getComputedStyle(visual).borderTopWidth),
+        cardBackground:getComputedStyle(element).backgroundColor,
+        panelBackground:getComputedStyle(element.closest('.workspace-right')!).backgroundColor,
+        panelBlur:getComputedStyle(element.closest('.workspace-right')!).backdropFilter,
+        titleAbovePreview:titleRect.bottom<=visual.getBoundingClientRect().top,
+        actionsBelowPreview:visual.getBoundingClientRect().bottom<=element.querySelector('.document-card-actions')!.getBoundingClientRect().top,
       };
     });
     assert.equal(check.filename,longName,'Long original filename remains intact');
@@ -2272,22 +2362,41 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     assert.equal(check.titleHasOverflow,true,'Long file name visually ends in ellipsis');
     assert.ok(check.titleRightPadding>=12,'File name gets breathing room on the right');
     assert.ok(check.cardRightEdge-check.titleRightEdge>=12,'Text should not touch the card edge');
-    assert.ok(['flex','inline-flex'].includes(check.ownerDisplay), 'Owner metadata must use a horizontal flex row');
-    assert.equal(check.metaWrap,'nowrap');
-    assert.ok(Math.abs(check.dotCenter-check.nameCenter)<4,
-      'The color dot is centered beside the sender name, never above it');
-    assert.equal(check.nameHasOverflow,true,'Long sender names also truncate rather than wrap');
-    assert.ok(check.sizeRightEdge<=check.metaRightEdge+1,
-      'File size remains visible without overflowing the metadata row');
+    assert.equal(check.metadataVisible,false,'Cards omit uploader, color dot and file size');
+    assert.equal(check.bezel,6,'The existing preview bezel stays the same width');
+    assert.equal(check.previewBorder,1,'The preview has a thin visible outline');
+    assert.equal(check.cardBackground,'rgb(240, 244, 249)');
+    assert.equal(check.panelBackground,'rgb(255, 255, 255)');
+    assert.equal(check.panelBlur,'none','The Files section has a solid background');
+    assert.ok(check.titleAbovePreview&&check.actionsBelowPreview,'Cards show title, preview, then actions');
+    await mkdir('test-artifacts/ui',{recursive:true});
+    await host.waitForFunction(()=>[...document.querySelectorAll('.document-row')]
+      .every(element=>Number(getComputedStyle(element).opacity)>.99));
+    await host.screenshot({path:'test-artifacts/ui/file-cards-desktop.png',fullPage:true});
+    await host.setViewportSize({width:390,height:844});
+    const contentsFit=await card.evaluate(element=>{
+      const outer=element.getBoundingClientRect();
+      const title=element.querySelector('.document-card-info')!.getBoundingClientRect();
+      const preview=element.querySelector('.document-card-visual')!.getBoundingClientRect();
+      const actions=element.querySelector('.document-card-actions')!.getBoundingClientRect();
+      if(title.bottom>preview.top||preview.bottom>actions.top)return false;
+      return [...element.querySelectorAll('.document-card-visual, .document-card-info, .document-card-actions button')]
+        .every(child=>{
+          const box=child.getBoundingClientRect();
+          return box.left>=outer.left&&box.right<=outer.right;
+        });
+    });
+    assert.equal(contentsFit,true,'Phone previews, text and both actions fit inside the card bezel');
+    await host.screenshot({path:'test-artifacts/ui/file-cards-mobile.png',fullPage:true});
+    await host.setViewportSize({width:1280,height:760});
     await host.getByRole('button',{name:'List view'}).click();
     const list=host.locator('.document-grid.is-list');
     await list.waitFor();
-    const dot=await list.locator('.document-owner-dot').first().boundingBox();
-    const name=await list.locator('.document-owner-name').first().boundingBox();
-    assert.ok(dot&&name&&Math.abs((dot.y+dot.height/2)-(name.y+name.height/2))<4,
-      'List mode keeps the owner dot beside the name too');
+    assert.equal(await list.locator('.document-file-meta,.document-file-owner,.document-file-size').count(),0,
+      'List mode also omits uploader and file size');
+    assert.equal(await card.evaluate(element=>element.querySelector('.document-card-visual')!.getBoundingClientRect().right<=
+      element.querySelector('.document-card-info')!.getBoundingClientRect().left),true,'List view keeps the thumbnail before the title');
     await host.getByRole('button',{name:'End room'}).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   }finally{
     await host.close();await student.close();await browser.close();child.kill('SIGTERM');
@@ -2376,7 +2485,7 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
   const root='http://127.0.0.1:'+port;
   let popup:Page|null=null;
   try{
-    const pptx=await makePowerPointFixture();
+    const pptx=await makePowerPointFixture(3);
     await host.goto(root);
     await host.getByRole('button',{name:/Create a room/}).click();
     await host.locator('.connection.connected').waitFor();
@@ -2436,17 +2545,90 @@ test('complete PowerPoint uses lazy browser-only presenter with independent Down
       'Host generates a genuine first-slide JPEG locally after the PPTX download completes');
     assert.equal(await presentButton.isEnabled(),true);
     assert.equal(await downloadButton.isEnabled(),true);
+    let releaseImport!: () => void, imported!: () => void;
+    const importGate = new Promise<void>(resolve => { releaseImport = resolve; });
+    const importRequested = new Promise<void>(resolve => { imported = resolve; });
+    await host.context().route('**/assets/PowerPointPresenter-*.js', async route => {
+      imported(); await importGate; await route.continue();
+    });
     [popup]=await Promise.all([waitForPresenterPopup(host),presentButton.click()]);
-    await popup.locator('.flashview-pptx-controls').waitFor({timeout:45000});
-    assert.equal(await popup.getByText('Slide 1 / 1').count(),1,
-      'Actual PowerPoint rendered from IndexedDB without cloud conversion');
-    assert.equal(await popup.getByRole('button',{name:'Start slideshow'}).count(),1);
+    await importRequested;
+    const brand = await popup.locator('.presentation-transition').elementHandle();
+    assert.ok(brand);
+    assert.equal(await popup.locator('.presentation-transition').isVisible(), true);
+    assert.equal(await popup.locator('.presentation-transition-brand').innerText(), 'warpview');
+    assert.equal(await popup.locator('.presentation-transition-spinner').isVisible(),true);
+    assert.equal(await popup.locator('.presentation-transition-brand').evaluate(element=>{
+      const title=element.querySelector('span')!.getBoundingClientRect();
+      const spinner=element.querySelector('.presentation-transition-spinner')!.getBoundingClientRect();
+      return spinner.top>title.bottom&&getComputedStyle(element.querySelector('.presentation-transition-spinner')!).animationName!=='none';
+    }),true,'An animated loading indicator sits below WarpView');
+    assert.doesNotMatch(await popup.locator('body').innerText(), /Loading PowerPoint|Opening PowerPoint|Opening presentation/);
+    if (!process.env.FLASHVIEW_BACKEND)
+      await popup.screenshot({ path:'test-artifacts/ui/preview-transition.png' });
+    releaseImport();
+    await popup.getByRole('spinbutton', { name: 'Slide number' }).waitFor({timeout:45000});
+    await popup.waitForFunction(() => !(document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.disabled);
+    await popup.locator('.presentation-transition').waitFor({state:'hidden'});
+    assert.equal(await brand.evaluate(element => element.isConnected), true, 'One branded layer survives both loading stages');
+    assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1');
+    await swipePreview(popup, '.flashview-pptx-canvas', -160);
+    await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '2');
+    await swipePreview(popup, '.flashview-pptx-canvas', 160);
+    await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '1');
+    await swipePreview(popup, '.flashview-pptx-canvas', 10, 150);
+    assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1');
+    await popup.getByRole('button', { name: 'Zoom in', exact:true }).click();
+    await swipePreview(popup, '.flashview-pptx-canvas', -160);
+    assert.equal(await popup.getByRole('spinbutton', { name: 'Slide number' }).inputValue(), '1', 'Zoomed dragging must not change slides');
+    await popup.getByRole('button', { name: 'Reset zoom to fit' }).click();
+    assert.equal(await popup.getByRole('button',{name:'Fullscreen',exact:true}).count(),1);
+    await popup.getByRole('spinbutton', { name: 'Slide number' }).fill('2');
+    await popup.getByRole('spinbutton', { name: 'Slide number' }).press('Enter');
+    await popup.getByText('FlashView PowerPoint Test 2', { exact: true }).waitFor();
+    await popup.getByRole('button', { name: 'Previous slide' }).click();
+    await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '1');
+    await popup.locator('.flashview-pptx-canvas').click();
+    await popup.keyboard.press('ArrowRight');
+    await popup.waitForFunction(() => (document.querySelector('[aria-label="Slide number"]') as HTMLInputElement)?.value === '2');
+    await popup.setViewportSize({ width: 1660, height: 1016 });
+    await assertPowerPointFits(popup);
+    const fitted = await popup.locator('.pptxv-stage').boundingBox();
+    await popup.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    await popup.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    assert.equal(await popup.getByRole('button', { name: 'Reset zoom to fit' }).innerText(), '150%');
+    await popup.waitForFunction(width => document.querySelector('.pptxv-stage')!.getBoundingClientRect().width > width * 1.48, fitted!.width);
+    await popup.getByRole('button', { name: 'Reset zoom to fit' }).click();
+    await assertPowerPointFits(popup);
+    await popup.getByRole('button', { name: 'Zoom out', exact: true }).click();
+    assert.equal(await popup.getByRole('button', { name: 'Reset zoom to fit' }).innerText(), '75%');
+    await popup.getByRole('button', { name: 'Reset zoom to fit' }).click();
+    await assertPowerPointFits(popup);
+    await assertPresentationDock(popup);
+    assert.equal(await popup.getByText('Notes', { exact: true }).isVisible(), false, 'No second renderer toolbar');
+    if (!process.env.FLASHVIEW_BACKEND)
+      await popup.screenshot({ path: 'test-artifacts/ui/powerpoint.png' });
+    await popup.setViewportSize({ width: 375, height: 812 });
+    await assertPowerPointFits(popup);
+    await assertPresentationDock(popup);
+    if (!process.env.FLASHVIEW_BACKEND)
+      await popup.screenshot({ path: 'test-artifacts/ui/powerpoint-mobile.png' });
+    await popup.setViewportSize({ width: 1280, height: 760 });
+    if (await popup.evaluate(() => document.fullscreenEnabled)) {
+      await popup.getByRole('button', { name: 'Fullscreen', exact: true }).click();
+      await popup.waitForFunction(() => document.fullscreenElement?.classList.contains('flashview-pptx-presenter'));
+      await assertPowerPointFits(popup);
+      await assertPresentationDock(popup);
+      assert.equal(await popup.getByRole('button', { name: 'Exit fullscreen' }).count(), 1);
+    }
     assert.equal(await popup.locator('.flashview-pptx-state').count(),0);
     const [dl]=await Promise.all([host.waitForEvent('download'),downloadButton.click()]);
     const got=await readFile(await dl.path());
     assert.equal(createHash('sha256').update(got).digest('hex'),
       createHash('sha256').update(pptx).digest('hex'),
       'PowerPoint Download must preserve original bytes');
+    await closePresenter(popup);
+    assert.equal(await host.locator('.document-row').count(), 1, 'Close returns to the room without ending it');
   }finally{
     await popup?.close().catch(()=>{});
     await host.close();await student.close();await browser.close();child.kill('SIGTERM');
@@ -2625,7 +2807,6 @@ test('connection guard: admission retry delay retains selected bytes and clears 
     await host.getByRole('button', { name: 'Download retained-during-wait.bin' }).click();
     assert.deepEqual(await readFile((await (await event).path())!), original);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }
@@ -2720,7 +2901,6 @@ test('room admission: capacity denial stops replay, releases local slots and pre
     await ready.getByRole('button', { name: 'Download already-received.bin' }).click();
     assert.deepEqual(await readFile((await (await downloading).path())!), original);
     await host.getByRole('button', { name: 'End room', exact: true }).click();
-    await host.locator('.end-check input').check();
     await host.getByRole('button', { name: 'End & clear cache', exact: true }).click();
     await host.locator('.welcome').waitFor();
   } finally { await browser.close(); child.kill(); }

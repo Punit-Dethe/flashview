@@ -1,8 +1,8 @@
 import { useId } from 'react';
 import { tintParticipantColor } from './participantColors';
 
-/** Pixel shapes and gradients transcribed from the supplied FlashView v8 HTML. */
-type PixelKind = 'folder' | 'doc' | 'pdf' | 'ppt' | 'img' | 'vid' | 'gen';
+/** Shared pixel shapes and shading, based on the supplied FlashView v8 icons. */
+type PixelKind = 'folder' | 'doc' | 'pdf' | 'ppt' | 'img' | 'vid' | 'gen' | 'transfer' | 'no-account';
 const base = {
   doc: ['########....','#########...','##########..','###########.','############','############','##wwwwwwww##','############','##wwwwww####','############','##wwwwwwww##','############','############','############'],
   folder: ['#####.........','##############','##############','######ww######','######ww######','####wwwwww####','#####wwww#####','######ww######','##############','##############'],
@@ -20,6 +20,29 @@ function documentPixels(glyph: string[]): string[] {
   glyph.forEach((line,y)=>[...line].forEach((c,x)=>{if(c==='#'&&grid[8+y]?.[1+x]) grid[8+y][1+x]='w';}));
   return grid.map(row=>row.join(''));
 }
+function transferPixels(): string[] {
+  const grid = Array.from({ length: 18 }, () => Array<string>(24).fill('.'));
+  base.doc.forEach((row, y) => [...row].forEach((cell, x) => { grid[y + 2][x + 10] = cell; }));
+  for (const [x, y, width] of [[2, 5, 5], [0, 9, 7], [3, 13, 4]]) {
+    grid[y].fill('#', x, x + width);
+    grid[y + 1].fill('#', x, x + width);
+  }
+  return grid.map(row => row.join(''));
+}
+function noAccountPixels(): string[] {
+  const profile = [
+    '......####......', '.....######.....', '.....######.....', '.....######.....',
+    '......####......', '.......##.......', '................', '.....######.....',
+    '...##########...', '..############..', '.##############.', '################',
+    '################', '################', '################', '................',
+  ];
+  return profile.map((row, y) => [...row].map((cell, x) => {
+    const slash = x + y - 15;
+    if (x >= 1 && x <= 14 && y >= 1 && y <= 14 && Math.abs(slash) <= 1)
+      return slash === 0 ? 'w' : '#';
+    return cell;
+  }).join(''));
+}
 const pixels: Record<PixelKind,string[]> = {
   ...base,
   pdf: documentPixels(labelRows('PDF')),
@@ -27,6 +50,8 @@ const pixels: Record<PixelKind,string[]> = {
   gen: documentPixels(['###########','...........','#######....','...........','###########']),
   img: ['#############','#############','########ww###','########ww###','#############','####w########','###www####w##','##wwwww##www#','#wwwwwwwwwww#','#############','#############'],
   vid: ['#############','#############','#####w#######','#####ww######','#####www#####','#####wwww####','#####www#####','#####ww######','#####w#######','#############','#############'],
+  transfer: transferPixels(),
+  'no-account': noAccountPixels(),
 };
 export function pixelKindForName(name: string): PixelKind {
   const ext=name.split('.').pop()?.toLowerCase() ?? '';

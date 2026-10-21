@@ -66,7 +66,6 @@ try {
       } finally {
         if (await host.getByRole('button', { name: 'End room', exact: true }).isVisible().catch(() => false)) {
           await host.getByRole('button', { name: 'End room', exact: true }).click();
-          await host.getByRole('checkbox', { name: /I understand/ }).check();
           await host.getByRole('button', { name: 'End & clear cache' }).click();
           await host.getByRole('button', { name: /Create a room/ }).waitFor();
         }

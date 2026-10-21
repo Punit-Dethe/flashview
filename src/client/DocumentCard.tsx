@@ -18,10 +18,9 @@ type Props = {
 
 const CIRCUMFERENCE = 2 * Math.PI * 16;
 
-/** Layout mirrors the reference HTML: square white card, shallow tile,
- * filename row and a full-width round action underneath. */
+/** Responsive file card with a framed preview and independent file actions. */
 export function DocumentCard({file,participantColor,previewUrl,progress,bytesPerSecond=0,onPresent,onDownload,saving=false}:Props) {
-  const [imageState,setImageState]=useState({url:'',ready:false,failed:false});
+  const [imageState,setImageState]=useState({url:'',ready:false,failed:false,portrait:false});
   const [fallbackTimeout,setFallbackTimeout]=useState(false);
   const pdf=isPdfName(file.name);
   const powerpoint=isPowerPointName(file.name);
@@ -40,30 +39,23 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
   const progressLabel=cached?'Fully cached':Math.round(percent)+'% cached'+
     (bytesPerSecond>0?' · '+formatBytes(bytesPerSecond)+'/s':'');
   return <article className="document-row document-card" data-owner-id={file.ownerId}>
+    <div className="document-card-info">
+      <h3 title={file.name}>{file.name}</h3>
+    </div>
     <div className="document-card-visual">
       <div className="document-thumb" aria-hidden="true">
         {(pdf||powerpoint)&&previewUrl&&!imageFailed&&
-          <img className={'document-thumb-image'+(showingImage?' is-visible':'')}
+          <img className={'document-thumb-image'+(showingImage?' is-visible':'')+
+            (imageState.url===previewUrl&&imageState.portrait?' is-portrait':'')}
             src={previewUrl} alt="" loading="lazy" decoding="async"
-            onLoad={()=>setImageState({url:previewUrl,ready:true,failed:false})}
-            onError={()=>setImageState({url:previewUrl,ready:false,failed:true})}/>}
+            onLoad={event=>setImageState({url:previewUrl,ready:true,failed:false,
+              portrait:event.currentTarget.naturalHeight>event.currentTarget.naturalWidth})}
+            onError={()=>setImageState({url:previewUrl,ready:false,failed:true,portrait:false})}/>}
         {!showingImage&&<div className="document-thumb-placeholder">
           {showIcon?<span className="document-pdf-symbol"><PixelIcon kind={pixelKindForName(file.name)} color={participantColor}/></span>
             :<span className="document-thumb-spinner"/>}
         </div>}
       </div>
-    </div>
-    <div className="document-card-info">
-      <h3 title={file.name}>{file.name}</h3>
-      <p className="document-file-meta">
-        <span className="document-file-owner" title={file.ownerName}>
-          <span className="document-owner-dot" aria-hidden="true"
-            style={participantColor?{backgroundColor:participantColor}:undefined}/>
-          <span className="document-owner-name">{file.ownerName}</span>
-        </span>
-        <span className="document-file-separator" aria-hidden="true">·</span>
-        <span className="document-file-size">{formatBytes(file.size)}</span>
-      </p>
     </div>
     <div className={'cache-ring'+(cached?' is-complete':'')} role="progressbar"
       aria-label={'Cached progress for '+file.name}

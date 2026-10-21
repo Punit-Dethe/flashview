@@ -1,7 +1,7 @@
 import { ZipWriter, Uint8ArrayWriter, TextReader } from '@zip.js/zip.js';
 
 /** Minimal genuine OOXML slideshow. No network fixture or third-party Office converter. */
-export async function makePowerPointFixture(): Promise<Buffer> {
+export async function makePowerPointFixture(slideCount = 1): Promise<Buffer> {
   const ct='application/vnd.openxmlformats-officedocument.presentationml.';
   const relns='http://schemas.openxmlformats.org/package/2006/relationships';
   const presns='http://schemas.openxmlformats.org/presentationml/2006/main';
@@ -14,7 +14,7 @@ export async function makePowerPointFixture(): Promise<Buffer> {
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/ppt/presentation.xml" ContentType="${ct}presentation.main+xml"/>
-<Override PartName="/ppt/slides/slide1.xml" ContentType="${ct}slide+xml"/>
+${Array.from({length:slideCount}, (_,i) => `<Override PartName="/ppt/slides/slide${i+1}.xml" ContentType="${ct}slide+xml"/>`).join('')}
 <Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="${ct}slideLayout+xml"/>
 <Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="${ct}slideMaster+xml"/>
 <Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>
@@ -22,12 +22,12 @@ export async function makePowerPointFixture(): Promise<Buffer> {
     '_rels/.rels': `<Relationships xmlns="${relns}"><Relationship Id="rId1" Type="${partTypes}officeDocument" Target="ppt/presentation.xml"/></Relationships>`,
     'ppt/presentation.xml': `<p:presentation xmlns:p="${presns}" xmlns:r="${rns}">
 <p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>
-<p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst>
+<p:sldIdLst>${Array.from({length:slideCount}, (_,i) => `<p:sldId id="${256+i}" r:id="rId${i+2}"/>`).join('')}</p:sldIdLst>
 <p:sldSz cx="9144000" cy="5143500" type="screen16x9"/>
 <p:notesSz cx="6858000" cy="9144000"/></p:presentation>`,
     'ppt/_rels/presentation.xml.rels': `<Relationships xmlns="${relns}">
 <Relationship Id="rId1" Type="${partTypes}slideMaster" Target="slideMasters/slideMaster1.xml"/>
-<Relationship Id="rId2" Type="${partTypes}slide" Target="slides/slide1.xml"/>
+${Array.from({length:slideCount}, (_,i) => `<Relationship Id="rId${i+2}" Type="${partTypes}slide" Target="slides/slide${i+1}.xml"/>`).join('')}
 </Relationships>`,
     'ppt/slides/slide1.xml': `<p:sld xmlns:p="${presns}" xmlns:a="${drawns}" xmlns:r="${rns}">
 <p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
@@ -66,6 +66,10 @@ hlink="hlink" folHlink="folHlink" bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2"/>
 <a:bgFillStyleLst><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:bgFillStyleLst>
 </a:fmtScheme></a:themeElements></a:theme>`,
   };
+  for (let i = 2; i <= slideCount; i++) {
+    parts[`ppt/slides/slide${i}.xml`] = parts['ppt/slides/slide1.xml'].replace('PowerPoint Test', 'PowerPoint Test ' + i);
+    parts[`ppt/slides/_rels/slide${i}.xml.rels`] = parts['ppt/slides/_rels/slide1.xml.rels'];
+  }
   const archive = new ZipWriter(new Uint8ArrayWriter());
   for(const [name,xml] of Object.entries(parts)) await archive.add(name,new TextReader(xml));
   const bytes=await archive.close();

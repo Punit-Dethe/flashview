@@ -7,8 +7,8 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PdfManifest } from '../../shared/protocol';
 import type { PdfRangeSource } from '../presentation';
 import { readCompletedPdf, type CacheProgress } from './roomCache';
-import { fileAccentStyle } from '../fileAccent';
-import { formatBytes } from '../formatBytes';
+import { PresentationControls, PresentationZoomControls } from '../PresentationControls';
+import { useSwipeNavigation } from '../useSwipeNavigation';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 const REQUEST_CHUNK = 65_536;
@@ -88,7 +88,8 @@ class LivePdfRanges extends PDFDataRangeTransport {
  * A viewer can be closed and reopened without re-downloading the PDF because
  * its range source is backed by the room-level IndexedDB cache.
  */
-export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage, onFirstPageRendered, onTiming }: {
+export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage, onFirstPageRendered,
+  onPreviewReady, onError, onTiming }: {
   file: PdfManifest;
   socket: PdfRangeSource;
   close: () => void;
@@ -96,18 +97,20 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   cachedRoomId?: string | null;
   previewImage?: string | null;
   onFirstPageRendered?: () => void;
+  onPreviewReady?: () => void;
+  onError?: () => void;
   onTiming?: (metric: 'pdf_open_ms' | 'page_render_ms', duration: number, page?: number) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const wrapper = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [previewSize, setPreviewSize] = useState({ url: '', width: 0, height: 0 });
   const reportedFirst = useRef(false);
   const renderSequence = useRef(0);
   const activeRender = useRef<ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | null>(null);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
-  const [pageInput, setPageInput] = useState('1');
   const [zoom, setZoom] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -119,6 +122,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   const [fullscreen, setFullscreen] = useState(false);
   const [immersiveFallback, setImmersiveFallback] = useState(false);
   const [fullscreenNotice, setFullscreenNotice] = useState('');
+  useEffect(() => { if (error) onError?.(); }, [error, onError]);
   // A functioning partial viewer must remain visible when caching finishes.
   // Only fall back to the complete local file if the first page has NOT
   // rendered yet or a later page needs repair.
@@ -261,7 +265,7 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   }, [file.fileId, file.size, socket, cachedRoomId, loadingFullPdf, attempt, onTiming]);
 
   useEffect(() => {
-    if (!pdfDocument || !canvas.current) return;
+    if (!pdfDocument || !canvas.current || !stageSize.width || !stageSize.height) return;
     let cancelled = false;
     const generation = ++renderSequence.current;
     const pageStartedAt = performance.now();
@@ -283,10 +287,8 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
         const pdfPage = await pdfDocument.getPage(page);
         if (cancelled || generation !== renderSequence.current || !canvas.current) return;
         const original = pdfPage.getViewport({ scale: 1 });
-        const fit = stageSize.width > 0 && stageSize.height > 0
-          ? Math.min((stageSize.width - 24) / original.width,
-              (stageSize.height - 12) / original.height)
-          : 1;
+        const fit = Math.min((stageSize.width - 24) / original.width,
+          (stageSize.height - 12) / original.height);
         const viewport = pdfPage.getViewport({ scale: Math.max(0.1, fit) * zoom });
         const pixelRatio = Math.max(0.1, Math.min(
           window.devicePixelRatio || 1, 2,
@@ -352,12 +354,12 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
   }, [pdfDocument, page, zoom, pageAttempt, stageSize.width, stageSize.height,
     onFirstPageRendered, onTiming]);
 
-  useEffect(() => { setPageInput(String(page)); }, [page]);
-
   const go = (next: number) => {
     if (!pdfDocument || !Number.isFinite(next)) return;
     setPage(Math.min(pdfDocument.numPages, Math.max(1, Math.floor(next))));
   };
+  useSwipeNavigation(stage, Boolean(pdfDocument) && zoom <= 1,
+    () => go(page - 1), () => go(page + 1));
   useEffect(() => {
     const keyHandler = (event: KeyboardEvent) => {
       if (!pdfDocument || event.target instanceof HTMLInputElement) return;
@@ -420,45 +422,35 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
     else setAttempt(value => value + 1);
   };
   const showQuickPreview = Boolean(previewImage && page === 1 && renderedPage !== 1);
+  const previewFit = previewSize.url === previewImage && previewSize.width && previewSize.height &&
+    stageSize.width && stageSize.height
+    ? Math.min((stageSize.width - 24) / previewSize.width,
+        (stageSize.height - 12) / previewSize.height) * zoom : 0;
+  useEffect(() => {
+    if (!showQuickPreview || !previewFit) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => onPreviewReady?.());
+    });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [showQuickPreview, previewFit, onPreviewReady]);
   const inFullscreen = fullscreen || immersiveFallback;
-  const cachedLabel = cached
-    ? (cached.complete ? 'Saved for this room · direct local rendering' :
-      formatBytes(cached.bytes) + ' / ' + formatBytes(cached.size) + ' cached · streaming preview')
-    : 'Checking local cache…';
   return (
     <section ref={wrapper} className={'viewer' + (inFullscreen ? ' viewer-immersive' : '')}
-      style={fileAccentStyle(file.fileId)} aria-label="PDF presenter">
-      <header className="viewer-toolbar">
-        <div className="viewer-filename">
-          <button type="button" className="icon-button close-viewer" onClick={close}
-            aria-label="Back to documents" title="Back to classroom">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-              aria-hidden="true"><path d="m14 5-7 7 7 7"/></svg>
-          </button>
-          <span className="viewer-file-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor"
-              strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 3.5h7.5L19 9v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1Z"/>
-              <path d="M13 3.5V9h6M8 13h8M8 16.5h6"/>
-            </svg>
-          </span>
-          <div className="viewer-file-info">
-            <strong title={file.name}>{file.name}</strong>
-            <small title={cachedLabel}><span className={'viewer-file-status ' +
-              (cached?.complete ? 'is-complete' : 'is-loading')} aria-hidden="true"/>{cachedLabel}</small>
-          </div>
-        </div>
-
-      </header>
+      aria-label="PDF presenter">
       {error && <div className="viewer-alert" role="alert">{error} <button onClick={retry}>Retry {pdfDocument ? 'page' : 'PDF'} ↻</button></div>}
-      <div className="page-stage" ref={stage}>
-        {loading && !showQuickPreview && <div className="page-loading"><div className="spinner"/><strong>Opening PDF</strong><span>Preparing document structure and requesting missing bytes…</span></div>}
+      <div className="page-stage" ref={stage} style={{ touchAction: zoom <= 1 ? 'pan-y pinch-zoom' : 'auto' }}>
         {(pdfDocument || showQuickPreview) && <div className="page-shell">
-          {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}/>}
+          {pdfDocument && <canvas ref={canvas} aria-label={'Page ' + page} data-rendered-page={renderedPage ?? ''}
+            style={{ display: showQuickPreview ? 'none' : undefined }}/>}
           {showQuickPreview && <div className="quick-preview">
             <img src={previewImage!} alt="First slide preview" data-first-page-preview="true"
-              style={{ transform: `scale(${zoom})` }}/>
+              onLoad={event => {
+                const image = event.currentTarget;
+                setPreviewSize({ url: previewImage!, width: image.naturalWidth, height: image.naturalHeight });
+              }}
+              style={{ width: previewSize.width * previewFit, height: previewSize.height * previewFit,
+                maxWidth: 'none', maxHeight: 'none', visibility: previewFit ? 'visible' : 'hidden' }}/>
             <span>First slide ready · full PDF caching in background</span>
           </div>}
           {rendering && !error && !showQuickPreview && renderedPage !== page &&
@@ -467,40 +459,10 @@ export function Viewer({ file, socket, close, cached, cachedRoomId, previewImage
         {!loading && !pdfDocument && !showQuickPreview && <div className="page-loading">PDF is not available yet. Cached bytes are preserved.<button className="outline-button" onClick={retry}>Retry PDF ↻</button></div>}
       </div>
       {fullscreenNotice && <div className="viewer-fullscreen-notice" role="status">{fullscreenNotice}</div>}
-        <nav className="viewer-controls viewer-control-pill" aria-label="Presentation controls">
-          <button type="button" disabled={!pdfDocument || page <= 1}
-            onClick={() => go(page - 1)} aria-label="Previous page" title="Previous page (←)">‹</button>
-          <form onSubmit={event => { event.preventDefault(); go(Number(pageInput)); }}>
-            <input aria-label="Page number" type="number" min={1} max={pdfDocument?.numPages ?? 1}
-              value={pageInput} onChange={event => setPageInput(event.target.value)}/>
-            <span>/ {pdfDocument?.numPages ?? '—'}</span>
-          </form>
-          <button type="button" disabled={!pdfDocument || page >= pdfDocument.numPages}
-            onClick={() => go(page + 1)} aria-label="Next page" title="Next page (→)">›</button>
-          <span className="toolbar-divider" aria-hidden="true"/>
-          <button type="button" disabled={(!pdfDocument && !showQuickPreview) || zoom <= 0.5}
-            onClick={() => setZoom(z => Math.max(.5, +(z - .25).toFixed(2)))}
-            aria-label="Zoom out" title="Zoom out">−</button>
-          <button type="button" className="zoom-reset" disabled={zoom === 1}
-            onClick={() => setZoom(1)} aria-label="Reset zoom to fit" title="Reset to fit">
-            {Math.round(zoom * 100)}%
-          </button>
-          <button type="button" disabled={(!pdfDocument && !showQuickPreview) || zoom >= 2}
-            onClick={() => setZoom(z => Math.min(2, +(z + .25).toFixed(2)))}
-            aria-label="Zoom in" title="Zoom in">+</button>
-          <span className="toolbar-divider" aria-hidden="true"/>
-          <button type="button" onClick={changeFullscreen}
-            aria-label={inFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-            title={inFullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}>
-            {inFullscreen
-              ? <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"/></svg>
-              : <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg>}
-          </button>
-        </nav>
-      <footer className="viewer-footer">
-        <span className="status-dot"/> {cached?.complete ? 'PDF available offline in this room' : 'Caching PDF in background'}
-        <span>Previously received bytes are reused · Presentation tabs can be closed freely</span>
-      </footer>
+      <PresentationControls page={page} pageCount={pdfDocument?.numPages ?? 0} unit="page"
+        go={go} fullscreen={inFullscreen} onFullscreen={changeFullscreen} close={close}>
+        <PresentationZoomControls zoom={zoom} disabled={!pdfDocument && !showQuickPreview} onChange={setZoom}/>
+      </PresentationControls>
     </section>
   );
 }

@@ -14,15 +14,14 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app:has(.reference-welcome) .site-footer { display:none; }
 .premium-app .reference-serif { font-family:"Instrument Serif",Georgia,serif; font-weight:400; }
 
-/* Open page chrome; only the navigation links share a white pill. */
+/* A home affordance for invitation entry; the homepage has no header. */
 .premium-app .site-header.reference-nav {
   position:relative; z-index:11; width:100%; max-width:none; min-width:0;
   height:auto; min-height:92px; margin:0; padding:20px clamp(24px,4vw,64px);
-  display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  display:grid; grid-template-columns:1fr;
   align-items:center; gap:24px; border:0; border-radius:0;
   background:transparent; box-shadow:none;
   backdrop-filter:none; -webkit-backdrop-filter:none;
-  transition:background-color .2s ease,box-shadow .2s ease;
 }
 .premium-app .site-header.reference-nav.is-landing { position:fixed; inset:0 0 auto; }
 .premium-app .site-header.reference-nav.is-scrolled { background:#fff;
@@ -32,13 +31,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   font-size:22px; font-weight:700; letter-spacing:-.03em; white-space:nowrap; }
 .premium-app .reference-nav.is-landing:not(.is-scrolled) .brand { color:#fff; }
 .premium-app .reference-logo-mark,.premium-app .reference-logo-mark svg { display:block; width:26px; height:26px; }
-.premium-app .reference-nav nav { display:flex; justify-content:center; align-items:center;
-  gap:4px; padding:4px 8px; border-radius:99px; background:#fff; color:#404b69; font-size:15px; }
-.premium-app .reference-nav nav a { display:flex; align-items:center; min-height:44px;
-  padding:0 14px; border-radius:99px; color:inherit; text-decoration:none; white-space:nowrap; }
-.premium-app .reference-nav nav a:hover { color:#0b1230; background:#f0f3f9; }
-.premium-app .reference-nav .nav-start { justify-self:end; margin:0; min-width:0; min-height:44px; }
-.premium-app .reference-section[id],.premium-app #start-room { scroll-margin-top:112px; }
+.premium-app .reference-section[id],.premium-app #start-room { scroll-margin-top:24px; }
 .premium-app .primary-button.reference-pill,.premium-app .outline-button.reference-pill {
   min-height:0; padding:15px 24px; width:auto;
   border-radius:99px; font-size:16px; font-weight:600; letter-spacing:0;
@@ -48,10 +41,36 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .primary-button.reference-pill:hover:not(:disabled) { background:#262830; border-color:#262830; transform:none; }
 .premium-app .outline-button.reference-pill { border:1.5px solid #0b1230; color:#0b1230; background:#fff; }
 .premium-app .outline-button.reference-pill:hover:not(:disabled) { border-color:#0b1230; background:#f6f7fa; transform:none; }
-.premium-app .reference-nav .nav-start { padding:10px 18px; font-size:15px; white-space:nowrap; }
+
+/* Destructive confirmation uses the same white card and serif as entry. */
+.premium-app .dialog-backdrop { padding:24px; background:rgba(11,18,48,.5); overflow-y:auto; }
+.premium-app .end-dialog {
+  width:min(540px,100%); max-height:calc(100dvh - 48px); overflow-y:auto;
+  padding:40px; border:0; border-radius:16px; background:#fff; color:var(--reference-ink);
+  box-shadow:0 28px 70px -24px rgba(14,20,40,.4);
+}
+.premium-app .end-dialog h2.reference-serif {
+  margin:0 0 22px; color:var(--reference-ink); font-size:46px;
+  line-height:1.04; font-weight:400; letter-spacing:-.025em;
+}
+.premium-app .end-dialog p { margin:0 0 16px; color:var(--reference-mute); font-size:15px; line-height:1.6; }
+.premium-app .end-dialog strong { color:var(--reference-ink); font-weight:600; }
+.premium-app .end-dialog-actions { margin-top:30px; gap:10px; }
+.premium-app .end-dialog-actions button { min-height:48px; font-size:14px; }
+.premium-app .end-danger {
+  padding:14px 22px; border:1.5px solid #0e0f14; border-radius:99px;
+  background:#0e0f14; color:#fff; font-weight:600;
+}
+.premium-app .end-danger:hover:not(:disabled) { background:#262830; border-color:#262830; }
+@media (max-width:600px) {
+  .premium-app .dialog-backdrop { padding:16px; }
+  .premium-app .end-dialog { max-height:calc(100dvh - 32px); padding:30px 24px; }
+  .premium-app .end-dialog h2.reference-serif { font-size:40px; }
+  .premium-app .end-dialog-actions { flex-direction:column; }
+  .premium-app .end-dialog-actions button { width:100%; }
+}
 
 /* QR invitation: the same sky, with one focused optional-name card. */
-.premium-app .site-header.reference-nav.is-entry { grid-template-columns:1fr; }
 .premium-app.is-invite-entry .site-footer { display:none; }
 .premium-app .invite-entry.reference-sky {
   min-height:calc(100svh - 28px); display:grid; place-items:center;
@@ -89,7 +108,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   .premium-app .invite-card { padding:28px 24px; }
 }
 
-/* Sky, clouds, hero and side-by-side actions are direct matches for v8. */
+/* The existing sky frames one large wordmark and the centered room controls. */
 .premium-app .welcome.reference-welcome { max-width:none; margin:0; padding:0 0 0; color:#0b1230; }
 .premium-app .reference-sky {
   position:relative; isolation:isolate; overflow:hidden; margin:14px; min-height:calc(100vh - 28px);
@@ -111,15 +130,34 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
     radial-gradient(30% 80% at 40% 108%,#fff 45%,transparent 72%),
     radial-gradient(26% 70% at 68% 105%,#fff 40%,transparent 72%),
     radial-gradient(30% 75% at 95% 100%,#fff 40%,transparent 72%); }
-/* Reserve space beneath the fixed header without moving the hero composition. */
-.premium-app .reference-hero { position:relative; z-index:2; text-align:center; padding-top:136px; }
-.premium-app .reference-hero h1.reference-serif {
-  color:#fff; font-size:clamp(52px,7.6vw,112px); line-height:.94;
-  letter-spacing:-.025em; font-weight:400; max-width:11.5em;
-  margin:0 auto; text-shadow:0 2px 30px rgba(14,20,40,.25);
+.premium-app .reference-welcome>.reference-sky { display:block; padding:0 24px 112px; }
+.premium-app .reference-hero {
+  --hero-title-space:clamp(260px,36svh,380px);
+  position:relative; z-index:2; width:100%; max-width:1400px; margin:0 auto;
+  display:grid; grid-template-rows:var(--hero-title-space) auto;
+  justify-items:center; align-items:center; text-align:center;
+}
+.premium-app .reference-hero .home-wordmark {
+  position:relative; z-index:1; margin:0; color:#fff;
+  /* Balance the lowercase letters optically within the centered title row. */
+  padding-bottom:.14em;
+  font-size:clamp(64px,calc(16vw + 8px),188px); font-weight:700;
+  line-height:1; letter-spacing:-.04em; white-space:nowrap;
+}
+.premium-app .hero-room-stage { position:relative; width:100%; }
+.premium-app .hero-accents { position:absolute; inset:0; pointer-events:none; }
+.premium-app .hero-accent { position:absolute; width:144px; }
+.premium-app .hero-accent svg { display:block; width:100%; height:auto; }
+.premium-app .hero-accent-speed { top:18%; left:12px; }
+.premium-app .hero-accent-account { top:55%; right:32px; width:96px; }
+@media(max-width:1199px) {
+  .premium-app .reference-hero { --hero-title-space:clamp(300px,40svh,380px); }
+  .premium-app .hero-accent { width:72px; top:-82px; }
+  .premium-app .hero-accent-speed { left:8%; }
+  .premium-app .hero-accent-account { right:8%; }
 }
 .premium-app .reference-actions {
-  position:relative; z-index:3; width:min(940px,100%); margin:44px auto 0;
+  position:relative; z-index:1; width:min(840px,100%); margin:0 auto;
   display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px;
   text-align:left; padding:10px; border-radius:30px; background:#fff;
   box-shadow:0 40px 90px -24px rgba(14,20,40,.55);
@@ -208,7 +246,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   overflow:hidden; display:flex; background:transparent; }
 .premium-app .reference-room .workspace-split {
   display:grid; width:100%; min-height:0; height:100%; min-width:0;
-  grid-template-columns:390px minmax(0,1fr); gap:22px; overflow:visible;
+  grid-template-columns:420px minmax(0,1fr); gap:22px; overflow:visible;
 }
 .premium-app .reference-room .workspace-left {
   display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden;
@@ -291,7 +329,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .reference-room .workspace-right {
   padding:26px 28px; min-width:0; min-height:0;
   overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; scrollbar-gutter:auto;
-  background:rgba(255,255,255,.62); backdrop-filter:blur(14px); color:#0b1230;
+  background:#fff; backdrop-filter:none; color:#0b1230;
   border:1px solid rgba(255,255,255,.9); border-radius:30px;
   box-shadow:0 30px 60px -40px rgba(14,20,40,.35);
 }
@@ -327,21 +365,24 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 @keyframes reference-pulse {70%{box-shadow:0 0 0 10px rgba(47,207,145,0)}100%{box-shadow:0 0 0 0 rgba(47,207,145,0)}}
 
 .premium-app .reference-room .workspace-right .document-list.document-grid {
-  display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,210px),1fr));
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr));
   gap:14px; padding:0; margin:0; border:0; border-radius:0; background:transparent;
   overflow:visible; align-items:start; }
 .premium-app .reference-room .workspace-right .document-grid .document-card {
-  position:relative; display:flex; flex-direction:column; width:100%; min-width:0;
+  position:relative; display:flex; flex-direction:column; align-items:stretch; width:100%; min-width:0;
   height:auto; aspect-ratio:auto; min-height:0; gap:0; padding:0; margin:0;
-  border:1px solid #e2e6ef; border-radius:16px; background:#fff; overflow:hidden;
+  border:1px solid #e2e6ef; border-radius:16px; background:#f0f4f9; overflow:hidden;
   box-shadow:none; animation:reference-pop .5s; }
 .premium-app .reference-room .workspace-right .document-grid .document-card:hover {
-  border-color:#c5ccdb; background:#fff; transform:none; box-shadow:none; }
+  border-color:#c5ccdb; background:#f0f4f9; transform:none; box-shadow:none; }
 .premium-app .reference-room .document-card-visual {
-  position:relative; width:100%; flex:0 0 118px; height:118px; min-height:118px; background:#f4f5f8; }
+  position:relative; width:calc(100% - 12px); min-width:0; align-self:stretch; flex:none; height:auto; min-height:128px;
+  aspect-ratio:16/10; margin:0 6px 12px; border:1px solid #e2e6ef;
+  border-radius:10px; overflow:hidden; background:#f0f4f9; }
 .premium-app .reference-room .document-thumb {
-  position:absolute; inset:0; display:grid; place-items:center; background:#f4f5f8; }
-.premium-app .reference-room .document-thumb-image { object-fit:contain; }
+  position:absolute; inset:0; display:grid; place-items:center; background:#f0f4f9; }
+.premium-app .reference-room .document-thumb-image { object-fit:contain; object-position:center top; }
+.premium-app .reference-room .document-thumb-image.is-portrait { object-fit:cover; }
 .premium-app .reference-room .document-thumb-placeholder { background:transparent; display:grid; place-items:center; }
 .premium-app .reference-room .document-pdf-symbol {
   width:auto; height:auto; min-height:0; padding:0; display:grid; place-items:center;
@@ -352,36 +393,11 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .reference-room .document-card-info {
   flex:none; width:100%; max-width:100%; min-width:0; box-sizing:border-box;
   height:auto; min-height:0; gap:0; padding:14px 16px 12px;
-  background:#fff; border:0; color:#0b1230; }
+  background:transparent; border:0; color:#0b1230; }
 .premium-app .reference-room .document-card-info h3 {
   width:100%; font-size:14.5px; line-height:1.3; font-weight:600; letter-spacing:-.01em;
   color:#0b1230; margin:0; padding:0 14px 0 0; box-sizing:border-box;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-/* File metadata stays on one baseline. The stronger direct-child selector
-   overrides the old generic span:first-child rule that turned the owner into
-   a block and pushed their color dot above the name. */
-.premium-app .reference-room .document-card-info p.document-file-meta {
-  display:flex; align-items:center; flex-wrap:nowrap; gap:6px;
-  width:100%; min-width:0; margin:3px 0 0; overflow:hidden;
-  color:#5d6685; font-size:12.5px; line-height:1.4; white-space:nowrap;
-}
-.premium-app .reference-room .document-card-info p > .document-file-owner {
-  display:inline-flex; flex:0 1 auto; min-width:0; max-width:100%;
-  align-items:center; gap:6px; white-space:nowrap; color:#5d6685;
-  overflow:hidden; text-overflow:clip;
-}
-.premium-app .reference-room .document-file-owner .document-owner-name {
-  display:block; flex:0 1 auto; min-width:0; overflow:hidden;
-  white-space:nowrap; text-overflow:ellipsis;
-}
-.premium-app .reference-room .document-file-owner .document-owner-dot {
-  display:block; flex:0 0 8px; width:8px; height:8px; align-self:center;
-  border-radius:50%; background:#d2d9e5; overflow:visible;
-}
-.premium-app .reference-room .document-file-meta .document-file-separator,
-.premium-app .reference-room .document-file-meta .document-file-size {
-  display:inline-block; flex:0 0 auto; white-space:nowrap;
-}
 .premium-app .reference-room .document-card .cache-ring {
   /* Preserve the progressbar for assistive technology and existing transfer tests.
      Reference v8 paints active progress within the action button, not a corner ring. */
@@ -430,8 +446,10 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   padding:10px 14px 10px 18px; gap:14px; }
 .premium-app .reference-room .workspace-right .document-grid.is-list .document-card:last-child { border-bottom:0; }
 .premium-app .reference-room .document-grid.is-list .document-card-visual {
-  flex:0 0 40px; width:40px; height:40px; min-height:40px; background:transparent; }
+  order:-1; flex:0 0 40px; width:40px; height:40px; min-height:40px; margin:0;
+  aspect-ratio:1; border-radius:6px; background:transparent; }
 .premium-app .reference-room .document-grid.is-list .document-thumb { background:transparent; }
+.premium-app .reference-room .document-grid.is-list .document-thumb-image { object-fit:contain; object-position:center; }
 .premium-app .reference-room .document-grid.is-list .document-pdf-symbol svg { height:32px; }
 .premium-app .reference-room .document-grid.is-list .document-card-info {
   flex:1 1 auto; min-width:0; padding:0; background:transparent; }
@@ -492,23 +510,16 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
  .premium-app .reference-room .workspace-right { overflow:visible; }
 }
 @media(max-width:760px) {
- .premium-app .site-header.reference-nav { grid-template-columns:minmax(0,1fr) auto;
-   padding:16px 24px 12px; gap:8px 16px; }
- .premium-app .reference-nav nav { grid-row:2; grid-column:1/-1; justify-self:center;
-   padding:0 8px; font-size:13px; }
- .premium-app .reference-nav nav a { padding:0 12px; }
- .premium-app .reference-nav .nav-start { grid-column:2; grid-row:1; }
- .premium-app .reference-section[id],.premium-app #start-room { scroll-margin-top:144px; }
+ .premium-app .site-header.reference-nav { padding:16px 24px 12px; }
+ .premium-app .reference-hero { --hero-title-space:clamp(144px,22svh,184px); }
+ .premium-app .hero-accents { display:none; }
 }
 @media(max-width:600px) {
  .premium-app .reference-nav .brand { font-size:17px; }
  .premium-app .reference-nav .reference-logo-mark,.premium-app .reference-nav .reference-logo-mark svg { width:22px; height:22px; }
- .premium-app .reference-nav .nav-start { padding:9px 12px; font-size:13px; }
  .premium-app .reference-sky { margin:8px; border-radius:25px; padding:16px 11px 120px; min-height:calc(100vh - 16px); }
- /* Retain breathing room beneath the two-row phone header. */
- .premium-app .reference-hero { padding-top:168px; }
- .premium-app .reference-hero h1.reference-serif { font-size:clamp(49px,13.4vw,72px); }
- .premium-app .reference-actions { margin:32px auto 0; border-radius:23px; gap:5px; padding:7px; }
+ .premium-app .reference-welcome>.reference-sky { padding:0 11px 96px; }
+ .premium-app .reference-actions { border-radius:23px; gap:5px; padding:7px; }
  .premium-app .reference-pane { padding:22px 19px; border-radius:18px; }
  .premium-app .reference-pane h2.reference-serif { font-size:33px; }
  .premium-app .reference-pane-icon { margin-bottom:13px; }
@@ -707,4 +718,12 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 }
 .premium-app .reference-room .document-card-actions > .document-card-present:focus-visible {
   outline:2px solid #5160aa; outline-offset:2px;
+}
+@media(max-width:600px) {
+  .premium-app .reference-room .document-grid:not(.is-list) .document-card-actions {
+    width:calc(100% - 16px); margin:0 8px 10px;
+  }
+  .premium-app .reference-room .document-grid:not(.is-list) .document-card-download {
+    padding:0 6px;
+  }
 }

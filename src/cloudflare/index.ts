@@ -460,6 +460,11 @@ export class ClassroomRoom extends DurableObject<Env> {
         }
         return;
       }
+      if (msg.type === 'participant.color' && typeof msg.studentId === 'string' &&
+          typeof msg.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(msg.color)) {
+        this.sendPeer(this.student(msg.studentId)?.ws ?? null, {type:'participant.color',color:msg.color});
+        return;
+      }
       if (msg.type === 'cache.progress') {
         const change = this.fileState.cacheProgress(msg.fileId, msg.bytes, msg.snapshot);
         if (change) await this.commitFiles([change], ws);

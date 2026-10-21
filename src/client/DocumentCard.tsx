@@ -4,6 +4,7 @@ import { isPdfName, isPowerPointName } from '../shared/fileTypes';
 import type { CacheProgress } from './pdf/roomCache';
 import { formatBytes } from './formatBytes';
 import { PixelIcon, pixelKindForName } from './PixelIcon';
+import { participantForeground } from './participantColors';
 
 type Props = {
   file: PdfManifest;
@@ -106,6 +107,11 @@ export function DocumentCard({file,participantColor,previewUrl,progress,bytesPer
       </svg>
     </div>
     <div className="document-card-actions">
+      <span className="document-uploader-avatar" role="img" aria-label={'Uploaded by '+file.ownerName}
+        title={'Uploaded by '+file.ownerName}
+        style={participantColor?{'--participant-color':participantColor,'--participant-ink':participantForeground(participantColor)} as CSSProperties:undefined}>
+        {Array.from(file.ownerName.trim())[0]?.toUpperCase()||'?'}
+      </span>
       <button type="button"
         className={'document-card-download reference-card-action'+(cached?' ready':' busy')}
         disabled={!cached||saving} onClick={onDownload}

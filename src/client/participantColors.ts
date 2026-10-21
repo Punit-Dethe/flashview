@@ -12,6 +12,15 @@ export const PARTICIPANT_SWATCHES = [
   '#6b5d24', '#6076cf', '#548e43', '#a25ecb', '#34948a',
 ] as const;
 
+/** Use the more legible foreground for each solid participant swatch. */
+export function participantForeground(color: string): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) return '#ffffff';
+  const channels = [1,3,5].map(index => Number.parseInt(color.slice(index,index+2),16)/255)
+    .map(channel => channel <= .04045 ? channel/12.92 : ((channel+.055)/1.055)**2.4);
+  const luminance = channels[0]*.2126+channels[1]*.7152+channels[2]*.0722;
+  return luminance > .179 ? '#000000' : '#ffffff';
+}
+
 export function assignParticipantColors(
   current: Readonly<Record<string, string>>,
   ids: readonly string[],

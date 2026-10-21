@@ -367,7 +367,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 }
 .premium-app .reference-room .sidebar-brand {
   flex:none; align-self:stretch; margin:0; padding:0; color:#0e0f14;
-  font-size:52px; font-weight:700; letter-spacing:-.04em; line-height:1; text-align:center;
+  font-size:48px; font-weight:700; letter-spacing:-.04em; line-height:1; text-align:center;
 }
 .premium-app .reference-room .premium-invite {
   display:flex; flex-direction:column; gap:0; width:100%; margin:0; max-width:none;
@@ -396,10 +396,8 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app .reference-room .invite-actions { display:flex; gap:10px; margin:0; padding:0; }
 .premium-app .reference-room .invite-actions .reference-pill {
   flex:1; min-width:0; width:auto; min-height:0; height:43px; padding:10px 10px;
-  color:#fff; border:1px solid #0e0f14; font-size:14px;
-  background:#0e0f14; border-radius:99px; white-space:nowrap; }
-.premium-app .reference-room .invite-actions .end-room-button {
-  background:#fff; border-color:#d5dce8; color:#0b1230; }
+  color:#0b1230; border:1px solid #d5dce8; font-size:14px;
+  background:#fff; border-radius:99px; white-space:nowrap; }
 .premium-app .reference-room .invite-actions .reference-pill:is(:hover,:focus-visible):not(:disabled) {
   background:#f6f7fa; border-color:#0e0f14; color:#0e0f14;
 }
@@ -752,7 +750,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
     padding:20px 20px 24px; border-top:1px solid #e1e7f2;
   }
   .premium-app .reference-room .mobile-host-config-panel .sidebar-brand {
-    font-size:40px; margin:0 0 2px;
+    font-size:36px; margin:0 0 2px;
   }
   .premium-app .reference-room .mobile-host-config-panel .qr-plate {
     width:94%; max-width:none; margin:0 auto;

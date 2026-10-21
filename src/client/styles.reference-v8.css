@@ -14,7 +14,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 .premium-app:has(.reference-welcome) .site-footer { display:none; }
 .premium-app .reference-serif { font-family:"Instrument Serif",Georgia,serif; font-weight:400; }
 
-/* The public header sits within the sky's rounded outer frame. */
+/* Public navigation stays at the viewport top, unchanged by scrolling. */
 .premium-app .site-header.reference-nav {
   position:relative; z-index:11; width:100%; max-width:none; min-width:0;
   height:auto; min-height:92px; margin:0; padding:20px clamp(24px,4vw,64px);
@@ -27,38 +27,27 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   display:flex; color:#0b1230; justify-self:start; padding:8px 0; background:transparent;
   min-height:44px; font-size:30px; font-weight:700; letter-spacing:-.04em; white-space:nowrap;
 }
-.premium-app .reference-nav.is-landing:not(.is-scrolled) .brand { color:#fff; }
 .premium-app .site-header.reference-nav.public-header {
-  position:fixed; inset:34px 46px auto; width:auto; min-height:56px; padding:0;
+  position:fixed; inset:0 0 auto; width:auto; min-height:80px; padding:12px 46px;
   display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:20px;
-  transition:inset .72s cubic-bezier(.22,1,.36,1), padding .72s cubic-bezier(.22,1,.36,1),
-    background .2s ease, box-shadow .2s ease;
+  background:#fff; border-bottom:1px solid #e0e7f5;
 }
 .premium-app .public-header .brand { font-size:34px; line-height:1; }
 .premium-app .reference-menu-toggle { display:none; }
 .premium-app .reference-nav-links { display:flex; align-items:center; justify-content:center; gap:4px;
   padding:5px; background:transparent; }
 .premium-app .reference-nav-links a { display:block; padding:10px 15px;
-  color:#fff; font-size:16px; font-weight:700; text-decoration:none; white-space:nowrap; }
+  color:#27314c; font-size:16px; font-weight:700; text-decoration:none; white-space:nowrap; }
 .premium-app .reference-nav-links a:hover,.premium-app .reference-nav-links a[aria-current] {
   text-decoration:underline; text-underline-offset:7px; text-decoration-thickness:1px; }
 .premium-app .reference-nav-actions { display:flex; justify-self:end; align-items:center; gap:8px; }
 .premium-app .reference-nav-actions a { display:flex; align-items:center; justify-content:center;
   min-height:44px; padding:10px 17px; border-radius:99px; font-size:13px; font-weight:600;
   text-decoration:none; white-space:nowrap; }
-.premium-app .reference-nav-actions .header-join { color:#fff; border:1px solid rgba(255,255,255,.65); background:transparent; }
-.premium-app .reference-nav-actions .header-join:hover { background:rgba(255,255,255,.12); }
-.premium-app .reference-nav-actions .header-create { color:#0b1230; border:1px solid #fff; background:#fff; }
-.premium-app .reference-nav-actions .header-create:hover { background:#f0f4f9; border-color:#f0f4f9; }
-.premium-app .site-header.reference-nav.public-header.is-scrolled {
-  inset:14px clamp(54px,4.5vw,80px) auto; padding:12px 22px; border-radius:20px; background:#fff;
-  box-shadow:0 12px 32px -24px rgba(14,20,40,.45);
-}
-.premium-app .public-header.is-scrolled .reference-nav-links a { color:#27314c; }
-.premium-app .public-header.is-scrolled .header-join { color:#0b1230; border-color:#d6deec; }
-.premium-app .public-header.is-scrolled .header-join:hover { background:#f0f4f9; }
-.premium-app .public-header.is-scrolled .header-create { background:#0e0f14; border-color:#0e0f14; color:#fff; }
-.premium-app .public-header.is-scrolled .header-create:hover { background:#262830; }
+.premium-app .reference-nav-actions .header-join { color:#0b1230; border:1px solid #d6deec; background:transparent; }
+.premium-app .reference-nav-actions .header-join:hover { background:#f0f4f9; }
+.premium-app .reference-nav-actions .header-create { background:#0e0f14; border:1px solid #0e0f14; color:#fff; }
+.premium-app .reference-nav-actions .header-create:hover { background:#262830; border-color:#262830; }
 .premium-app .reference-section[id],.premium-app #start-room,.premium-app #create-room,.premium-app #join-room { scroll-margin-top:112px; }
 .premium-app.is-home { background:#fff; }
 .premium-app .primary-button.reference-pill,.premium-app .outline-button.reference-pill {
@@ -294,7 +283,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 }
 
 @media(max-width:1100px) {
-  .premium-app .site-header.reference-nav.public-header { inset:32px 38px auto; gap:12px; }
+  .premium-app .site-header.reference-nav.public-header { padding:12px 38px; gap:12px; }
   .premium-app .reference-nav-links a { padding:10px; font-size:15px; }
   .premium-app .reference-nav-actions a { padding:10px 13px; font-size:12px; }
   .premium-app .public-header .brand { font-size:30px; }
@@ -303,14 +292,12 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   .premium-app .site-header.reference-nav.public-header { grid-template-columns:minmax(0,1fr) auto; }
   .premium-app .reference-menu-toggle {
     display:grid; place-items:center; justify-self:end; width:44px; height:44px; padding:0;
-    border:0; border-radius:12px; background:transparent; color:#fff; cursor:pointer;
+    border:0; border-radius:12px; background:transparent; color:#0b1230; cursor:pointer;
   }
-  .premium-app .public-header.is-scrolled .reference-menu-toggle { color:#0b1230; }
-  .premium-app .reference-menu-toggle:hover { background:rgba(255,255,255,.12); }
-  .premium-app .public-header.is-scrolled .reference-menu-toggle:hover { background:#f0f4f9; }
+  .premium-app .reference-menu-toggle:hover { background:#f0f4f9; }
   .premium-app .reference-nav-actions { display:none; }
   .premium-app .reference-nav-links {
-    position:absolute; inset:calc(100% + 10px) 0 auto; display:flex; flex-direction:column; align-items:stretch;
+    position:absolute; inset:calc(100% + 8px) 24px auto; display:flex; flex-direction:column; align-items:stretch;
     gap:2px; padding:10px; border-radius:16px; background:#fff;
     box-shadow:0 16px 36px -20px rgba(14,20,40,.4);
     visibility:hidden; pointer-events:none; opacity:0; transform:translateY(-6px);
@@ -327,8 +314,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   .premium-app .reference-hero .home-headline { font-size:clamp(52px,8.5vw,76px); }
 }
 @media(max-width:600px) {
-  .premium-app .site-header.reference-nav.public-header { inset:28px 26px auto; padding:0; gap:10px; }
-  .premium-app .site-header.reference-nav.public-header.is-scrolled { inset:12px 30px auto; padding:10px 14px; border-radius:18px; }
+  .premium-app .site-header.reference-nav.public-header { min-height:72px; padding:10px 26px; gap:10px; }
   .premium-app .public-header .brand { font-size:28px; }
   .premium-app .reference-hero { gap:34px; }
   .premium-app .reference-hero .home-headline { font-size:clamp(42px,9.8vw,58px); line-height:1; }
@@ -336,9 +322,8 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   .premium-app .home-how-heading>p { font-size:16px; }
 }
 @media(max-width:380px) {
-  .premium-app .site-header.reference-nav.public-header { inset:25px 22px auto; gap:6px; }
+  .premium-app .site-header.reference-nav.public-header { padding:10px 22px; gap:6px; }
   .premium-app .public-header .brand { font-size:25px; }
-  .premium-app .site-header.reference-nav.public-header.is-scrolled { inset:10px 24px auto; }
 }
 
 /* Host: v8 pastel full-window gradient, roomy white panels. */

@@ -3,19 +3,11 @@ import { useEffect, useId, useRef, useState, type MouseEvent } from 'react';
 export function SiteHeader({ landing, onHome, publicNavigation = false, architecture = false,
   onRoomAction }: { landing: boolean; onHome: () => void; publicNavigation?: boolean;
   architecture?: boolean; onRoomAction?: (action: 'create' | 'join') => void }) {
-  const [scrolled, setScrolled] = useState(() => window.scrollY > 24);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileNavigation, setMobileNavigation] = useState(() => window.matchMedia('(max-width: 940px)').matches);
   const headerRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
-  useEffect(() => {
-    if (!publicNavigation || !landing) return;
-    const update = () => setScrolled(window.scrollY > 24);
-    update();
-    window.addEventListener('scroll', update, { passive: true });
-    return () => window.removeEventListener('scroll', update);
-  }, [publicNavigation, landing]);
   useEffect(() => {
     if (!publicNavigation) return;
     const mobile = window.matchMedia('(max-width: 940px)');
@@ -49,7 +41,7 @@ export function SiteHeader({ landing, onHome, publicNavigation = false, architec
   };
   return (
     <header ref={headerRef} className={'site-header reference-nav' + (publicNavigation ? ' public-header' : ' entry-header') +
-      (landing ? ' is-landing' : '') + ((!landing || scrolled) ? ' is-scrolled' : '') + (menuOpen ? ' is-menu-open' : '')}
+      (landing ? ' is-landing' : '') + (menuOpen ? ' is-menu-open' : '')}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMenuOpen(false); }}>
       <button type="button" className="brand" onClick={() => { setMenuOpen(false); onHome(); }} aria-label="WarpView home">
         <span>warpview</span>

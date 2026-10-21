@@ -599,7 +599,6 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
     for (const width of [1440,1280,1024,960,941,940,768,390,320]) {
       await page.setViewportSize({width,height:844});
       await page.evaluate(()=>window.scrollTo(0,0));
-      await page.waitForFunction(()=>!document.querySelector('.reference-nav')!.classList.contains('is-scrolled'));
       if(width<=940){
         const toggle=header.getByRole('button',{name:/menu/});
         if(await toggle.getAttribute('aria-expanded')==='true')await toggle.click();
@@ -621,6 +620,7 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
         return {overflow:document.documentElement.scrollWidth>innerWidth,
           cardCenter:card.left+card.width/2,
           headerWidth:box.width,
+          top:box.top,background:getComputedStyle(element).backgroundColor,
           actionRight:element.querySelector(innerWidth<=940?'.reference-menu-toggle':'.reference-nav-actions')!.getBoundingClientRect().right,
           navCenter:nav.left+nav.width/2,
           brandLeft:brand.left,skyLeft:sky.left,
@@ -636,21 +636,26 @@ test('home header and end-room dialog: responsive navigation and direct cache cl
       assert.ok(Math.abs(layout.cardCenter-width/2)<2,'Room controls remain centered');
       if(width>=1280)assert.ok(Math.abs(layout.navCenter-width/2)<2,'Desktop menu is centered independently of side widths');
       assert.equal(await header.locator('nav').evaluate(el=>getComputedStyle(el).backgroundColor),width<=940?'rgb(255, 255, 255)':'rgba(0, 0, 0, 0)');
-      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),width<=940?'rgb(39, 49, 76)':'rgb(255, 255, 255)');
+      assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(39, 49, 76)');
+      assert.equal(layout.top,0,'Header is fixed at the very top');
+      assert.equal(layout.background,'rgb(255, 255, 255)');
       await page.evaluate(()=>window.scrollTo(0,350));
-      await page.waitForFunction(()=>document.querySelector('.reference-nav')!.classList.contains('is-scrolled'));
       const compact=await header.evaluate(element=>{
         const targets=[...element.querySelectorAll('a,button')].filter(el=>getComputedStyle(el).visibility==='visible')
           .map(el=>el.getBoundingClientRect()).filter(box=>box.width>0&&box.height>0);
         return {width:element.getBoundingClientRect().width,
+          top:element.getBoundingClientRect().top,background:getComputedStyle(element).backgroundColor,
           brandLeft:element.querySelector('.brand')!.getBoundingClientRect().left,
           actionRight:element.querySelector(innerWidth<=940?'.reference-menu-toggle':'.reference-nav-actions')!.getBoundingClientRect().right,
           fits:targets.every(box=>box.left>=0&&box.right<=innerWidth),
           overlaps:targets.some((box,i)=>targets.slice(i+1).some(other=>
             box.left<other.right-1&&box.right>other.left+1&&box.top<other.bottom-1&&box.bottom>other.top+1))};
       });
-      assert.ok(compact.width<layout.headerWidth&&compact.brandLeft>layout.brandLeft&&compact.actionRight<layout.actionRight,
-        'Scrolling gently moves the header edges and content inward at '+width);
+      assert.equal(compact.width,layout.headerWidth);
+      assert.equal(compact.brandLeft,layout.brandLeft);
+      assert.equal(compact.actionRight,layout.actionRight);
+      assert.equal(compact.top,0);
+      assert.equal(compact.background,layout.background,'Scrolling does not change the header appearance');
       assert.ok(compact.fits&&!compact.overlaps,'Compact header controls fit at '+width);
       assert.equal(await header.getByRole('link',{name:'Instructions',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(39, 49, 76)');
       if(width===1440||width===390){

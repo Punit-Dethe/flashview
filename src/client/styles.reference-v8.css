@@ -366,8 +366,8 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
   box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none;
 }
 .premium-app .reference-room .sidebar-brand {
-  flex:none; align-self:stretch; margin:0; padding:0; color:#0e0f14;
-  font-size:48px; font-weight:700; letter-spacing:-.04em; line-height:1; text-align:center;
+  flex:none; align-self:stretch; margin:0 0 -2px; padding:0; color:#0e0f14;
+  font-size:46px; font-weight:700; letter-spacing:-.04em; line-height:1; text-align:center;
 }
 .premium-app .reference-room .premium-invite {
   display:flex; flex-direction:column; gap:0; width:100%; margin:0; max-width:none;
@@ -750,7 +750,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
     padding:20px 20px 24px; border-top:1px solid #e1e7f2;
   }
   .premium-app .reference-room .mobile-host-config-panel .sidebar-brand {
-    font-size:36px; margin:0 0 2px;
+    font-size:34px; margin:0;
   }
   .premium-app .reference-room .mobile-host-config-panel .qr-plate {
     width:94%; max-width:none; margin:0 auto;

@@ -224,7 +224,7 @@ html,body { background:var(--reference-page); color:var(--reference-ink); }
 
 /* A roomier desktop composition; phone and tablet dimensions stay unchanged. */
 @media(min-width:941px) {
-  .premium-app .reference-hero { padding-top:154px; }
+  .premium-app .reference-hero { padding-top:162px; }
   .premium-app .reference-welcome>.reference-sky { padding-bottom:168px; }
   .premium-app .reference-welcome>.reference-sky::after { height:220px; }
   .premium-app .reference-actions { width:min(960px,100%); }

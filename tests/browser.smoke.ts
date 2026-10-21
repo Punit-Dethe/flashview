@@ -2175,8 +2175,7 @@ test('reference UI assigns one color per real participant, including two student
       const avatars=[...document.querySelectorAll<HTMLElement>('.participant-row .participant-avatar')];
       const cards=[...document.querySelectorAll<HTMLElement>('.document-row')];
       return avatars.length===2 && avatars.every(a=>a.style.getPropertyValue('--participant-color')) &&
-        cards.length===3 && cards.every(c=>Boolean(c.querySelector('.document-owner-dot')) &&
-          Boolean(c.querySelector('.document-pdf-symbol svg linearGradient stop')));
+        cards.length===3 && cards.every(c=>Boolean(c.querySelector('.document-pdf-symbol svg linearGradient stop')));
     });
     const ui=await host.evaluate(()=>{
       const avatars=[...document.querySelectorAll<HTMLElement>('.participant-row')].map(row=>({
@@ -2187,8 +2186,7 @@ test('reference UI assigns one color per real participant, including two student
       const cards=[...document.querySelectorAll<HTMLElement>('.document-row')].map(card=>({
         name:card.querySelector('h3')?.textContent,
         ownerId:card.dataset.ownerId,
-        displayName:card.querySelector('.document-file-owner')?.textContent?.trim(),
-        dot:getComputedStyle(card.querySelector('.document-owner-dot')!).backgroundColor,
+        metadataVisible:Boolean(card.querySelector('.document-file-meta')),
         gradient:card.querySelector('linearGradient stop')?.getAttribute('stop-color'),
       }));
       return {avatars,cards};
@@ -2198,15 +2196,10 @@ test('reference UI assigns one color per real participant, including two student
     assert.notEqual(ui.avatars[0].id,ui.avatars[1].id);
     assert.notEqual(ui.avatars[0].color,ui.avatars[1].color,'Different people must get different hues');
     const colorFor=(id:string|undefined)=>ui.avatars.find(a=>a.id===id)?.color;
-    const rgb=(hex:string)=>{
-      const num=Number.parseInt(hex.slice(1),16);
-      return 'rgb('+((num>>16)&255)+', '+((num>>8)&255)+', '+(num&255)+')';
-    };
     for(const card of ui.cards){
       const color=colorFor(card.ownerId);
       assert.ok(color,'Every file must refer to a real participant');
-      assert.equal(card.displayName,'Student');
-      assert.equal(card.dot,rgb(color!),'The owner dot must match the avatar color');
+      assert.equal(card.metadataVisible,false,'Cards omit the uploader and size row');
       assert.ok(card.gradient && card.gradient!=='#4a5062','The pixel icon must not be gray');
     }
     const [a,b,c]=['slides-one.pptx','archive-one.zip','installer-two.apk'].map(
@@ -2238,7 +2231,7 @@ test('reference UI assigns one color per real participant, including two student
 });
 
 
-test('refined file cards align owner dots, truncate long names and keep phone controls readable', {timeout:80000}, async()=>{
+test('refined file cards hide metadata, truncate long names and keep phone controls readable', {timeout:80000}, async()=>{
   const {port,child}=await runningServer();
   const browser=await browserEngine.launch({headless:true});
   const host=await browser.newPage({viewport:{width:1280,height:760}});
@@ -2274,17 +2267,9 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     await card.waitFor({timeout:25000});
     const check=await card.evaluate(element=>{
       const title=element.querySelector<HTMLElement>('.document-card-info h3')!;
-      const line=element.querySelector<HTMLElement>('.document-file-meta')!;
-      const owner=element.querySelector<HTMLElement>('.document-file-owner')!;
-      const name=element.querySelector<HTMLElement>('.document-owner-name')!;
-      const dot=element.querySelector<HTMLElement>('.document-owner-dot')!;
-      const size=element.querySelector<HTMLElement>('.document-file-size')!;
       const titleRect=title.getBoundingClientRect();
       const cardRect=element.getBoundingClientRect();
-      const dotRect=dot.getBoundingClientRect();
-      const nameRect=name.getBoundingClientRect();
-      const sizeRect=size.getBoundingClientRect();
-      const lineRect=line.getBoundingClientRect();
+      const visual=element.querySelector<HTMLElement>('.document-card-visual')!;
       return {
         filename: title.textContent,
         titleEllipsis:getComputedStyle(title).textOverflow,
@@ -2292,14 +2277,9 @@ test('refined file cards align owner dots, truncate long names and keep phone co
         titleRightPadding:parseFloat(getComputedStyle(title).paddingRight),
         titleRightEdge:titleRect.right,
         cardRightEdge:cardRect.right,
-        ownerDisplay:getComputedStyle(owner).display,
-        metaWrap:getComputedStyle(line).flexWrap,
-        nameEllipsis:getComputedStyle(name).textOverflow,
-        nameWhiteSpace:getComputedStyle(name).whiteSpace,
-        dotCenter:(dotRect.top+dotRect.bottom)/2,
-        nameCenter:(nameRect.top+nameRect.bottom)/2,
-        sizeRightEdge:sizeRect.right,
-        metaRightEdge:lineRect.right,
+        metadataVisible:Boolean(element.querySelector('.document-file-meta,.document-file-owner,.document-file-size')),
+        bezel:parseFloat(getComputedStyle(visual).marginLeft),
+        previewBorder:parseFloat(getComputedStyle(visual).borderTopWidth),
       };
     });
     assert.equal(check.filename,longName,'Long original filename remains intact');
@@ -2307,14 +2287,13 @@ test('refined file cards align owner dots, truncate long names and keep phone co
     assert.equal(check.titleHasOverflow,true,'Long file name visually ends in ellipsis');
     assert.ok(check.titleRightPadding>=12,'File name gets breathing room on the right');
     assert.ok(check.cardRightEdge-check.titleRightEdge>=12,'Text should not touch the card edge');
-    assert.ok(['flex','inline-flex'].includes(check.ownerDisplay), 'Owner metadata must use a horizontal flex row');
-    assert.equal(check.metaWrap,'nowrap');
-    assert.ok(Math.abs(check.dotCenter-check.nameCenter)<4,
-      'The color dot is centered beside the sender name, never above it');
-    assert.equal(check.nameEllipsis,'ellipsis','Sender names truncate when they exceed the available width');
-    assert.equal(check.nameWhiteSpace,'nowrap','Sender names stay on one line when a wider card can fit them');
-    assert.ok(check.sizeRightEdge<=check.metaRightEdge+1,
-      'File size remains visible without overflowing the metadata row');
+    assert.equal(check.metadataVisible,false,'Cards omit uploader, color dot and file size');
+    assert.equal(check.bezel,6,'The existing preview bezel stays the same width');
+    assert.equal(check.previewBorder,1,'The preview has a thin visible outline');
+    await mkdir('test-artifacts/ui',{recursive:true});
+    await host.waitForFunction(()=>[...document.querySelectorAll('.document-row')]
+      .every(element=>Number(getComputedStyle(element).opacity)>.99));
+    await host.screenshot({path:'test-artifacts/ui/file-cards-desktop.png',fullPage:true});
     await host.setViewportSize({width:390,height:844});
     const contentsFit=await card.evaluate(element=>{
       const outer=element.getBoundingClientRect();
@@ -2325,14 +2304,13 @@ test('refined file cards align owner dots, truncate long names and keep phone co
         });
     });
     assert.equal(contentsFit,true,'Phone previews, text and both actions fit inside the card bezel');
+    await host.screenshot({path:'test-artifacts/ui/file-cards-mobile.png',fullPage:true});
     await host.setViewportSize({width:1280,height:760});
     await host.getByRole('button',{name:'List view'}).click();
     const list=host.locator('.document-grid.is-list');
     await list.waitFor();
-    const dot=await list.locator('.document-owner-dot').first().boundingBox();
-    const name=await list.locator('.document-owner-name').first().boundingBox();
-    assert.ok(dot&&name&&Math.abs((dot.y+dot.height/2)-(name.y+name.height/2))<4,
-      'List mode keeps the owner dot beside the name too');
+    assert.equal(await list.locator('.document-file-meta,.document-file-owner,.document-file-size').count(),0,
+      'List mode also omits uploader and file size');
     await host.getByRole('button',{name:'End room'}).click();
     await host.getByRole('button',{name:/End & clear cache/}).click();
   }finally{

@@ -1,15 +1,16 @@
 # Phase 0 results — 19 October 2026
 
-Historical experiment record restored on 20 October from PR #35/#36. Prototype
-code and its additional tests remain on those branches; this recovery branch
-does not integrate the R2 gateway or the pilot's worker/cache engine.
+Historical experiment record from PR #35/#36, restored on 20 October. Its R2
+gateway and OPFS pilot are not part of the current production application.
+The relay's dedicated transfer worker is a separate implementation on main;
+it must not be confused with the pilot's storage engine.
 
 **Decision: defer R2 and retain the existing relay.** After trying the deployed
 pilot, the user also reported substantially slower transfers and chose to skip
 R2 for now. This is additional qualitative feedback, not another controlled
 timing sample. Neither tested R2 layout demonstrated comparable live speed in
-the measured pilot. Continue the worker/cache/reliability improvements through
-the [relay-first implementation plan](./architecture-improvement-plan.md).
+the measured pilot. See the [current architecture](./architecture.md#implemented-and-not-implemented)
+for what is actually implemented; the superseded implementation plan was removed.
 
 ## Live pilot
 
@@ -43,7 +44,7 @@ with a separate Node admission connection/cold worker startup are exploratory
 and should not be mixed into this table. Relay v1 reports are also not equivalent:
 the old benchmark measured the first completion and could mislabel packet size.
 
-## What is implemented and verified
+## Pilot implementation and verification (historical)
 
 - All-file cache observer: explicit completion, corrections, and bounded original
   hash verification. A browser regression distinguishes rounded 100% from actual

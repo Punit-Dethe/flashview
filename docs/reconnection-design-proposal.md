@@ -1,4 +1,9 @@
-# Foreground reconnection: research and proposed decision
+# Foreground reconnection: research and implemented decision
+
+**Current status (22 October 2026):** the selected policy is on main. This is
+retained decision/research evidence, not an outstanding implementation plan.
+The alternatives and sequence below describe the 19 October evaluation; current
+behavior is documented in [Transfer protocol](./transfer-protocol.md#control-messages).
 
 **19 October 2026 — research and selected implementation.** The initial research
 examined `13d8161`, whose recovery policy waited for a two-second probe. The
@@ -51,8 +56,9 @@ neither requires waiting two seconds before the first user-driven attempt.
   [Recovery design](https://socket.io/docs/v4/connection-state-recovery/)
 - **Browser lifecycle guidance** says frozen pages suspend timers and callbacks;
   Chrome documents `freeze`/`resume`, while MDN describes pageshow restoration.
-  Our current App listens for visibility, focus, pageshow and online, but not
-  document freeze/resume. Browser events are complementary signals, not proof
+  The research baseline App listened for visibility, focus, pageshow and online,
+  but not document freeze/resume; current main handles those lifecycle signals.
+  Browser events are complementary signals, not proof
   that a connection is usable.
   [Chrome lifecycle guide](https://developer.chrome.com/docs/web-platform/page-lifecycle-api),
   [MDN WebSocket lifecycle example](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_client_applications#working_with_the_bfcache)
@@ -72,10 +78,10 @@ results or statements that every option is intrinsically bad.
 | Approach | Benefit | Limitation / decision |
 | --- | --- | --- |
 | Wait for browser close or periodic heartbeat | Small implementation | A dead mobile connection can still appear open. Retain as a fallback, not the return path. |
-| Two-second old-socket probe | Preserves healthy sockets | Current policy; serializes detection before reconnect. Remove this wait on a recorded sender suspension. |
+| Two-second old-socket probe | Preserves healthy sockets | Research baseline; current main bypasses the wait after recorded sender suspension, retaining a probe for ordinary focus. |
 | Shrink every probe to 100–200 ms | Smaller imposed delay | Arbitrary short timeout mistakes ordinary mobile RTT or congestion for failure. Not a robust universal setting. |
 | Replace the socket on every focus | Immediate attempt | Duplicate events and ordinary tab interactions can repeatedly disrupt healthy transfers. Reject as the blanket policy. |
-| Immediate replacement after a recorded suspension | Removes serial detection delay; one active client transport | Recommended initial policy for the sending phone; healthy-picker cost must be measured. |
+| Immediate replacement after a recorded suspension | Removes serial detection delay; one active client transport | Selected and implemented; the evaluation records healthy-picker and interrupted-transfer comparisons. |
 | Race an old-socket probe against a new connection | Could preserve the healthy fast path while eliminating serial delay | Candidate authentication can invalidate the old socket. Needs an explicit handoff protocol before treating either result as a winner. Reserve for a measured second experiment. |
 | Adaptive probe deadlines using measured RTT | Better than one arbitrary threshold | Useful for ambiguous focus events; still delays a stale connection if used serially. Does not replace lifecycle handling. |
 | Retry continuously with no backoff | Frequent opportunities | An outage becomes connection churn and server load. Reject; immediate first attempt, bounded later attempts. |
@@ -109,7 +115,7 @@ and a stateful single-owner classroom session have different semantics. We
 should first test immediate single replacement, then add candidate racing only
 if measurements show a worthwhile healthy-connection penalty.
 
-## Implementation sequence
+## Original implementation sequence (historical)
 
 ### 1. Replace generic wake handling with lifecycle reasons
 

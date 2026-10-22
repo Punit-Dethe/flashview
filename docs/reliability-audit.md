@@ -1,6 +1,13 @@
-# FlashView — Reliability Audit Tracker
+# WarpView — Reliability Audit Tracker
 
-**Status:** Living engineering document · **Last updated:** 19 October 2026 · **Baseline audit:** `0581111e2` · **Latest merged fix:** [`30f011b`](https://github.com/Punit-Dethe/flashview/commit/30f011b2931d7d3891466897e0ee262dba93eb9e) (PR #32's full CI passed; post-merge main CI was started). The original audit remains at 9 resolved, 3 partial and 18 open/unverified.
+**Source reconciliation:** 22 October 2026, main `3b63522`. **Original audit baseline:** `0581111e2`; the last explicitly reconciled original-audit totals remain 9 resolved, 3 partial and 18 open/unverified. This documentation review is not a fresh bug audit or full test run.
+
+The dated addenda preserve their original status, measurements and deployment
+observations. In particular, older “In progress” and “unmerged” descriptions are
+historical snapshots, not the current architecture inventory. The former header's
+PR #32 milestone is no longer the latest merged application change. Use
+[Architecture](./architecture.md#implemented-and-not-implemented) for current behavior
+and [Deployment](./deployment.md#current-hosted-application) for publishing ownership.
 
 This document tracks the original **30 reliability findings** (H1–H10, M1–M14, L1–L6). It is not a new audit, and it does **not** count PRs as bugs: one PR may fix multiple symptoms; several PRs may address one finding.
 
@@ -16,6 +23,24 @@ This document tracks the original **30 reliability findings** (H1–H10, M1–M1
 **Status meanings:** `Resolved` = an identified failure path has a merged, passing regression test; `Partial` = important mitigations merged but the full category is still open; `Open` = known issue with outstanding work; `Needs baseline wording` = no confirmed original issue description was retained, so its resolution cannot be asserted. CI success verifies tested scenarios, **not** every device/network/production environment. The counts above treat all unverified entries as *not verified resolved*, not necessarily reproduced bugs.
 
 **Product guardrails:** prioritize file-transfer reliability and speed over PDF/PPTX cosmetic work; never restart a whole room to repair one file; avoid introducing per-chunk relay metadata traffic; preserve the original file bytes and no-cloud-file-storage architecture. Make one isolated change at a time, with Node, Cloudflare, browser, and integrity/performance checks as appropriate.
+
+## Current architecture reconciliation — 22 October
+
+Main includes the shared room/file engines and ordered metadata persistence,
+dedicated sender/receiver transfer workers, generation-scoped browser caching,
+restricted lifecycle controls, terminal individual-file deletion, optional-name
+QR entry, receiver PowerPoint thumbnail improvements and matching uploader colors.
+These shipped features do not automatically close the original audit categories.
+
+Normal rooms still store chunks in IndexedDB. OPFS, production source content
+hashes, completed-only PDF viewing, renderer storage isolation and physical-device
+proof remain unimplemented or unverified. N37–N39's historical limitations and
+unexplained observations are not declared resolved by later UI work.
+
+For N40, the user has confirmed that Cloudflare automatic deployment from main
+is enabled. This identifies a publishing path, without proving the cause of the
+specific older-version incident. Current release guidance avoids competing
+manual/automatic promotions and verifies the public assets after rollout.
 
 ## High priority
 
@@ -145,10 +170,10 @@ release validation is recorded in the PR. These local timings are not campus
 or physical-phone performance measurements.
 The Cloudflare relay contract suite now runs in CI as well as Node's suite.
 
-N14 advances Phase 0 of the [implementation plan](./architecture-improvement-plan.md).
-It intentionally ports only terminal file state from #35; R2 remains deferred.
-The independent lease/end-room work on #36 remains unmerged and is not part of
-this patch. Mobile OS suspension and campus-network behavior still require
+At the N14 snapshot, this patch intentionally ported only terminal file state
+from #35, with independent lease/end-room work still separate. Main now includes
+the lifecycle implementation; see [current architecture](./architecture.md).
+R2 remains deferred. Mobile OS suspension and campus-network behavior still require
 physical-device verification.
 
 ## 20 October room lifecycle integration (in progress)
@@ -175,8 +200,10 @@ Initial checks: 68 unit/protocol tests and 9 Cloudflare relay contracts pass.
 The four lifecycle browser scenarios pass on Node, Cloudflare and Firefox;
 the expanded Firefox interrupted-transfer/integrity scenario also passes.
 Final broad suites and deployment validation are recorded with the integration PR.
-Short-code cache-key migration, aggregate admission limits, full room-rule
-extraction and worker/OPFS integration remain in the implementation plan.
+At that snapshot, short-code cache-key migration, aggregate admission limits,
+full room-rule extraction and worker/OPFS integration were separate follow-ups.
+Main now implements the cache namespaces, budgets, room engine and relay worker;
+OPFS remains outside production. See [current architecture](./architecture.md).
 
 ## 20 October cache namespace integration (in progress)
 

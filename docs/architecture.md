@@ -1,6 +1,8 @@
 # System architecture
 
-**Status:** Current source design on the unmerged integration line (20 October 2026); production deployment is tracked separately. For wire-level behavior see [Transfer protocol](./transfer-protocol.md); for current unresolved reliability work see [Audit tracker](./reliability-audit.md).
+**Source review:** 22 October 2026, merged `main` baseline `3b63522` (PR #60). The public app is [warpview.net](https://warpview.net/), with a [visual architecture guide](https://warpview.net/architecture). This describes the code currently on main, not an unmerged implementation plan. Historical validation is indexed separately in [Documentation](./README.md#decisions-and-historical-validation).
+
+For wire-level behavior see [Transfer protocol](./transfer-protocol.md); for unresolved reliability findings and historical evidence see [Audit tracker](./reliability-audit.md).
 
 ## Overview and ownership
 
@@ -25,11 +27,28 @@ Sender browser(s)                       Relay                         Host brows
 2. **Relay** authenticates room participants, checks ownership and range bounds, forwards short binary frames and maintains room/file/session metadata. It is not a persistent file-storage service and can inspect traffic in transit.
 3. **Host** owns the background byte transfer, IndexedDB cache, progress, downloads, and presentation tabs. The presenter never opens another host WebSocket or requests additional sender data itself.
 
+## Implemented and not implemented
+
+| Area | Current main behavior | Boundary |
+| --- | --- | --- |
+| Transfer ownership | One dedicated worker per sender/host page; fair bounded automatic receipt | Workers still depend on their parent page and browser/OS lifecycle |
+| Relay rules | Shared `RoomEngine` / `RoomFileEngine` used by Node and Cloudflare | Adapters retain socket routing, pending range tables and platform I/O |
+| Local storage | IndexedDB chunks and previews, generation-scoped for new rooms | OPFS is an isolated experiment, not the production cache |
+| Completion | Successful writes and persisted chunk-key coverage; length checks on reads/exports | No production end-to-end source content hash; same-length corruption is not detected by key coverage |
+| PDF presentation | Passive reads of available cached ranges, optional sender first-page JPEG, complete-buffer fallback | Completed-only PDF viewing and removal of sender PDF thumbnails are not implemented |
+| PowerPoint | Complete local PPTX/PPSX before rendering; receiver-generated card thumbnails | Complex OOXML rendering still uses significant CPU/memory; legacy `.ppt` has no preview |
+| File removal | Host-authorized persisted tombstone plus file-scoped cancellation/cache cleanup | Deleted/stopped records keep their admission reservation until End room |
+| Identity display | Retained file owners, matching initial/color, optional join name | Presence is not displayed as a participant count; names and colors are not authentication |
+| Remote storage / alternate transport | Cloudflare WSS relay; Node alternative | No production R2, WebRTC/TURN, HTTP file fallback or E2EE |
+
+The R2 decision and original timing conditions are preserved in [R2 comparison](./r2-benchmark-results.md). Deferred capabilities above must not be described as already shipped.
+
 ## Code map
 
 | Component | Source | Responsibility |
 | --- | --- | --- |
 | Room UI | [`App.tsx`](../src/client/App.tsx) | Create/join/approve/end flows, file pickers and host cards |
+| File identity and actions | [`DocumentCard.tsx`](../src/client/DocumentCard.tsx), [`participantColors.ts`](../src/client/participantColors.ts) | Uploader initials, matching palette, Download/Present and host deletion |
 | WebSocket client | [`socket.ts`](../src/client/socket.ts) | `hello` handshake, reconnect, heartbeat, binary range requests |
 | Worker transfer owner | [`relayWorker.ts`](../src/client/relayWorker.ts) | One socket, source reads, metadata-driven scheduling, cache writes and confirmed completion; independent of UI message consumption |
 | Page/worker bridge | [`transferClient.ts`](../src/client/transferClient.ts), [`transferProtocol.ts`](../src/client/transferProtocol.ts) | Small commands/status, source File handles, bounded passive cache reads, session guards and bounded worker replacement |
@@ -40,6 +59,7 @@ Sender browser(s)                       Relay                         Host brows
 | Presentation entry | [`Presenter.tsx`](../src/client/Presenter.tsx) | Selects PDF or PPTX/PPSX presentation |
 | PDF viewer | [`Viewer.tsx`](../src/client/pdf/Viewer.tsx) | PDF.js, partial-cache range transport, fallback to completed local file |
 | PowerPoint | [`PowerPointPresenter.tsx`](../src/client/pptx/PowerPointPresenter.tsx) | Local OOXML inspection and slide viewer after full download |
+| PowerPoint card preview | [`embeddedThumbnail.ts`](../src/client/pptx/embeddedThumbnail.ts), [`makeThumbnail.ts`](../src/client/pptx/makeThumbnail.ts) | Bounded saved-raster extraction, JPEG normalization and full-render fallback |
 | Node relay | [`src/server/index.ts`](../src/server/index.ts) | HTTP, WebSocket upgrades, in-memory rooms and bounded forwarding |
 | Cloudflare relay | [`src/cloudflare/index.ts`](../src/cloudflare/index.ts) | Worker routes, per-room Durable Object, hibernation and room metadata |
 | Shared contracts | [`src/shared/`](../src/shared/) | File manifests, binary encoding, limits, liveness and backpressure |
@@ -56,7 +76,13 @@ not live sockets: joining alone adds no row, and disconnecting or stopping a
 shared original does not remove its owner. Pending/rejected offers alone do not
 add contributors. Names remain distinct by owner ID even when display names
 match; avatar/file colours share the same assignment, without pink swatches.
-The host's connection indicator still reports its own relay status.
+The host's connection indicator still reports its own relay status. Contributor
+names wrap into compact chips. Each file's bottom action row shows its uploader's
+initial/color, Download and (where supported) Present. Host-assigned colors are
+saved with the host's tab session and resent through cosmetic `participant.color`
+messages on membership/reconnect changes so the sender's New button matches.
+This adds no per-chunk traffic or scheduler input. Copy code copies the six
+digits; the QR still carries the clean invitation URL and private join fragment.
 
 1. `POST /api/rooms` creates a room, code and secret tokens. Host connects over WebSocket, authenticates as `host`, and displays the QR/join link.
 2. A scanned invitation opens the hero-style optional-name card first. Join submits the name; Skip uses `Student`. Only then does the sender authenticate with the existing code/token protocol. Clean `/join/<code>` URLs retain credentials privately in tab history and resume the same identity on refresh. Approval policy is unchanged; joining another room does not make a sender a host.
@@ -84,9 +110,9 @@ this mailbox, so diagnostic sample counts are not wire-packet counts.
 
 Passive cache operations have at most 128 pending RPCs and bounded deadlines.
 Read buffers transfer ownership back to the page; they are separate from
-original-byte scheduling. This is a transitional bridge for the existing
-progressive PDF viewer; completed-only viewers and OPFS/integrity remain later
-work. A worker cannot outlive a terminated parent page or guarantee that an OS
+original-byte scheduling. The progressive PDF viewer still uses this bridge;
+completed-only PDF viewing and OPFS/content-hash verification are not implemented.
+A worker cannot outlive a terminated parent page or guarantee that an OS
 will keep it running in the background. See [MDN's worker lifecycle and API
 description](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers).
 
@@ -127,7 +153,29 @@ storage isolation or independence from a terminated dashboard.
 
 - **PDF:** PDF.js can consume whichever cached ranges are already present; an early first-page JPEG is only a visual placeholder. Once fully cached, the viewer can load the complete local PDF buffer. A visible page may still depend on distant PDF structures even at a high transfer percentage.
 - **PPTX/PPSX:** waits until the complete file is cached, then loads the local OOXML bytes into `pptx-vanilla-viewer`. `.ppt` and other general formats are download-only.
+- **Presentation controls:** PDF and PowerPoint share a bottom-right dock with page/slide navigation, zoom, fullscreen and an explicit Close button. Touch swipes navigate pages/slides. A common WarpView loading transition covers preparation; PDF fit is established before revealing the initial page.
 - A viewer tab can be closed without deleting the room cache or interrupting the background scheduler.
+
+### Card thumbnails and renderer cost
+
+PDF first-page images can still be generated on the sender after its offer;
+this optional preview path has not been removed from the application.
+PowerPoint card thumbnails are receiver-only, after complete local receipt.
+Jobs are serialized and deferred while any approved original is still arriving,
+with idle-time checks before reading/parsing. A usable cached preview is reused.
+
+The fast PowerPoint path reads only a saved JPEG/PNG at
+`docProps/thumbnail.*`, bounded to 2 MiB, then decodes/re-encodes a small JPEG.
+If unavailable, a full-render fallback has a 125 MiB original-size guard,
+two actual attempts at most and a 30-second timeout/cleanup path. The saved-image
+path can handle larger originals within the normal 200 MiB allowance. Missing
+thumbnails do not invalidate a successfully received original.
+
+The host UI still performs thumbnail decoding/DOM rendering. New transfers defer
+queued jobs; an already-running renderer is not preempted by the transfer worker.
+CPU, memory and disk remain shared, so independent scheduling is not a guarantee
+of zero contention. Tiny-fixture timings in [the validation record](./experiments/pptx-preview-toolbar.md)
+are not performance promises for arbitrary decks or phones.
 
 Hosts can delete one file through its card's action menu. Both relays retain a
 versioned deletion tombstone, preventing re-offers or reconnects from restoring
@@ -207,7 +255,7 @@ Both relay implementations handle compatible messages but differ operationally:
 | Original file bytes | Routed only, not stored | Routed only, not stored |
 | Asset serving | Built `dist/` from Node | Worker static assets |
 | Lifetime | Host activity and room sweep | Activity and DO alarms |
-| Deployment | `npm start` behind HTTPS reverse proxy | `wrangler deploy` |
+| Deployment | `npm start` behind HTTPS reverse proxy | Cloudflare automatic deploy from main for the live app; Wrangler for local/manual/isolated releases |
 
 See [Deployment](./deployment.md) for configuration and verification. Real-network speed depends on both endpoints and the relay; the design does not guarantee any particular throughput.
 
@@ -219,6 +267,8 @@ sessions, with the existing 30 concurrent sender and 10 files/person limits.
 Budgets reserve before asynchronous persistence, include offline/stopped originals
 and never double-charge exact retries. Existing records above a new budget are
 preserved. These caps bound normal room growth, not the browser's available disk.
+Deleted tombstones and stopped originals remain in these retained budgets;
+deleting a listing is not a way to reset a sender's ten-offer allowance.
 The 4 GiB budget leaves room for a 30-person, 50 MiB-per-person class (about
 1.5 GiB); it is an application policy, not a browser or relay platform ceiling.
 Pending authentication now has bounded slots/deadlines, and total transport

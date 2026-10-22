@@ -1,11 +1,19 @@
 # Relay transfer worker validation — 20 October 2026
 
+**Historical release/measurement record.** Main now includes this worker
+architecture. The versions below identify the 20 October experiment and are
+not today's active version or a recommended rollback across later lifecycle,
+cache and deletion changes. Cloudflare automatic deployment from main has since
+been confirmed by the user. See [Deployment](./deployment.md) for current release
+ownership and compatibility checks; the exact cause of the recorded N40 incident
+is not established by this documentation update.
+
 **User-authorized live trial.** On 20 October, the user explicitly authorized
 merging and deploying the worker so they could reproduce N38 on the hosted app.
 Worker `e3939396-6867-43ee-899a-86765f28eb53` (runtime source `4a1c306`, full CI
 passed) was promoted at 100%. Domain/route triggers were preserved. The prior
 room-engine Worker `2635dc65-1792-48b0-8f04-fed6bc4782f7` (source `6a04b58`)
-remains the rollback version. Deployment does not resolve the unexplained
+was the prior version at that promotion. Deployment does not resolve the unexplained
 15.4-second sample or establish predictable speed. N37–N39 remain open or
 unconfirmed; the phase is not complete. During the merges, a later untagged
 deployment (`863caf70`, 15:26 UTC) replaced this promotion with older application

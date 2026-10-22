@@ -1,5 +1,10 @@
 # PPTX previews and Files toolbar experiment
 
+Historical experiment and timing record, subsequently merged through PR #51.
+The current implementation and later uploader-identity changes are documented
+in [Architecture](../architecture.md). Preview URLs and branch names below
+identify the original comparison; they can now serve newer code.
+
 Branch: `codex/preview-toolbar-experiment`.
 Baseline: `31f1f26` on `codex/header-architecture`. Tested first on an isolated
 preview; the user subsequently approved merging the changes to main.
@@ -46,10 +51,12 @@ PowerPoint still needs a large renderer and reconstructs OOXML slides; a PDF
 already contains a page description. Complex PPTX files can remain expensive.
 The full-render thumbnail fallback retains its 125 MiB memory guard; saved
 images can also be extracted from larger files within the normal room limit.
-Legacy `.ppt` remains download-only. No uploader identification changes are
-included. A specific troublesome PPTX is still needed to confirm its particular
+Legacy `.ppt` remains download-only. The original experiment did not include
+uploader identification; current main now does. A specific troublesome PPTX is still needed to confirm its particular
 missing-thumbnail cause.
 
-To return to the previous version, switch to `codex/header-architecture` and
-use the existing join preview. Host file deletion was added after the preview
-was accepted; it uses a persisted tombstone and scoped cache cleanup.
+Do not treat the old header branch or join-preview Worker as a rollback for
+current main: later recovery/deletion changes would be lost. Follow
+[Deployment](../deployment.md#rolling-back) for a compatible rollback. Host file
+deletion was added after the original preview was accepted; it uses a persisted
+tombstone and scoped cache cleanup.

@@ -1,6 +1,18 @@
 # Deployment
 
-FlashView needs a publicly reachable frontend, an API endpoint for room creation, and **WebSocket upgrades** for relay traffic. It does not require a file-storage bucket. See [Security and reliability](./security-and-reliability.md) before exposing a public instance.
+WarpView needs a publicly reachable frontend, an API endpoint for room creation, and **WebSocket upgrades** for relay traffic. It does not require a file-storage bucket. See [Security and reliability](./security-and-reliability.md) before exposing a public instance.
+
+## Current hosted application
+
+- Public origin: [warpview.net](https://warpview.net/).
+- Public architecture guide: [warpview.net/architecture](https://warpview.net/architecture).
+- Production Worker: `flashview`; its [workers.dev address](https://flashview.outlanderwatr.workers.dev/) serves the same application.
+- Cloudflare automatic deployment from the repository's main branch is enabled.
+- The [experimental preview](https://warpview-preview-experiment.outlanderwatr.workers.dev/) is a separate Worker with its own rooms. It can change independently and is not a production rollback target.
+
+Repository names, the `ClassroomRoom` binding/class and `flashview-room-cache`
+are compatibility identifiers; the product's current name is WarpView. Do not
+rename database or namespace identifiers as a branding-only deployment change.
 
 ## Node.js / self-hosting
 
@@ -34,15 +46,39 @@ The Node endpoint returns JSON with `ok: true`.
 ## Cloudflare Workers + Durable Objects
 
 The current [Wrangler configuration](../wrangler.jsonc) deploys:
+
 - the Worker in [`src/cloudflare/index.ts`](../src/cloudflare/index.ts);
 - `dist/` as static assets with SPA fallback;
 - a SQLite-backed Durable Object class `ClassroomRoom` bound as `ROOMS`, using migration tag `v1`.
+
+For an initial deployment to your own configured Worker:
 
 ```bash
 npm install
 npx wrangler login
 npm run deploy
 ```
+
+For the existing hosted application, merge to main and let the configured
+Cloudflare build publish. Avoid racing it with a manual promotion. A successful
+PR merge, asset upload or GitHub test run does not prove the public origin has
+switched; verify the deployed entry/assets and scoped controls afterward.
+
+If a manual release is deliberately needed, build first and use Wrangler version
+upload/promotion while preserving dashboard-managed configuration and routes:
+
+```bash
+npm run build
+npx wrangler versions upload --keep-vars --strict --tag release-label --message "Describe the release"
+npx wrangler versions deploy VERSION_ID@100% --message "Describe the promotion"
+npx wrangler deployments list --name flashview
+```
+
+Replace `VERSION_ID` with the returned version. Coordinate manual release or
+rollback with automatic deployment; a later main build can otherwise replace
+the promoted version. Preserve the existing Durable Object namespace, migration
+and custom-domain routing. Versions recorded in older validation reports are
+historical snapshots, not the current production version.
 
 For a local Cloudflare-style environment:
 
@@ -68,6 +104,12 @@ No particular free-tier request allowance or hosting cost is guaranteed by this 
    refresh restores originals and End room deletes only that namespace. Keep an
    existing legacy room through the upgrade and verify its code-based cache
    remains readable. Cache format is pinned at creation, not changed by renewal.
+10. For file-deletion changes, delete a synthetic listing and verify it stays
+    deleted after both ends refresh; unrelated cached files remain available.
+
+Choose smoke checks relevant to the release. Documentation-only changes do not
+need new rooms, uploads or a full benchmark pass. For UI-only releases, verify
+the changed layout/controls rather than rerunning every transport fault case.
 
 ## Network and security considerations
 

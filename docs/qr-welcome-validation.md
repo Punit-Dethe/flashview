@@ -1,5 +1,10 @@
 # Optional-name QR welcome — 21 October 2026
 
+Historical validation record. The welcome flow is now on main and the public
+app at [warpview.net](https://warpview.net/); versions/timings below describe the
+original preview run. The current host's Copy code action copies the six digits,
+while its QR retains the invitation URL described here.
+
 Scanned invitations now open a single white card on the existing hero sky.
 The card offers an optional name, Join room and Skip for now. Skip discards
 partially typed text and keeps the existing anonymous `Student` fallback.
@@ -40,7 +45,8 @@ used the benchmark's old fixed production origin, so it did not test this
 preview and is excluded. `BENCH_ORIGIN` is now explicit and validated.
 This is desktop browser evidence, not physical phone/QR-camera proof.
 
-This branch is based on production main through PR #47. It is independent of
-the unmerged storage experiment #48; normal rooms remain IndexedDB. Production
-was not manually deployed for this preview. Follow the PR/main CI and active
-Cloudflare version separately before calling the feature live on the main app.
+The original preview branch was based on production main through PR #47 and
+was independent of storage experiment #48. Normal rooms still use IndexedDB;
+this record does not establish production OPFS support. The original preview
+did not manually deploy production. Current release ownership and verification
+are described in [Deployment](./deployment.md#current-hosted-application).

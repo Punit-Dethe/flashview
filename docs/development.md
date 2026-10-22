@@ -37,18 +37,27 @@ Playwright browsers may need a one-time installation such as `npx playwright ins
 ## Repository orientation
 
 - [`src/client/App.tsx`](../src/client/App.tsx): role state, join/create logic, offers, browser file picker, downloads and room lifecycle.
+- [`src/client/relayWorker.ts`](../src/client/relayWorker.ts): the sender/receiver transfer owner; socket, source reads, automatic receipt and cache writes.
+- [`src/client/transferClient.ts`](../src/client/transferClient.ts) and [`transferProtocol.ts`](../src/client/transferProtocol.ts): bounded UI/worker commands, status and passive cache-read RPCs.
 - [`src/client/socket.ts`](../src/client/socket.ts): handshake, liveness and automatic reconnect.
 - [`src/client/pdf/roomCache.ts`](../src/client/pdf/roomCache.ts): IndexedDB, scheduler, local ranges and repair.
 - [`src/client/presentation.ts`](../src/client/presentation.ts): host-presenter BroadcastChannel bridge; keep presenter **passive**.
 - [`src/client/pdf/Viewer.tsx`](../src/client/pdf/Viewer.tsx) and [`src/client/pptx/`](../src/client/pptx/): format-dependent viewing.
 - [`src/server/index.ts`](../src/server/index.ts) and [`src/cloudflare/index.ts`](../src/cloudflare/index.ts): two relay implementations of the same protocol.
 - [`src/shared/protocol.ts`](../src/shared/protocol.ts): wire encoding and authoritative transfer limits.
+- [`src/shared/roomEngine.ts`](../src/shared/roomEngine.ts), [`roomFileEngine.ts`](../src/shared/roomFileEngine.ts) and [`roomVersion.ts`](../src/shared/roomVersion.ts): shared authority, file transitions, persistence checkpoints and metadata ordering.
+- [`src/client/DocumentCard.tsx`](../src/client/DocumentCard.tsx), [`participantColors.ts`](../src/client/participantColors.ts), and [`pptx/makeThumbnail.ts`](../src/client/pptx/makeThumbnail.ts): file actions/identity and receiver-only PowerPoint thumbnails.
 
 For file types, `.pdf` is signature checked; general files are transferred unchanged, and `.pptx`/`.ppsx` are locally rendered only after full completion.
 
 ## Tests and merge gates
 
-Run at least:
+Choose checks that exercise the changed behavior. Documentation-only changes
+need Markdown/link and source-reference review, not transfer benchmarks or a
+renderer/browser suite. Small styling changes normally need a build and focused
+desktop/mobile or hover checks; they do not require every benchmark locally.
+
+For worker, storage, shared engine or protocol changes, the broader baseline is:
 
 ```bash
 npm run build
@@ -57,7 +66,19 @@ npm test
 npm run test:browser
 ```
 
-The [GitHub Actions workflow](../.github/workflows/ci.yml) goes further: browser E2E on Chromium, Firefox presenter compatibility, Cloudflare Durable Object browser tests, and comparable synthetic throughput runs for Node and Cloudflare (fixed/adaptive concurrency plus 128/256 KiB packet A/B checks). Inspect the **entire** CI conclusion before merging.
+The [GitHub Actions workflow](../.github/workflows/ci.yml) automatically runs the broader matrix on pull requests and main: Chromium, targeted Firefox checks, Cloudflare relay/browser contracts and synthetic throughput comparisons. A focused local pass does not imply the full CI matrix passed; report its separate status. Respect required repository checks and investigate failures relevant to the change.
+
+Examples of targeted local checks:
+
+```bash
+node --import tsx --test tests/participantColors.test.ts
+node --import tsx --test --test-name-pattern="reference UI assigns|phone hosting" tests/browser.smoke.ts
+node --import tsx --test --test-name-pattern="PowerPoint saved thumbnails|refined file cards|deletes an in-flight" tests/browser.smoke.ts
+```
+
+Confirm that a selected pattern actually runs the intended cases; do not count
+zero matched tests as validation. Use `FLASHVIEW_BACKEND=cloudflare` (set via your
+shell's environment syntax) for the matching local Durable Object checks.
 
 For transfer changes, add deterministic tests for duplicates, missing bytes, resume, sender disconnect, full storage and data integrity. Keep server and Cloudflare paths in parity. A green synthetic benchmark is **not** proof of real-world mobile throughput or memory use.
 
@@ -124,7 +145,7 @@ real private reconnect and explicitly exports only its generated test binary.
 
 - A transfer or storage code change updates [Architecture](./architecture.md), [Protocol](./transfer-protocol.md) or [Security and reliability](./security-and-reliability.md) if behavior changes.
 - Every reliability-audit PR updates the matching entry in [the tracker](./reliability-audit.md), including limitations and a specific test or CI result.
-- Historical designs in [the archived plan](./archive/initial-engineering-plan.md) are not implementation authority; avoid copying outdated PDF-only claims into current docs.
+- The [current architecture](./architecture.md) is the implementation reference. Superseded plan files were removed; recover them through Git history only when historical context is needed. Do not copy old PDF-only, R2 or OPFS proposals into current feature claims.
 - Never commit tokens, room links, actual user files or confidential logs.
 
 ## Relay lifecycle regression checks

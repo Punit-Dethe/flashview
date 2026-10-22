@@ -1,10 +1,12 @@
 # Shared room metadata engine validation — 20 October 2026
 
-This completes the shared metadata-engine slice on the integration branch:
+Historical validation of the shared metadata-engine slice, now present on main:
 participant admission/approval/private resume, host presence, file lifecycle,
 ordered Cloudflare persistence and generation-scoped client snapshot ordering.
 Original byte routing, scheduling, browser storage and viewers are unchanged.
-The remaining worker/OPFS/viewer phases are in the architecture improvement plan.
+The results below describe that release, not a rerun of current main. For
+current worker/storage/viewer behavior and unimplemented capabilities, see
+[Architecture](./architecture.md#implemented-and-not-implemented).
 
 ## Correctness checks
 

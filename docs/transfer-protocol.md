@@ -12,7 +12,9 @@
 
 ### Invitation entry
 
-New QR/copied invitations use `/join/<code>#invite=<joinToken>`. The entry screen
+QR invitations use `/join/<code>#invite=<joinToken>`. A copied invitation URL uses
+the same format; the current host's **Copy code** button copies only the six
+digits, not an invitation URL. The entry screen
 asks for an optional name; neither rendering nor typing authenticates a sender.
 Join submits the trimmed name, while Skip discards any typed text and uses the
 existing `Student` fallback. Both paths retain the normal approval policy.
@@ -88,11 +90,13 @@ Control messages are UTF-8 JSON over WebSocket and include `{ "v": 1, "type": ".
 | `join.accepted`, `join.pending`, `join.resumed`, `join.rejected` | Relay → sender | Admission and resume result |
 | `student.pending`, `student.updated`, `student.left` | Relay → host | Participant roster changes |
 | `student.accept`, `student.reject` | Host → relay | Admission decisions |
+| `participant.color` | Host → relay → target sender | Cosmetic identity color; host sends `studentId` and six-digit hex `color`, relay forwards only `color` to that sender |
 | `file.offer` | Sender → relay | Announce `fileId`, `name`, `size`; relay checks limits |
 | `file.announced`, `file.updated` | Relay → host | File manifest and status updates |
 | `file.state`, `file.approved`, `file.manifest` | Relay → sender | Confirm/replay that sender's file manifests |
 | `file.rejected` | Relay → sender | Admission failed; includes `fileId`, stable `code` and readable `message`; no manifest reserved |
 | `file.sync`, `file.revoke` | Sender → relay | Reconcile or stop serving an offered file |
+| `file.remove` | Host → relay | Permanently remove one listing; cancel its ranges and publish a versioned deletion tombstone |
 | `range.request` | Host → relay → sender | Request missing half-open byte interval `[begin, end)` |
 | `range.cancel` | Host → relay | Drop a pending request |
 | `range.error` | Sender / relay → host | Request-specific failure (invalid, timed out, offline, congested) |
@@ -104,6 +108,14 @@ Control messages are UTF-8 JSON over WebSocket and include `{ "v": 1, "type": ".
 | `room.end` | Host → relay | Close the room |
 
 The relay's role is message validation and **routing**, not processing or retaining the original document.
+
+`participant.color` is accepted only from the authenticated current host, with
+a `#RRGGBB` color. It is cosmetic and does not advance room/file revisions,
+persist server color state, alter approval or influence original-byte scheduling.
+The host tab retains assignments in its saved session and resends on membership
+and reconnect/snapshot changes. It is not a per-chunk message. Display names,
+initials and color assignments never establish ownership; private session IDs
+and capabilities do.
 
 On a recorded sender file-picker/background return, or a browser freeze or
 network-restoration signal, the client starts one replacement connection
@@ -149,6 +161,16 @@ Reconnecting or replaying the offer cannot resume that file ID. Transient networ
 loss leaves `revoked` unset and remains recoverable. This optional field preserves
 older clients' status contract; stops recorded before this marker existed cannot
 be distinguished retroactively from a disconnection.
+
+`file.remove` is a distinct host operation. The shared engine retains
+`deleted: true`, `revoked: true`, `status: 'rejected'` and `cachedBytes: 0`,
+advancing revisions only on the first real transition. Both adapters cancel
+outstanding ranges, publish host metadata and notify the owning sender. Exact
+re-offers/sync cannot resurrect the listing; late responses cannot complete a
+cancelled request. The receiving worker cancels that file, deletes its local
+chunks/preview, and the host retires its presentation tabs. Other files and the
+sender's original device file remain unaffected. Failed local cleanup is reported
+and retried on refresh. Tombstones continue counting toward room/sender budgets.
 
 ## Binary file data
 

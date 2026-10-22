@@ -1,14 +1,17 @@
 # Security, storage and reliability
 
-The worker described below is live for user-authorized reproduction of the N38
-speed outlier. The outlier remains unexplained; deployment does not resolve it.
-See [worker validation](./relay-worker-validation.md) for versions and rollback.
+**Source review:** 22 October 2026, merged main baseline `3b63522`. WarpView's
+worker-based relay is part of the live application. Historical N37–N40 records
+describe earlier browser/performance/deployment observations; this review does
+not reproduce or resolve the unexplained N38 speed outlier. See
+[worker validation](./relay-worker-validation.md) for those original conditions,
+not as a statement of today's active deployment version.
 
 Relay transfer now runs in one dedicated worker per sender/host page. Workers
 own socket authentication, File reads, scheduling and cache writes; original
 transfer buffers do not pass through React. This is scheduling isolation, not
 a new origin/security boundary. Renderer isolation and completed-file reader
-leases remain roadmap work. Bounded worker replacement retains capabilities
+leases are not implemented. Bounded worker replacement retains capabilities
 and File handles and rebuilds committed cache. Aborted requests cannot regain
 source authority after Stop. See [worker validation](./relay-worker-validation.md).
 
@@ -23,10 +26,11 @@ This document describes **current boundaries and recovery behavior**, not a secu
 | Host browser | Receives and persists original bytes in local IndexedDB; can download and present received files |
 | Presentation tab | Reads through same-origin host `BroadcastChannel` and local cache; copied host session removed before loading; only a restricted server lease capability, no host relay socket |
 
-- FlashView has **no accounts**, no direct peer-to-peer transfer and **no end-to-end encryption**. Do not describe it as suitable for confidential documents without a separate threat review.
+- WarpView has **no accounts**, no direct peer-to-peer transfer and **no end-to-end encryption**. Do not describe it as suitable for confidential documents without a separate threat review.
 - Joining via QR/link or six-digit code is not a grant of host privileges. Host authentication requires a separate high-entropy secret; student approval can be enabled per room.
 - Node enforces WebSocket Origin checks, Cloudflare checks the request Origin, and both relays validate role, room, ownership, range bounds and size limits. Neither relay should execute content from uploaded files.
 - A document's extension only determines safe display options; arbitrary transferred bytes must not be interpreted as executable markup by the host.
+- Optional names, colored initials and the Shared by list are presentation metadata, not identity proof or a connected-user roster. The host-authorized color message grants no admission, file or room-control capability.
 
 ## Where data resides
 
@@ -43,7 +47,7 @@ This document describes **current boundaries and recovery behavior**, not a secu
    scheduled at window expiry; an expired counter is ignored on reuse. The
    source key is pseudonymous, not anonymized. No raw address is written into
    application quota state; hosting-platform request processing/logging is separate.
-5. **Deletion:** Ending a room records intent and confirms relay closure before deleting local chunks/previews. Credentials are retained until cleanup succeeds. Failed/uncertain closure and failed local deletion are separate retryable outcomes, restored on refresh. Browser expiration cleanup occurs on later visits; site-data erasure and disk-forensic erasure are **not** the same thing.
+5. **Deletion:** Host deletion of an individual listing persists a terminal tombstone, cancels only its ranges, removes its cached chunks/preview and closes its presenter tabs. It does not remove the sender's device file or release reserved admission budgets. Failed local deletion shows a warning and is retried on refresh. Ending a room records intent and confirms relay closure before deleting the whole room's local chunks/previews. Credentials are retained until cleanup succeeds. Failed/uncertain closure and failed room cleanup are separate retryable outcomes, restored on refresh. Browser expiration cleanup occurs on later visits; site-data erasure and disk-forensic erasure are **not** the same thing.
 
 ## Expected failure and recovery behavior
 
@@ -53,6 +57,7 @@ This document describes **current boundaries and recovery behavior**, not a secu
 | Stalled or expired range | Bounded timeouts and per-file backoff; missing requests can be retried | A domain that blocks WSS cannot relay |
 | Lost completion receipt | Idempotent full-file completion notice; replays until receipt | Only persisted-byte complete counts as Done |
 | Missing saved chunk | Cross-check IndexedDB keys when claiming 100%; retract stale completion, invalidate that memory copy and re-fetch missing bytes | Sender needs to remain available for missing ranges |
+| Same-length content corruption | Range/read/export length checks and persisted-key coverage detect structural gaps | No production source-to-receiver content hash; key coverage is not cryptographic integrity verification |
 | IndexedDB request hangs | Timeouts/abort attempts and retryable index lookup; affected file isolated from healthy peer transfers | Browser timer suspension may delay deadlines |
 | Temporary write failure | Retain the failed original chunk; retry persisting it without reuploading | Browser may have permanently exhausted its quota |
 | Repeated confirmed full quota | Pause only affected file; show host **Retry saving** after user frees space | Never clear active room's site data to make space; real-device quota behavior varies |
@@ -71,6 +76,7 @@ This document describes **current boundaries and recovery behavior**, not a secu
 
 - **Storage quotas** are imposed by the browser/operating system. Private or restricted contexts may prohibit IndexedDB. Never claim the room has backed up files to a cloud account.
 - **Memory** remains a concern for 50–200 MiB presentations. Peak memory on real devices and large PDF/PPTX rendering is not yet fully validated.
+- **Thumbnail work** is serialized/deferred while originals arrive, but decoding and the PowerPoint fallback still share host resources. Saved raster extraction has a 2 MiB limit; the expensive fallback has a 125 MiB original-size guard and timeout. These are bounded attempts, not a guarantee that a blocked renderer can be preempted immediately.
 - **Client timers** may pause in background tabs; the transfer scheduler can run while a presenter tab is foreground, but not if the owning classroom tab is killed.
 - **No HTTP fallback**, no application-level E2EE and no guarantee of throughput under restrictive networks.
 - **Temporary room credentials and invitations** should be treated as sensitive; don't paste them into logs, issue reports or public documentation.
